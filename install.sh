@@ -14,32 +14,39 @@ if [ "$1" = "--verify" ]; then
     PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
     if [ -z "$PYVER" ]; then echo "✗ Python 3 not found"; ERRORS=$((ERRORS+1));
     else echo "✓ Python $PYVER"; fi
-    # Dynamic wheel count: count direct deps in requirements.txt
-    REQ_COUNT=$(grep -cvE '^#|^$' requirements.txt 2>/dev/null || echo 9)
-    WHEEL_COUNT=$(ls wheels/*.whl 2>/dev/null | wc -l)
-    if [ "$WHEEL_COUNT" -lt "$REQ_COUNT" ]; then echo "✗ Only $WHEEL_COUNT wheels found (need ≥$REQ_COUNT for direct deps)"; ERRORS=$((ERRORS+1));
-    else echo "✓ $WHEEL_COUNT offline wheels present (≥$REQ_COUNT direct deps)"; fi
-    # Check no source dists in wheels (only .whl)
-    SDIST=$(ls wheels/*.tar.gz 2>/dev/null | wc -l)
-    if [ "$SDIST" -gt 0 ]; then echo "✗ Found $SDIST source distributions (only .whl allowed)"; ERRORS=$((ERRORS+1));
-    else echo "✓ Wheelhouse contains only pre-built .whl files"; fi
     # Check all .py compile
     COMPILE_OK=$(python3 -c "import py_compile, os; [py_compile.compile(os.path.join(r,f), doraise=True) for r,d,fs in os.walk('.') for f in fs if f.endswith('.py')]" 2>&1 && echo OK)
     if [ "$COMPILE_OK" = "OK" ]; then echo "✓ All Python modules compile clean";
     else echo "✗ Compilation errors detected"; ERRORS=$((ERRORS+1)); fi
-    # Check SHA256SUMS — wheels + Python source
-    if [ -f SHA256SUMS ]; then
-        WHL_HASHES=$(grep -c '\.whl$' SHA256SUMS 2>/dev/null || echo 0)
-        SRC_HASHES=$(grep -c '\.py$' SHA256SUMS 2>/dev/null || echo 0)
-        echo "✓ SHA256SUMS present ($WHL_HASHES wheels, $SRC_HASHES source files)"
-        # Verify wheel hashes
-        if sha256sum -c SHA256SUMS --quiet 2>/dev/null; then
-            echo "✓ All SHA256 hashes verified"
-        else
-            echo "✗ SHA256 hash mismatch — files may be corrupted"; ERRORS=$((ERRORS+1))
-        fi
+    # Bundle checks (wheels + SHA256SUMS) — only meaningful when a bundle is present.
+    # A bare source checkout ships no wheels/ and no manifest; that is NOT an error,
+    # just an unbundled checkout. Build the bundle per RELEASING.md §4 before
+    # air-gap deployment. Hash mismatches with a present manifest ARE corruption.
+    WHEEL_COUNT=$(ls wheels/*.whl 2>/dev/null | wc -l)
+    HAS_MANIFEST=0
+    if [ -f SHA256SUMS ]; then HAS_MANIFEST=1; fi
+    if [ "$WHEEL_COUNT" -eq 0 ] && [ "$HAS_MANIFEST" -eq 0 ]; then
+        echo "— No offline bundle detected (source checkout without wheels/) — skipping bundle checks"
+        echo "  Run the bundle build per RELEASING.md §4 before air-gap deployment."
     else
-        echo "✗ SHA256SUMS missing"; ERRORS=$((ERRORS+1))
+        REQ_COUNT=$(grep -cvE '^#|^$' requirements.txt 2>/dev/null || echo 9)
+        if [ "$WHEEL_COUNT" -lt "$REQ_COUNT" ]; then echo "✗ Only $WHEEL_COUNT wheels found (need ≥$REQ_COUNT for direct deps)"; ERRORS=$((ERRORS+1));
+        else echo "✓ $WHEEL_COUNT offline wheels present (≥$REQ_COUNT direct deps)"; fi
+        SDIST=$(ls wheels/*.tar.gz 2>/dev/null | wc -l)
+        if [ "$SDIST" -gt 0 ]; then echo "✗ Found $SDIST source distributions (only .whl allowed)"; ERRORS=$((ERRORS+1));
+        else echo "✓ Wheelhouse contains only pre-built .whl files"; fi
+        if [ "$HAS_MANIFEST" -eq 1 ]; then
+            WHL_HASHES=$(grep -c '\.whl$' SHA256SUMS 2>/dev/null || echo 0)
+            SRC_HASHES=$(grep -c '\.py$' SHA256SUMS 2>/dev/null || echo 0)
+            echo "✓ SHA256SUMS present ($WHL_HASHES wheels, $SRC_HASHES source files)"
+            if sha256sum -c SHA256SUMS --quiet 2>/dev/null; then
+                echo "✓ All SHA256 hashes verified"
+            else
+                echo "✗ SHA256 hash mismatch — files may be corrupted"; ERRORS=$((ERRORS+1))
+            fi
+        else
+            echo "— wheels present but SHA256SUMS missing (run the RELEASING.md §4 manifest build)"
+        fi
     fi
     echo ""
     if [ "$ERRORS" -eq 0 ]; then echo "✓ All verification checks passed — air-gap ready";

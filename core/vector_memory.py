@@ -6,10 +6,12 @@ When you come back to a target, the LLM automatically retrieves relevant
 past findings and injects them into context — no re-scanning needed.
 
 Architecture:
-  - TF-IDF vectorization via scikit-learn (already installed)
+  - TF-IDF vectorization via scikit-learn (optional)
   - Cosine similarity for retrieval
-  - numpy arrays for vector storage (already installed)
+  - numpy arrays for vector storage (optional)
   - JSON index for metadata (finding ID, target, session, severity, etc.)
+  - Pure-stdlib keyword fallback when numpy/scikit-learn are absent
+    (critical for air-gapped hosts — neither is in the wheels bundle)
   - Fully offline — no external vector DB required
 
 Usage:
@@ -18,17 +20,28 @@ Usage:
     results = memory.query("192.168.1.10", top_k=10)
     context = memory.get_context_block("192.168.1.10")  # for LLM injection
 """
+from __future__ import annotations
+
 import json
 import os
 import logging
 import threading
 import hashlib
+import re
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+# numpy / scikit-learn are OPTIONAL — the wheels bundle ships neither, so a
+# clean air-gapped host must still boot. When absent, vector memory degrades
+# to pure-stdlib keyword retrieval (see _keyword_query) and skips vector
+# persistence. Mirrors the knowledge_base.py guard pattern.
+try:
+    import numpy as np
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    _HAS_VECTOR_DEPS = True
+except Exception:  # pragma: no cover - graceful degradation on air-gapped hosts
+    _HAS_VECTOR_DEPS = False
 
 logger = logging.getLogger("redteam.memory")
 
@@ -156,15 +169,24 @@ class VectorMemory:
             List of finding dicts with added 'similarity' score
         """
         with self._lock:
-            if not self._fitted or self._vectors is None or len(self._findings) == 0:
+            if not self._findings:
                 return []
+
+            # Air-gap fallback: no numpy/sklearn or index not fitted → pure
+            # stdlib keyword scoring instead of returning nothing.
+            if not _HAS_VECTOR_DEPS or not self._fitted or self._vectors is None:
+                return self._keyword_query(
+                    query_text, top_k=top_k, min_similarity=min_similarity,
+                    target_filter=target_filter, severity_filter=severity_filter)
 
             # Vectorize the query
             try:
                 query_vec = self._vectorizer.transform([query_text])
             except Exception as e:
                 logger.warning(f"Query vectorization failed: {e}")
-                return []
+                return self._keyword_query(
+                    query_text, top_k=top_k, min_similarity=min_similarity,
+                    target_filter=target_filter, severity_filter=severity_filter)
 
             # Compute cosine similarity
             sims = cosine_similarity(query_vec, self._vectors).flatten()
@@ -189,6 +211,7 @@ class VectorMemory:
 
                 result = dict(finding)
                 result["similarity"] = round(float(sim), 4)
+                result["retrieval"] = "vector"
                 results.append(result)
 
             # Sort by similarity descending
@@ -371,7 +394,6 @@ class VectorMemory:
 
     def _extract_targets(self, finding: Dict[str, Any]) -> List[str]:
         """Extract target IPs/domains from a finding."""
-        import re
         text = f"{finding.get('evidence', '')} {finding.get('dedupe_key', '')}"
         targets = set()
         # IPv4 addresses
@@ -386,8 +408,51 @@ class VectorMemory:
                 targets.add(domain)
         return sorted(targets)
 
+    def _keyword_query(self, query_text: str, top_k: int = 10,
+                       min_similarity: float = SIMILARITY_THRESHOLD,
+                       target_filter: str = "",
+                       severity_filter: str = "") -> List[Dict[str, Any]]:
+        """
+        Pure-stdlib retrieval fallback used when numpy/scikit-learn are
+        unavailable (air-gapped hosts). Scores findings by token overlap
+        with the query — same result shape and filters as the vector path.
+        """
+        def tokens(s: str):
+            return set(re.findall(r"[a-z0-9]+[a-z0-9.\-]*", s.lower()))
+
+        q_tokens = tokens(query_text)
+        if not q_tokens:
+            return []
+
+        results = []
+        for finding in self._findings:
+            text = finding.get("text") or ""
+            f_tokens = tokens(text)
+            overlap = len(q_tokens & f_tokens)
+            if overlap == 0:
+                continue
+            sim = overlap / float(len(q_tokens))
+            if sim < min_similarity:
+                continue
+            if target_filter and target_filter not in finding.get("targets", []):
+                if target_filter not in finding.get("evidence", ""):
+                    continue
+            if severity_filter and finding.get("severity") != severity_filter:
+                continue
+            result = dict(finding)
+            result["similarity"] = round(sim, 4)
+            result["retrieval"] = "keyword"
+            results.append(result)
+
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:top_k]
+
     def _rebuild_vectors(self) -> None:
         """Rebuild the TF-IDF index from scratch. Caller must hold self._lock."""
+        if not _HAS_VECTOR_DEPS:
+            self._vectors = None
+            self._fitted = False
+            return
         texts = [self._finding_to_text(f) for f in self._findings]
         if not texts:
             self._vectors = None
@@ -415,6 +480,8 @@ class VectorMemory:
 
     def _append_vector(self, text: str) -> None:
         """Append a single document to the TF-IDF index. Caller must hold self._lock."""
+        if not _HAS_VECTOR_DEPS:
+            return
         if self._vectorizer is None:
             # First document — fit from scratch
             self._vectorizer = TfidfVectorizer(
@@ -461,8 +528,8 @@ class VectorMemory:
                     "findings": self._findings,
                 }, f, indent=2)
 
-            # Save vectors
-            if self._vectors is not None and self._fitted:
+            # Save vectors (only when deps present — pure JSON otherwise)
+            if _HAS_VECTOR_DEPS and self._vectors is not None and self._fitted:
                 np.save(self._vectors_file, self._vectors)
                 # Also save the vectorizer vocabulary
                 vocab_file = os.path.join(self._memory_dir, "vocab.json")
@@ -496,8 +563,9 @@ class VectorMemory:
             self._findings = data.get("findings", [])
             logger.info(f"Loaded {len(self._findings)} findings from vector memory")
 
-            # Load vectors if they exist
-            if os.path.exists(self._vectors_file) and self._findings:
+            # Load vectors if they exist (only when deps present)
+            if (_HAS_VECTOR_DEPS and os.path.exists(self._vectors_file)
+                    and self._findings):
                 self._vectors = np.load(self._vectors_file)
 
                 # Load vocabulary

@@ -24,6 +24,12 @@ env/
 # ── Offline wheels cache (large, regenerate with pip download) ──
 wheels/
 
+# ── Bundle integrity manifest (generated at bundle time per RELEASING.md §4;
+#    committed copies can never verify — wheels/ is gitignored and source
+#    hashes drift on every commit) ──
+SHA256SUMS
+SHA256SUMS.asc
+
 # ── Logs ──
 *.log
 logs/
