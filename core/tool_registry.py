@@ -416,6 +416,14 @@ class ToolRegistry:
         self._register(ToolDefinition("msf_resource", cat,
             "Metasploit resource script — automate exploit chains.","msfconsole",
             {"resource":{"type":"string","description":"Resource script path","required":True}}, timeout=900, destructive=True))
+        self._register(ToolDefinition("msf_auto_exploit", cat,
+            "Auto-exploit pipeline: parse nmap output → searchsploit → generate .rc → validate → execute via msfconsole.","msfconsole",
+            {"nmap_output":{"type":"string","description":"Raw nmap scan output text","required":True},
+            "lhost":{"type":"string","description":"Attacker IP for reverse shells","required":True},
+            "lport":{"type":"integer","description":"Listener port","default":4444},
+            "payload":{"type":"string","description":"Metasploit payload (auto-detect if empty)"},
+            "objective":{"type":"string","description":"Attack objective for LLM context"},
+            "execute":{"type":"boolean","description":"Actually execute the .rc script (True) or just generate (False)","default":False}}, timeout=900, destructive=True, prereq_tools=["msfconsole","searchsploit"]))
         self._register(ToolDefinition("searchsploit_exploit", cat,
             "ExploitDB search — find public exploits by service/version.","searchsploit",
             {"query":{"type":"string","description":"Search query","required":True}}, timeout=30))
@@ -692,6 +700,19 @@ class ToolRegistry:
             "OpenSSH client for secure remote access.","ssh",
             {"target":{"type":"string","description":"Target host","required":True},
             "command":{"type":"string","description":"Remote command to execute"}}, timeout=60))
+        # ──────────────── TOOL INSTALLER (self-healing) ────────────────
+        self._register(ToolDefinition("install_tool", cat,
+            "Install a missing security tool on-demand. Use this when a needed tool is not installed. Supports apt, pip, Go binaries, and GitHub releases. All downloads cached locally for offline use.","",
+            {"tool_name":{"type":"string","description":"Binary name or tool name to install (e.g. 'nuclei', 'ffuf', 'enum4linux')","required":True}}, timeout=600))
+        self._register(ToolDefinition("list_missing_tools", cat,
+            "List all security tools that are registered but not currently installed, with their install method.","",
+            {}, timeout=10))
+        self._register(ToolDefinition("install_all_missing", cat,
+            "Batch-install up to N missing tools that have install recipes. Use to quickly bootstrap a fresh environment.","",
+            {"max_tools":{"type":"integer","description":"Max tools to install in one batch (default 20)"}}, timeout=1800))
+        self._register(ToolDefinition("check_tool_status", cat,
+            "Check if a specific tool is installed, where it lives, and if it can be auto-installed.","",
+            {"tool_name":{"type":"string","description":"Tool name to check","required":True}}, timeout=10))
 
     # ═══════════════════════════════════════════════════════════════
     # REGISTRY MANAGEMENT
@@ -794,6 +815,7 @@ class ToolRegistry:
         if name == "curl_request":     return self._build_curl(args, binary)
         if name == "msfvenom_payload": return self._build_msfvenom(args, binary)
         if name == "msf_resource":     return self._build_msfresource(args, binary)
+        # msf_auto_exploit is intercepted by the orchestrator before reaching here
         if name == "aircrack_crack":   return self._build_aircrack(args, binary)
         if name == "netcat_listener":  return self._build_nc_listener(args, binary)
         if name == "netcat_connect":   return self._build_nc_connect(args, binary)

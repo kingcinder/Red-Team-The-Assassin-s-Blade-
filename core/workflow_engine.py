@@ -19,8 +19,9 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from core.task_isolation import TaskSandbox
 from core.hardening import HardenedToolRunner
-from core.findings import extract_findings, SEVERITY_ORDER
+from core.findings import extract_findings, SEVERITY_ORDER, get_extractor as _get_findings_extractor
 from core.correlation import FindingCorrelator
+from core.injection_defense import sanitize_for_llm, sanitize_tool_output
 
 logger = logging.getLogger("redteam.workflow")
 MAX_STEPS_PER_WORKFLOW = 50
@@ -742,6 +743,12 @@ class WorkflowStateMachine:
         findings.append(finding)
         self.sandbox.save_state(self.state)
 
+    @staticmethod
+    def _sanitize_prompt(text: str) -> str:
+        """Strip control chars and newlines from text before LLM prompt interpolation."""
+        from core.injection_defense import sanitize_for_llm
+        return sanitize_for_llm(str(text), max_len=500)
+
     # ═══════════════════════════════════════════════════════════════
     # PHASE 2: LLM-GUIDED RETRY
     # ═══════════════════════════════════════════════════════════════
@@ -759,10 +766,10 @@ class WorkflowStateMachine:
             step_desc = step.get("description", step.get("name", ""))
             prompt = (
                 "A penetration testing step failed. Suggest ONE alternative approach.\n\n"
-                f"Objective: {step_desc}\n"
+                f"Objective: {sanitize_for_llm(step_desc, max_len=500)}\n"
                 f"Original tool: {current_tool}\n"
-                f"Original args: {json.dumps(current_args, default=str)[:500]}\n"
-                f"Error: {last_error[:300]}\n\n"
+                f"Original args: {sanitize_tool_output(json.dumps(current_args, default=str)[:500])}\n"
+                f"Error: {sanitize_tool_output(last_error[:300])}\n\n"
                 'Respond with ONLY valid JSON: '
                 '{"tool": "<alternative_tool>", '
                 '"args": {<params>}}\n'
@@ -830,26 +837,26 @@ class WorkflowStateMachine:
         lines.append(f"- **Steps completed**: {len(completed)}/{len(self.steps)}")
         lines.append("")
 
-        # Findings summary by severity
+        # Findings summary with risk score
         lines.append("## 1. Executive Summary")
         lines.append("")
         if findings:
-            counts = {sev: 0 for sev in SEVERITY_ORDER}
-            for f in findings:
-                counts[f.get("severity", "info")] = \
-                    counts.get(f.get("severity", "info"), 0) + 1
-            worst = next((s for s, w in [("critical", 4), ("high", 3),
-                                          ("medium", 2), ("low", 1)]
-                          if counts.get(s)), "Info")
-            summary = (
-                f"The assessment identified **{len(findings)} finding(s)** "
-                f"across the target, with the highest severity being "
-                f"**{worst.upper()}**. "
-                f"Breakdown: critical={counts.get('critical', 0)}, "
-                f"high={counts.get('high', 0)}, medium={counts.get('medium', 0)}, "
-                f"low={counts.get('low', 0)}, info={counts.get('info', 0)}."
-            )
-            lines.append(summary)
+            _ext = _get_findings_extractor()
+            counts = _ext.summarize(findings)
+            risk = _ext.compute_risk_score(findings)
+            worst = _ext.worst_severity(findings)
+            lines.append(f"**Risk Score: {risk['score']}/100 (Grade: {risk['grade']})**")
+            lines.append("")
+            lines.append(f"The assessment identified **{len(findings)} finding(s)** "
+                         f"across the target, with the highest severity being "
+                         f"**{worst.upper()}**.")
+            lines.append("")
+            lines.append("| Severity | Count |")
+            lines.append("|----------|-------|")
+            for sev in ["critical", "high", "medium", "low", "info"]:
+                c = counts.get(sev, 0)
+                if c > 0:
+                    lines.append(f"| {sev.upper()} | {c} |")
         else:
             lines.append("No automated findings were extracted during this run.")
         lines.append("")
@@ -867,31 +874,23 @@ class WorkflowStateMachine:
                          f"[{status}]{alt}")
         lines.append("")
 
-        # Phase 7: Correlated attack paths
+        # Phase 7: Correlated attack paths + summary
         paths = self._correlator.correlate(findings)
         if paths:
             lines.append("## 3. Correlated Attack Paths")
             lines.append("")
             lines.append(self._correlator.paths_to_markdown(paths))
+            lines.append("")
+            # Correlation summary (stats, kill chain coverage, ATT&CK coverage)
+            lines.append(self._correlator.summary_to_markdown(paths, findings))
 
-        # Findings detail (with per-finding remediation from Phase 7)
+        # Findings detail (with context, remediation, severity sections)
         findings_heading = "## 4. Findings" if paths else "## 3. Findings"
         lines.append(findings_heading)
         lines.append("")
         if findings:
-            for i, f in enumerate(findings, 1):
-                sev = f.get("severity", "info").upper()
-                lines.append(f"### {i}. [{sev}] {f.get('title', 'Finding')}")
-                lines.append(f"- **Category**: {f.get('category', 'n/a')}")
-                lines.append(f"- **Source**: `{f.get('source_tool', '')}` "
-                             f"(step: {f.get('source_step', '')})")
-                lines.append(f"- **Evidence**: `{f.get('evidence', '')[:300]}`")
-                remediation = self._correlator.remediation_for(f)
-                if remediation:
-                    lines.append("- **Remediation**:")
-                    for r in remediation:
-                        lines.append(f"  - {r}")
-                lines.append("")
+            # _ext already instantiated above for the summary — reuse it
+            lines.append(_ext.to_report_section(findings))
         else:
             lines.append("No findings recorded.")
             lines.append("")
@@ -920,7 +919,49 @@ class WorkflowStateMachine:
         lines.append("*Generated automatically by RedTeam Harness. "
                      "Review all evidence before acting on findings.*")
 
+        # ── Phase 2: LLM-powered narrative summary & conclusions ──
+        narrative = ""
+        if self.llm and findings:
+            # Cache: reuse if already generated (e.g. abort + completion both call)
+            narrative = self.state.get("llm_narrative", "")
+            if not narrative:
+                try:
+                    narrative = self._llm_generate_narrative(findings, completed, warnings)
+                    if narrative:
+                        self.state["llm_narrative"] = narrative
+                except Exception as e:
+                    logger.warning(f"LLM narrative generation failed (non-fatal): {e}")
+
+        # ── Phase 2b: LLM-powered technical deep dive ──
+        deep_dive = ""
+        if self.llm and findings:
+            deep_dive = self.state.get("llm_deep_dive", "")
+            if not deep_dive:
+                try:
+                    deep_dive = self._llm_generate_technical_deep_dive(findings)
+                    if deep_dive:
+                        self.state["llm_deep_dive"] = deep_dive
+                except Exception as e:
+                    logger.warning(f"LLM deep dive generation failed (non-fatal): {e}")
+
+        # Insert narrative + deep dive after the title line
+        _NARRATIVE_MARKER = "__NARRATIVE_INSERT__"
+        _DEEPDIVE_MARKER = "__DEEPDIVE_INSERT__"
+        if lines and lines[0].startswith("# "):
+            lines.insert(1, _NARRATIVE_MARKER)
+            lines.insert(2, _DEEPDIVE_MARKER)
+        else:
+            lines.insert(0, _NARRATIVE_MARKER)
+            lines.insert(1, _DEEPDIVE_MARKER)
         report = "\n".join(lines)
+        if narrative:
+            report = report.replace(_NARRATIVE_MARKER, narrative + "\n")
+        else:
+            report = report.replace(_NARRATIVE_MARKER, "")
+        if deep_dive:
+            report = report.replace(_DEEPDIVE_MARKER, "## Technical Deep Dive\n\n" + deep_dive + "\n")
+        else:
+            report = report.replace(_DEEPDIVE_MARKER, "")
 
         # Save to sandbox + state
         try:
@@ -934,3 +975,132 @@ class WorkflowStateMachine:
             logger.error(f"Failed to save report: {e}")
 
         return report
+
+    def _llm_generate_narrative(self, findings: List[Dict], completed: List[Dict],
+                                 warnings: List[Dict]) -> str:
+        """
+        Ask the LLM to write a professional executive summary and conclusions
+        based on the structured findings and step results.
+        Returns the narrative text, or empty string on any failure.
+        """
+        if not self.llm:
+            return ""
+
+        _ext = _get_findings_extractor()
+        counts = _ext.summarize(findings)
+        risk = _ext.compute_risk_score(findings)
+        worst = _ext.worst_severity(findings)
+
+        # Build a concise summary of findings for the LLM prompt
+        findings_brief = []
+        for f in findings[:15]:  # Limit to top 15 to keep prompt short
+            findings_brief.append(
+                f"- [{sanitize_for_llm(f.get('severity', 'info').upper(), max_len=10)}] {self._sanitize_prompt(f.get('title', ''))} "
+                f"({self._sanitize_prompt(f.get('category', ''))}) — evidence: {self._sanitize_prompt(f.get('evidence', ''))}")
+
+        steps_brief = []
+        for s in completed:
+            alt = f" (used LLM alternative: {s['llm_alt']['tool']})" if s.get('llm_alt') else ""
+            steps_brief.append(f"- {s.get('step', '?')}: {s.get('tool', '?')} [{s.get('status', '?')}]{alt}")
+
+        attack_vec = self.template.get('attack_vector', 'N/A')
+        category = self.template.get('category', 'general')
+
+        prompt = (
+            f"You are a senior penetration tester writing a professional report.\n\n"
+            f"## Workflow: {sanitize_for_llm(self.template.get('name', 'Unknown'), max_len=200)}\n"
+            f"## Category: {sanitize_for_llm(category, max_len=100)}\n"
+            f"## Attack Vector: {sanitize_for_llm(attack_vec, max_len=200)}\n"
+            f"## Risk Score: {risk['score']}/100 (Grade: {sanitize_for_llm(risk['grade'], max_len=10)})\n"
+            f"## Severity Breakdown: critical={counts.get('critical', 0)}, "
+            f"high={counts.get('high', 0)}, medium={counts.get('medium', 0)}, "
+            f"low={counts.get('low', 0)}, info={counts.get('info', 0)}\n"
+            f"## Highest Severity: {sanitize_for_llm(worst.upper(), max_len=10)}\n\n"
+            f"## Key Findings\n" + "\n".join(findings_brief) + "\n\n"
+            f"## Steps Executed\n" + "\n".join(steps_brief) + "\n\n"
+            f"Write TWO sections:\n"
+            f"1. **Executive Summary** (3-4 paragraphs): Professional narrative summarizing "
+            f"the engagement scope, methodology, key discoveries, and overall risk posture. "
+            f"Written for a non-technical audience (CISO/executive level).\n"
+            f"2. **Conclusions & Recommendations** (2-3 paragraphs): Strategic recommendations "
+            f"prioritized by risk, with specific remediation guidance.\n\n"
+            f"Output ONLY the markdown sections — no preamble, no meta-commentary."
+        )
+
+        logger.info(f"Generating LLM narrative for report ({len(findings)} findings, {len(completed)} steps)")
+        self._emit("on_llm_thinking", {"session_id": self.sandbox.task_id, "step": "executive-summary"})
+        response = self.llm.chat(
+            [{"role": "system", "content": "You are a senior penetration tester and report writer."},
+             {"role": "user", "content": prompt}],
+            max_tokens=2000, temperature=0.3)
+
+        if not response or response.startswith("[ERROR]"):
+            logger.warning("LLM narrative generation returned empty/error")
+            return ""
+
+        if len(response.strip()) < 50:
+            logger.warning("LLM narrative too short, discarding")
+            return ""
+
+        logger.info(f"LLM narrative generated ({len(response)} chars)")
+        return response.strip()
+
+    def _llm_generate_technical_deep_dive(self, findings: List[Dict]) -> str:
+        """
+        Ask the LLM to write a Technical Deep Dive section: detailed walkthrough
+        of each critical/high finding with exploitation steps, evidence analysis,
+        and specific remediation commands.
+        Returns the section text, or empty string on any failure.
+        """
+        if not self.llm:
+            return ""
+
+        # Filter to critical/high findings only
+        critical_high = [f for f in findings
+                         if f.get("severity") in ("critical", "high")]
+        if not critical_high:
+            return ""
+
+        findings_detail = []
+        for i, f in enumerate(critical_high[:10], 1):  # Cap at 10 to stay within context
+            findings_detail.append(
+                f"### Finding {i}: {self._sanitize_prompt(f.get('title', ''))}\n"
+                f"- Severity: {f.get('severity', 'info').upper()}\n"
+                f"- Category: {f.get('category', '')}\n"
+                f"- Source tool: {f.get('source_tool', '')} (step: {f.get('source_step', '')})\n"
+                f"- Evidence: `{self._sanitize_prompt(f.get('evidence', ''))}`\n"
+                f"- Context: {self._sanitize_prompt(f.get('context', ''))}\n")
+
+        prompt = (
+            f"You are a senior penetration tester writing a technical deep-dive section.\n\n"
+            f"For EACH of the following critical/high-severity findings, write:\n"
+            f"1. **Technical Analysis**: What this finding means, how it was detected, "
+            f"what the evidence shows\n"
+            f"2. **Exploitation Path**: Step-by-step how an attacker could exploit this, "
+            f"including specific commands/payloads\n"
+            f"3. **Impact Assessment**: What an attacker gains (access level, data, pivot)\n"
+            f"4. **Remediation**: Specific actionable steps — exact patch versions, "
+            f"configuration changes, firewall rules, code fixes\n\n"
+            f"## Findings to Analyze\n\n"
+            + "\n".join(findings_detail) + "\n\n"
+            f"Write each finding as a ### subsection. Use code blocks for commands. "
+            f"Be specific and actionable — no vague advice. Output ONLY the markdown."
+        )
+
+        logger.info(f"Generating LLM technical deep dive ({len(critical_high)} findings)")
+        self._emit("on_llm_thinking", {"session_id": self.sandbox.task_id, "step": "technical-deep-dive"})
+        response = self.llm.chat(
+            [{"role": "system", "content": "You are a senior penetration tester and technical report writer."},
+             {"role": "user", "content": prompt}],
+            max_tokens=4000, temperature=0.3)
+
+        if not response or response.startswith("[ERROR]"):
+            logger.warning("LLM technical deep dive returned empty/error")
+            return ""
+
+        if len(response.strip()) < 50:
+            logger.warning("LLM technical deep dive too short, discarding")
+            return ""
+
+        logger.info(f"LLM technical deep dive generated ({len(response)} chars)")
+        return response.strip()

@@ -19,14 +19,29 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-from core.hardening import INJECTION_PATTERNS
-
 logger = logging.getLogger("redteam.gen")
 
 # ── Limits ──
 MAX_GENERATED_STEPS = 20
 MAX_ARG_STR_LEN = 500
 SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9_-]+")
+
+# ── Injection patterns for arg validation (used by _validate) ──
+INJECTION_PATTERNS = [
+    r";\s*rm\s",
+    r"&&\s*rm\s",
+    r"\|\|\s*rm\s",
+    r"`[^`]+`",
+    r"\$\([^)]+\)",
+    r">\s*/dev/",
+    r"curl\s.*\|\s*(ba)?sh",
+    r"wget\s.*\|\s*(ba)?sh",
+    r"eval\s*\(",
+    r"exec\s*\(",
+    r"__import__",
+    r"subprocess",
+    r"os\.system",
+]
 
 # ── JSON schema handed to the LLM via GBNF json_schema enforcement ──
 GENERATOR_SCHEMA = {
@@ -61,6 +76,33 @@ GENERATOR_SCHEMA = {
 class WorkflowGenerator:
     """Generates, validates, and persists LLM-proposed workflow templates."""
 
+    # Single denylist of injection phrases — each is stripped from the objective.
+    # No sentence splitting, no prefix stripping — just sub() each pattern.
+    _INJECTION_DENYLIST = [
+        re.compile(r'ignore\s+(all\s+)?previous\s+instructions?', re.I),
+        re.compile(r'disregard\s+(all\s+)?previous', re.I),
+        re.compile(r'forget\s+(all\s+)?previous', re.I),
+        re.compile(r'override\s+\w*\s*prompt', re.I),
+        re.compile(r'pretend\s+(you\s+are|to\s+be)\s+(a|an|the)?\s*\w+', re.I),
+        re.compile(r'you\s+are\s+(a|an|the)\s+\w+', re.I),
+        re.compile(r'act\s+as\s+(a|an|the)\s+\w+', re.I),
+        re.compile(r'role\s*play', re.I),
+        re.compile(r'output\s+your\s+(system|initial|full|original)', re.I),
+        re.compile(r'reveal\s+your\s+(system|prompt)', re.I),
+        re.compile(r'jailbreak', re.I),
+        re.compile(r'system\s*prompt', re.I),
+        re.compile(r'\[INST\].*?\[/INST\]', re.I | re.DOTALL),
+        re.compile(r'<<SYS>>.*?<</SYS>>', re.I | re.DOTALL),
+        re.compile(r'<\|im_start\|>.*?<\|im_end\|>', re.I | re.DOTALL),
+        re.compile(r'\{\{.*?\}\}'),
+        re.compile(r'<script[^>]*>.*?</script>', re.I | re.DOTALL),
+        re.compile(r'javascript:', re.I),
+        re.compile(r'data:text/html', re.I),
+    ]
+
+    # Minimum objective length after sanitization (chars)
+    MIN_OBJECTIVE_LEN = 10
+
     def __init__(self, llm, registry, templates_dir: str = "workflows/templates"):
         self.llm = llm
         self.registry = registry
@@ -70,13 +112,32 @@ class WorkflowGenerator:
     # Main entry points
     # ═══════════════════════════════════════════════════════════════
 
+    def sanitize_objective(self, objective: str) -> str:
+        """Strip prompt injection attempts from the objective text.
+        Returns the cleaned text, or empty string if the input is pure injection.
+        """
+        if not objective or not objective.strip():
+            return ""
+        cleaned = objective
+        for pattern in self._INJECTION_DENYLIST:
+            cleaned = pattern.sub('', cleaned)
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        return cleaned
+
     def generate(self, objective: str) -> Dict[str, Any]:
         """
         Ask the LLM to design a workflow for `objective`, validate it,
         save it as a YAML template, and return {name, path, summary, errors}.
         Never raises — errors are returned in the dict.
         """
-        definition = self._ask_llm(objective)
+        # Sanitize the objective to prevent prompt injection
+        cleaned = self.sanitize_objective(objective)
+        if not cleaned:
+            return {"error": "Objective text rejected (empty after sanitization)"}
+        if len(cleaned) < self.MIN_OBJECTIVE_LEN:
+            return {"error": f"Objective too short ({len(cleaned)} < {self.MIN_OBJECTIVE_LEN} chars) — provide a more detailed description"}
+
+        definition = self._ask_llm(cleaned)
         if "error" in definition:
             return definition
 
@@ -95,7 +156,7 @@ class WorkflowGenerator:
             "steps_count": len(definition.get("steps", [])),
             "steps": [s.get("name") for s in definition.get("steps", [])],
             "variables": list(definition.get("variables", {}).keys()),
-            "objective": objective,
+            "objective": cleaned,
             "created": datetime.now().isoformat(),
         }
 

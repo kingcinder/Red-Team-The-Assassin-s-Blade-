@@ -11,7 +11,6 @@ Enforces security boundaries around every tool execution:
 import os
 import re
 import time
-import signal
 import logging
 import subprocess
 import threading
