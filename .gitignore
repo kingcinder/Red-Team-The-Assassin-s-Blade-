@@ -54,6 +54,8 @@ Desktop.ini
 .htpasswd
 .env
 .env.*
+# Allow .env.example to be tracked
+!.env.example
 credentials.json
 service-account*.json
 
