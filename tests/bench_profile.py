@@ -6,15 +6,26 @@ Simulates a realistic mid-size engagement so we can profile the code that
 runs on every finding / tool output / LLM round trip:
 
   1. injection_defense.sanitize_tool_output  (every tool result, every step)
-  2. findings.FindingsExtractor.extract       (parse tool output into findings)
+  2. findings.FindingsExtractor.scan         (parse tool output into findings)
   3. correlation.correlate + _map_attack_techniques (per-finding keyword maps)
   4. knowledge_base.signature_match + ground_findings (every correlated run)
   5. knowledge_base.search (retrieval on demand)
 
-Run: python3 -m cProfile -o /tmp/rt_bench.prof tests/bench_profile.py
+Run:     python3 tests/bench_profile.py                  # print summary
+         python3 tests/bench_profile.py --budget 5.0     # CI regression gate
+         python3 -m cProfile -o /tmp/rt_bench.prof tests/bench_profile.py
+
+CI budget: this is a REGRESSION TRIPWIRE, not a micro-benchmark. `--budget`
+times only the workload (main(), imports excluded) and exits 1 when the wall
+clock exceeds the ceiling — generous headroom on purpose, so only an
+order-of-magnitude blowup (e.g. a re-introduced O(rules×findings) inner
+loop) fails the build, never runner noise. Override via --budget or the
+REDTEAM_PERF_BUDGET env var.
 """
+import argparse
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -116,7 +127,8 @@ def build_findings(extractor, n_hosts=20):
     return all_findings
 
 
-def main():
+def run_workload():
+    """Execute the benchmark workload; returns (findings, paths, grounded)."""
     extractor = FindingsExtractor()
     correlator = FindingCorrelator()
     kb = KnowledgeBase()
@@ -152,8 +164,40 @@ def main():
     from core.correlation import build_attack_matrix
     build_attack_matrix(grounded, paths)
 
+    return findings, paths, grounded
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="bench_profile",
+        description="RedTeam Harness performance workload + optional CI budget gate")
+    ap.add_argument(
+        "--budget", type=float, default=None,
+        help="Wall-clock ceiling (seconds) for the WORKLOAD (imports excluded). "
+             "Exits 1 when exceeded. Defaults to $REDTEAM_PERF_BUDGET; unset = "
+             "benchmark-only mode (no gate).")
+    args = ap.parse_args(argv)
+
+    budget = args.budget
+    if budget is None:
+        env = os.environ.get("REDTEAM_PERF_BUDGET")
+        budget = float(env) if env and env.strip() else None
+
+    t0 = time.perf_counter()
+    findings, paths, grounded = run_workload()
+    elapsed = time.perf_counter() - t0
+
     print(f"benchmark complete: {len(findings)} findings, "
           f"{len(paths)} paths, {len(grounded)} grounded")
+    print(f"workload wall-clock: {elapsed:.3f}s")
+
+    if budget is not None:
+        if elapsed > budget:
+            print(f"PERF BUDGET EXCEEDED: {elapsed:.3f}s > {budget:.3f}s "
+                  f"— a hot-path regression likely reintroduced an "
+                  f"O(rules×findings) blowup", file=sys.stderr)
+            sys.exit(1)
+        print(f"perf budget OK: {elapsed:.3f}s <= {budget:.3f}s")
 
 
 if __name__ == "__main__":

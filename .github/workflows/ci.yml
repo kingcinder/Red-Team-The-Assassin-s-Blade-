@@ -30,7 +30,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run all 17 test suites
+      - name: Run all test suites
         run: |
           for t in tests/test_*.py; do
             echo "=== $t ==="
@@ -52,3 +52,8 @@ jobs:
         run: |
           python3 tests/smoke_imports.py
           echo "IMPORT SMOKE OK"
+
+      - name: Perf budget regression (hot-path tripwire)
+        run: |
+          python3 tests/bench_profile.py --budget 5.0
+          echo "PERF BUDGET OK"
