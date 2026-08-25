@@ -118,9 +118,12 @@
                         <button class="tab active" onclick="showResultsTab('live')">Live Output</button>
                         <button class="tab" onclick="showResultsTab('plan')">📋 Plan</button>
                         <button class="tab" onclick="showResultsTab('findings')">Findings</button>
+                        <button class="tab" onclick="showResultsTab('tactics')">🎯 Tactics</button>
                         <button class="tab" onclick="showResultsTab('report')">📄 Report</button>
                         <button class="tab" onclick="showResultsTab('graph')">🔗 Chain</button>
                         <button class="tab" onclick="showResultsTab('log')">Command Log</button>
+                    <button class="tab" onclick="showResultsTab('campaign')">📡 Campaign</button>
+                    <button class="tab" onclick="showResultsTab('memory')">🧠 Memory</button>
                     </div>
                 </div>
                 <div class="results-content" id="results-live">
@@ -132,6 +135,9 @@
                 <div class="results-content hidden" id="results-findings">
                     <div id="findings-list"><p class="muted">No findings yet.</p></div>
                 </div>
+                <div class="results-content hidden" id="results-tactics">
+                    <div id="tactics-feed"><p class="muted">No tactical suggestions yet. Run a scan or workflow to see AI-powered next actions here.</p></div>
+                </div>
                 <div class="results-content hidden" id="results-report">
                     <div id="report-content"><p class="muted">Report will appear here when engagement completes.</p></div>
                 </div>
@@ -140,6 +146,9 @@
                         <select id="graph-wf-select" class="modal-select" onchange="renderWorkflowGraph()">
                             <option value="">Select workflow to visualize...</option>
                         </select>
+                        <select id="graph-task-select" class="modal-select" style="max-width:300px" onchange="onGraphTaskChange()">
+                            <option value="">Template view (no state)</option>
+                        </select>
                         <button class="btn-primary" onclick="renderWorkflowGraph()">🔄 Render</button>
                     </div>
                     <div id="graph-content"><p class="muted">Pick a workflow to see its attack chain graph. Solid arrows = sequence, dashed arrows = exploit chaining (extracted data flows into later steps).</p></div>
@@ -147,8 +156,132 @@
                 <div class="results-content hidden" id="results-log">
                     <div id="command-log"><p class="muted">No commands executed yet.</p></div>
                 </div>
+                <div class="results-content hidden" id="results-memory">
+                    <div class="memory-panel">
+                        <div class="memory-header">
+                            <h3>🧠 Vector Memory / RAG</h3>
+                            <div class="memory-actions">
+                                <button class="btn-primary" onclick="memorySearch()">🔍 Search</button>
+                                <button class="btn-primary" onclick="memoryExport()">📦 Export</button>
+                                <button class="btn-danger" onclick="memoryReset()">🗑️ Reset</button>
+                            </div>
+                        </div>
+                        <div class="memory-search-bar">
+                            <input class="modal-input" id="memory-search-input" placeholder="Search past findings (e.g. 'SQL injection 192.168.1.10')" onkeydown="if(event.key==='Enter')memorySearch()">
+                        </div>
+                        <div class="memory-stats" id="memory-stats"><p class="muted">Loading...</p></div>
+                        <div class="memory-targets" id="memory-targets"><p class="muted">No targets stored yet.</p></div>
+                        <div class="memory-results" id="memory-results"></div>
+                        <div id="memory-import-area" style="margin-top:12px">
+                            <label class="modal-label">Import Memory Bundle (.zip)</label>
+                            <input type="file" id="memory-import-file" accept=".zip" style="color:var(--text)">
+                            <button class="btn-primary" onclick="memoryImport()" style="margin-top:6px">📥 Import</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="results-content hidden" id="results-campaign">
+                    <div id="campaign-mini-view">
+                        <div class="campaign-mini-header">
+                            <span>📡 Campaign Overview</span>
+                            <button class="btn-primary" onclick="openCampaignPanel()">Open Full C2 View</button>
+                        </div>
+                        <div id="campaign-mini-content"><p class="muted">No active campaign. Create one to track multi-target runs.</p></div>
+                        <div class="campaign-create-form">
+                            <label class="modal-label">Campaign Name</label>
+                            <input class="modal-input" id="camp-name" placeholder="e.g. Internal Network Assessment">
+                            <label class="modal-label">Targets (comma-separated)</label>
+                            <input class="modal-input" id="camp-targets-input" placeholder="10.0.0.1,10.0.0.2,10.0.0.3">
+                            <label class="modal-label">Workflow (optional)</label>
+                            <select class="modal-select" id="camp-wf-select"><option value="">Select workflow...</option></select>
+                            <div style="margin-top:10px;display:flex;gap:8px">
+                                <button class="btn-primary" onclick="createCampaign()">📡 Create Campaign</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </main>
+
+        <!-- C2 Campaign Panel (full-width overlay) -->
+        <div class="campaign-panel hidden" id="campaign-panel">
+            <div class="campaign-header">
+                <div class="campaign-header-left">
+                    <span class="campaign-logo">📡</span>
+                    <h2>C2 Campaign Dashboard</h2>
+                    <span class="campaign-id" id="campaign-id-display"></span>
+                </div>
+                <div class="campaign-header-right">
+                    <div class="campaign-risk-gauge" id="campaign-risk-gauge">
+                        <canvas id="risk-gauge-canvas" width="80" height="80"></canvas>
+                        <span class="risk-gauge-label" id="risk-gauge-label">0</span>
+                    </div>
+                    <button class="btn-icon" onclick="toggleCampaignPanel()">✕ Close</button>
+                </div>
+            </div>
+            <div class="campaign-body">
+                <!-- Campaign Summary Bar -->
+                <div class="campaign-summary">
+                    <div class="camp-stat">
+                        <span class="camp-stat-value" id="camp-targets-total">0</span>
+                        <span class="camp-stat-label">Targets</span>
+                    </div>
+                    <div class="camp-stat">
+                        <span class="camp-stat-value" id="camp-targets-complete">0</span>
+                        <span class="camp-stat-label">Complete</span>
+                    </div>
+                    <div class="camp-stat">
+                        <span class="camp-stat-value" id="camp-targets-active">0</span>
+                        <span class="camp-stat-label">Active</span>
+                    </div>
+                    <div class="camp-stat">
+                        <span class="camp-stat-value" id="camp-targets-failed">0</span>
+                        <span class="camp-stat-label">Failed</span>
+                    </div>
+                    <div class="camp-stat">
+                        <span class="camp-stat-value" id="camp-findings-total">0</span>
+                        <span class="camp-stat-label">Findings</span>
+                    </div>
+                    <div class="camp-stat">
+                        <span class="camp-stat-value" id="camp-risk-score">0</span>
+                        <span class="camp-stat-label">Risk Score</span>
+                    </div>
+                    <div class="camp-stat">
+                        <span class="camp-stat-value" id="camp-drift-avg">0.00</span>
+                        <span class="camp-stat-label">Avg Drift</span>
+                    </div>
+                </div>
+
+                <!-- Per-Target Grid -->
+                <div class="campaign-section">
+                    <h3>🎯 Per-Target Status</h3>
+                    <div class="target-grid" id="campaign-target-grid">
+                        <p class="muted">No targets yet. Create a campaign to begin.</p>
+                    </div>
+                </div>
+
+                <!-- Findings Heatmap -->
+                <div class="campaign-section">
+                    <h3>🔥 Findings Heatmap</h3>
+                    <div class="heatmap-container" id="campaign-heatmap">
+                        <p class="muted">No findings yet.</p>
+                    </div>
+                </div>
+
+                <!-- Drift Confidence Gauges -->
+                <div class="campaign-section">
+                    <h3>🎯 Drift Confidence</h3>
+                    <div class="drift-gauges" id="campaign-drift-gauges">
+                        <p class="muted">No drift data yet.</p>
+                    </div>
+                </div>
+
+                <!-- Campaign Actions -->
+                <div class="campaign-actions">
+                    <button class="btn-primary" onclick="startCampaignRun()">▶ Start Campaign</button>
+                    <button class="btn-danger" onclick="toggleCampaignPanel()">✕ Close</button>
+                </div>
+            </div>
+        </div>
 
         <aside class="panel session-panel" id="session-panel">
             <div class="panel-header">

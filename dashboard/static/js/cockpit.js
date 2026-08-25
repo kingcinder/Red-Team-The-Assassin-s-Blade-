@@ -15,6 +15,8 @@ let findings = [];
 let currentCategory = 'all';
 let streamingMessage = null;
 let autonomousEnabled = false;
+let tacticalSuggestions = [];
+let tacticalExecuting = new Set();
 
 // ═══════════════════════════════════════════════════════════════
 // Initialize
@@ -32,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initInput();
     initTabs();
     initAutonomousToggle();
+    loadCampaignSelectOptions();
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -141,6 +144,39 @@ function initSocket() {
 
     socket.on('workflow_generated', (data) => {
         handleWorkflowGenerated(data);
+    });
+
+    // ── Campaign events ──
+    socket.on('campaign_target_update', (data) => {
+        if (data.campaign_id === currentCampaignId) {
+            refreshCampaignData();
+        }
+    });
+
+    socket.on('campaign_update', (data) => {
+        if (data.campaign_id === currentCampaignId) {
+            refreshCampaignData();
+        }
+    });
+
+    socket.on('campaign_complete', (data) => {
+        if (data.campaign_id === currentCampaignId) {
+            refreshCampaignData();
+            addSystemMessage(`📡 Campaign ${data.status}: ${data.error || 'all targets processed'}`);
+            if (campaignPollTimer) {
+                clearInterval(campaignPollTimer);
+                campaignPollTimer = null;
+            }
+        }
+    });
+
+    // ── Tactical suggestions (live feed) ──
+    socket.on('tactical_suggestions', (data) => {
+        handleTacticalSuggestions(data);
+    });
+
+    socket.on('tactical_result', (data) => {
+        handleTacticalResult(data);
     });
 }
 
@@ -344,6 +380,10 @@ function updateToolResult(data) {
 }
 
 function handleTaskComplete(data) {
+    // Client-side tactical evaluation from task results
+    if (data.findings && data.findings.length) {
+        evaluateTacticsFromFindings(data.findings);
+    }
     const steps = data.steps || [];
     for (const step of steps) {
         if (step.llm_response && !streamingMessage) {
@@ -396,6 +436,155 @@ function showReport(report) {
 function scrollToBottom() {
     const container = document.getElementById('chat-messages');
     container.scrollTop = container.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Vector Memory / RAG Panel
+// ═══════════════════════════════════════════════════════════════
+async function loadMemoryPanel() {
+    try {
+        const statsEl = document.getElementById('memory-stats');
+        if (statsEl) statsEl.innerHTML = '<p class="muted">Loading memory...</p>';
+        const [statsRes, targetsRes] = await Promise.all([
+            fetch('/api/memory/stats'),
+            fetch('/api/memory/targets')
+        ]);
+        const stats = await statsRes.json();
+        const targets = await targetsRes.json();
+        renderMemoryStats(stats);
+        renderMemoryTargets(targets);
+    } catch (e) {
+        console.error('Memory load failed:', e);
+    }
+}
+
+function renderMemoryStats(stats) {
+    const el = document.getElementById('memory-stats');
+    if (!el) return;
+    const sevCounts = stats.severity_counts || {};
+    el.innerHTML = `
+        <div class="memory-stat-grid">
+            <div class="memory-stat"><span class="ms-val">${stats.total_findings || 0}</span><span class="ms-label">Total Findings</span></div>
+            <div class="memory-stat"><span class="ms-val">${stats.unique_sessions || 0}</span><span class="ms-label">Sessions</span></div>
+            <div class="memory-stat"><span class="ms-val">${stats.vocab_size || 0}</span><span class="ms-label">Vocab Size</span></div>
+            <div class="memory-stat"><span class="ms-val">${stats.fitted ? '✅' : '❌'}</span><span class="ms-label">Index Ready</span></div>
+        </div>
+        <div class="memory-severity-bar">
+            <span class="sev sev-critical" title="Critical">🔴 ${sevCounts.critical || 0}</span>
+            <span class="sev sev-high" title="High">🟠 ${sevCounts.high || 0}</span>
+            <span class="sev sev-medium" title="Medium">🟡 ${sevCounts.medium || 0}</span>
+            <span class="sev sev-low" title="Low">🔵 ${sevCounts.low || 0}</span>
+            <span class="sev sev-info" title="Info">⚪ ${sevCounts.info || 0}</span>
+        </div>
+    `;
+}
+
+function renderMemoryTargets(targets) {
+    const el = document.getElementById('memory-targets');
+    if (!el) return;
+    if (!targets || targets.length === 0) {
+        el.innerHTML = '<p class="muted">No targets stored yet.</p>';
+        return;
+    }
+    el.innerHTML = '<h4>🎯 Stored Targets</h4>' + targets.map(t => {
+        const sevBars = Object.entries(t.severities || {}).map(([s, c]) => 
+            `<span class="sev-dot sev-${s}" title="${s}: ${c}">${c}</span>`).join(' ');
+        return `<div class="memory-target-row" data-target="${escapeHtml(t.target)}" onclick="memoryQueryTarget(this.dataset.target)">
+            <span class="mt-name">${escapeHtml(t.target)}</span>
+            <span class="mt-count">${t.count} findings</span>
+            <span class="mt-sevs">${sevBars}</span>
+        </div>`;
+    }).join('');
+}
+
+async function memorySearch() {
+    const input = document.getElementById('memory-search-input');
+    const query = input.value.trim();
+    if (!query) return;
+    try {
+        const res = await fetch('/api/memory/query', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({query, top_k: 15})
+        });
+        const data = await res.json();
+        renderMemoryResults(data.results || [], `Search: "${query}"`);
+    } catch (e) {
+        console.error('Memory search failed:', e);
+    }
+}
+
+async function memoryQueryTarget(target) {
+    try {
+        const res = await fetch(`/api/memory/target/${encodeURIComponent(target)}`);
+        const data = await res.json();
+        renderMemoryResults(data.findings || [], `Target: ${target}`);
+    } catch (e) {
+        console.error('Memory target query failed:', e);
+    }
+}
+
+function renderMemoryResults(results, title) {
+    const el = document.getElementById('memory-results');
+    if (!el) return;
+    if (!results || results.length === 0) {
+        el.innerHTML = `<p class="muted">No results for: ${escapeHtml(title)}</p>`;
+        return;
+    }
+    el.innerHTML = `<h4>🔍 ${escapeHtml(title)} (${results.length} results)</h4>` + results.map(f => {
+        const sev = f.severity || 'info';
+        const sim = f.similarity ? ` (sim: ${f.similarity})` : '';
+        const match = f.match_type ? ` [${f.match_type}]` : '';
+        return `<div class="memory-finding sev-border-${sev}">
+            <div class="mf-header"><span class="sev-badge sev-${sev}">${sev.toUpperCase()}</span> ${escapeHtml(f.title || 'Unknown')}${sim}${match}</div>
+            <div class="mf-meta">Tool: ${escapeHtml(f.source_tool || '?')} | Session: ${escapeHtml(f.session_id || '?')}</div>
+            ${f.evidence ? `<div class="mf-evidence">${escapeHtml(f.evidence)}</div>` : ''}
+        </div>`;
+    }).join('');
+}
+
+async function memoryExport() {
+    try {
+        const res = await fetch('/api/memory/export');
+        if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'redteam_memory_export.zip';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        alert('Export failed: ' + e.message);
+    }
+}
+
+async function memoryImport() {
+    const fileInput = document.getElementById('memory-import-file');
+    const file = fileInput.files[0];
+    if (!file) { alert('Select a .zip file to import'); return; }
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const res = await fetch('/api/memory/import', {method: 'POST', body: formData});
+        const data = await res.json();
+        if (data.error) { alert('Import failed: ' + data.error); return; }
+        addSystemMessage(`📥 Memory imported: ${data.imported} files, ${data.stats?.total_findings || 0} findings`);
+        loadMemoryPanel();
+    } catch (e) {
+        alert('Import failed: ' + e.message);
+    }
+}
+
+async function memoryReset() {
+    if (!confirm('⚠️ This will permanently delete ALL stored vector memory. Continue?')) return;
+    try {
+        await fetch('/api/memory/reset', {method: 'POST'});
+        addSystemMessage('🗑️ Vector memory cleared');
+        loadMemoryPanel();
+    } catch (e) {
+        alert('Reset failed: ' + e.message);
+    }
 }
 
 function showThinking(show) {
@@ -685,6 +874,7 @@ function handleWorkflowResult(data) {
     if (data.findings && data.findings.length) {
         renderFindings(data.findings);
         correlateFindings(data.findings);
+        evaluateTacticsFromFindings(data.findings);
     }
 }
 
@@ -704,6 +894,7 @@ function handleMultiWorkflowResult(data) {
     if (data.pooled_findings && data.pooled_findings.length) {
         renderFindings(data.pooled_findings);
         correlateFindings(data.pooled_findings);
+        evaluateTacticsFromFindings(data.pooled_findings);
     }
 }
 
@@ -756,6 +947,205 @@ function renderAttackPaths(paths) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Tactical Suggestions Feed (Live)
+// ═══════════════════════════════════════════════════════════════
+
+const TACTICAL_COLORS = {
+    'recon': 'var(--accent-cyan)',
+    'vuln': 'var(--accent-orange)',
+    'web': 'var(--accent-green)',
+    'password': 'var(--accent-yellow)',
+    'exploit': 'var(--accent-red)',
+    'postex': 'var(--accent-purple)',
+};
+
+const TACTICAL_ICONS = {
+    'nikto_scan': '🌐', 'hydra_brute': '🔓', 'enum4linux': '📁',
+    'sqlmap_scan': '💉', 'gobuster': '📂', 'wpscan': '🔫',
+    'hashcat_crack': '🔑', 'impacket_tools': '🦾',
+    'msfvenom_payload': '💥', 'nuclei': '🔍', 'crackmapexec_exec': '🧩',
+    'bloodhound_analyze': '🦇', 'socat': '🔌', 'curl_request': '📡',
+};
+
+function handleTacticalSuggestions(data) {
+    const suggestions = data.suggestions || [];
+    if (!suggestions.length) return;
+
+    // Track previous count for new-suggestion notification
+    const prevCount = tacticalSuggestions.length;
+
+    // Dedup: merge new suggestions with existing, keep highest confidence
+    for (const s of suggestions) {
+        const key = s.tool + ':' + JSON.stringify(s.args);
+        const existing = tacticalSuggestions.find(e => e.tool + ':' + JSON.stringify(e.args) === key);
+        if (!existing) {
+            tacticalSuggestions.push(s);
+        } else if (s.confidence > existing.confidence) {
+            Object.assign(existing, s);
+        }
+    }
+
+    // Sort by confidence descending
+    tacticalSuggestions.sort((a, b) => b.confidence - a.confidence);
+
+    // Update tab badge count
+    updateTacticsBadge();
+
+    // Add system message notification for new suggestions only
+    const newCount = tacticalSuggestions.length - prevCount;
+    if (newCount > 0) {
+        const newAutoCount = suggestions.filter(s => s.auto_run).length;
+        addSystemMessage(`🎯 Tactical engine: ${newCount} new suggestion${newCount > 1 ? 's' : ''}` +
+            (newAutoCount > 0 ? ` (${newAutoCount} auto-run)` : ''));
+    }
+
+    // Render the full tactical feed
+    renderTacticalFeed();
+}
+
+function evaluateTacticsFromFindings(findings) {
+    // Client-side: send findings to server for tactical evaluation
+    if (findings && findings.length) {
+        const context = sessionId ? { host: sessionId } : {};
+        fetch('/api/tactics/suggest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ findings, context }),
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.suggestions && data.suggestions.length) {
+                handleTacticalSuggestions({ suggestions: data.suggestions });
+            }
+        })
+        .catch(e => console.error('Tactical evaluation failed:', e));
+    }
+}
+
+function updateTacticsBadge() {
+    const tabs = document.querySelectorAll('.results-tabs .tab');
+    for (const t of tabs) {
+        if (t.textContent.includes('Tactics')) {
+            t.textContent = tacticalSuggestions.length > 0
+                ? `🎯 Tactics (${tacticalSuggestions.length})`
+                : '🎯 Tactics';
+            break;
+        }
+    }
+}
+
+function renderTacticalFeed() {
+    const el = document.getElementById('tactics-feed');
+    if (!el) return;
+
+    updateTacticsBadge();
+
+    if (!tacticalSuggestions.length) {
+        el.innerHTML = '<p class="muted">No tactical suggestions yet. Run a scan or workflow to see AI-powered next actions here.</p>';
+        return;
+    }
+
+    el.innerHTML = tacticalSuggestions.map((s, i) => {
+        const confPct = Math.round(s.confidence * 100);
+        const confColor = s.auto_run ? 'var(--accent-green)' :
+                          s.confidence >= 0.5 ? 'var(--accent-yellow)' : 'var(--accent-cyan)';
+        const icon = TACTICAL_ICONS[s.tool] || '⚔️';
+        const toolColor = TACTICAL_COLORS[s.tool.split('_')[0]] || 'var(--accent-cyan)';
+
+        return `
+            <div class="tactical-card ${s.auto_run ? 'auto-run' : ''}" id="tac-${i}">
+                <div class="tactical-header">
+                    <div class="tactical-tool">
+                        <span class="tactical-icon">${icon}</span>
+                        <span class="tactical-tool-name" style="color:${toolColor}">${escapeHtml(s.tool)}</span>
+                        ${s.auto_run ? '<span class="tactical-badge auto">⚡ AUTO</span>' : '<span class="tactical-badge suggest">💡 SUGGEST</span>'}
+                    </div>
+                    <div class="tactical-confidence">
+                        <div class="conf-bar">
+                            <div class="conf-fill" style="width:${confPct}%;background:${confColor}"></div>
+                        </div>
+                        <span class="conf-label" style="color:${confColor}">${confPct}%</span>
+                    </div>
+                </div>
+                <div class="tactical-reasoning">${escapeHtml(s.reasoning)}</div>
+                <div class="tactical-triggered">Triggered by: <code>${escapeHtml(s.triggered_by)}</code></div>
+                <div class="tactical-args">
+                    <code>${escapeHtml(JSON.stringify(s.args))}</code>
+                </div>
+                <div class="tactical-actions">
+                    <button class="tactical-btn execute" onclick="executeTactical(${i})">
+                        ▶ Execute Now
+                    </button>
+                    <button class="tactical-btn dismiss" onclick="dismissTactical(${i})">
+                        ✕ Dismiss
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function executeTactical(index) {
+    const s = tacticalSuggestions[index];
+    if (!s) return;
+
+    // Prevent double-execution
+    const execKey = s.tool + ':' + JSON.stringify(s.args);
+    if (tacticalExecuting.has(execKey)) return;
+    tacticalExecuting.add(execKey);
+
+    const card = document.getElementById(`tac-${index}`);
+    if (card) {
+        card.classList.add('executing');
+        const btn = card.querySelector('.tactical-btn.execute');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '⏳ Running...';
+        }
+    }
+
+    addSystemMessage(`🎯 Executing tactical action: ${s.tool} — ${escapeHtml(s.reasoning)}`);
+    socket.emit('execute_tactical', {
+        tool: s.tool,
+        args: s.args,
+        session_id: sessionId,
+    });
+}
+
+function dismissTactical(index) {
+    tacticalSuggestions.splice(index, 1);
+    renderTacticalFeed();
+}
+
+function handleTacticalResult(data) {
+    const result = data.result || {};
+    if (data.error) {
+        addSystemMessage(`❌ Tactical failed: ${escapeHtml(data.error)}`);
+        renderTacticalFeed();
+        return;
+    }
+    const success = result.status === 'success' || result.exit_code === 0;
+    const icon = success ? '✅' : '❌';
+
+    addSystemMessage(`${icon} Tactical execution: ${data.tool} — ${success ? 'completed' : 'failed (exit ' + (result.exit_code ?? '?') + ')'}`);
+
+    // If the tactical action produced output, show it
+    if (result.summary || result.stdout) {
+        const output = result.summary || (result.stdout ? result.stdout.slice(0, 500) : 'No output');
+        addAssistantMessage(`**${data.tool} output:**\n\n${output}`);
+    }
+
+    // Remove the executed suggestion from the feed
+    const idx = tacticalSuggestions.findIndex(s => s.tool === data.tool);
+    if (idx >= 0) {
+        tacticalSuggestions.splice(idx, 1);
+    }
+    // Clear executing guard
+    tacticalExecuting.delete(data.tool + ':' + JSON.stringify(data.args || {}));
+    renderTacticalFeed();
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Workflow Chain Graph (Phase 4)
 // ═══════════════════════════════════════════════════════════════
 async function populateGraphSelect() {
@@ -771,6 +1161,9 @@ async function populateGraphSelect() {
     }
 }
 
+let currentGraphTaskId = null;
+let currentGraphData = null;
+
 async function renderWorkflowGraph() {
     const sel = document.getElementById('graph-wf-select');
     const name = sel ? sel.value : '';
@@ -781,16 +1174,43 @@ async function renderWorkflowGraph() {
     }
     content.innerHTML = '<p class="muted">Rendering chain graph...</p>';
     try {
-        const res = await fetch(`/api/workflows/graph/${encodeURIComponent(name)}`);
+        let url = `/api/workflows/graph/${encodeURIComponent(name)}`;
+        if (currentGraphTaskId) url += `?task_id=${encodeURIComponent(currentGraphTaskId)}`;
+        const res = await fetch(url);
         const graph = await res.json();
         if (graph.error) {
             content.innerHTML = `<p class="muted">${escapeHtml(graph.error)}</p>`;
             return;
         }
+        currentGraphData = graph;
+        // Also load task list for this workflow to show as selector
+        await loadGraphTaskList(name);
         content.innerHTML = drawChainGraph(graph);
     } catch (e) {
         content.innerHTML = `<p class="muted">Graph load failed: ${escapeHtml(e.message)}</p>`;
     }
+}
+
+async function loadGraphTaskList(workflowName) {
+    try {
+        const res = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}/status`);
+        const data = await res.json();
+        const tasks = data.tasks || [];
+        const taskSel = document.getElementById('graph-task-select');
+        if (!taskSel) return;
+        if (tasks.length === 0) {
+            taskSel.innerHTML = '<option value="">No completed runs</option>';
+            return;
+        }
+        taskSel.innerHTML = '<option value="">Template view (no state)</option>' +
+            tasks.map(t => `<option value="${escapeHtml(t.task_id)}" ${t.task_id === currentGraphTaskId ? 'selected' : ''}>${escapeHtml(t.task_id)} — ${escapeHtml(t.status || 'unknown')}</option>`).join('');
+    } catch (e) { /* silent */ }
+}
+
+function onGraphTaskChange() {
+    const sel = document.getElementById('graph-task-select');
+    currentGraphTaskId = sel && sel.value ? sel.value : null;
+    renderWorkflowGraph();
 }
 
 function drawChainGraph(graph) {
@@ -802,15 +1222,29 @@ function drawChainGraph(graph) {
     const idIdx = {};
     nodes.forEach((n, i) => idIdx[n.id] = i);
 
+    // Collect chain value labels for edges
+    const chainLabels = {};
+    edges.filter(e => e.kind === 'chain').forEach(e => {
+        const fromNode = nodes.find(n => n.id === e.from);
+        if (fromNode && fromNode.deps) {
+            // Find extract vars that flow from 'from' to 'to'
+            // We'll label the edge with the variable name
+            chainLabels[e.from + '→' + e.to] = e.chain_var || '';
+        }
+    });
+
     // Column layout: sequential flow left→right; chain edges may pull right
     const COLS = nodes.length;
-    const NODE_W = 180, NODE_H = 64, GX = 60, GY = 100;
+    const NODE_W = 200, NODE_H = 72, GX = 70, GY = 110;
     const W = COLS * (NODE_W + GX) + GX;
     const H = 2 * (NODE_H + GY) + 60;
 
     const colors = {
         pending: '#5b6b7a', success: '#22c55e', failed: '#ef4444',
         blocked: '#ef4444', running: '#f59e0b', not_started: '#5b6b7a',
+    };
+    const statusIcons = {
+        success: '✅', failed: '❌', blocked: '🚫', running: '⏳', pending: '⏸️',
     };
 
     // Position: try to place nodes with chain deps on the same row
@@ -832,7 +1266,9 @@ function drawChainGraph(graph) {
     let svg = `<svg viewBox="0 0 ${W} ${Math.max(H, 220)}" class="chain-svg" xmlns="http://www.w3.org/2000/svg">`;
     svg += `<defs>
         <marker id="arrow-seq" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#7c8a99"/></marker>
-        <marker id="arrow-chain" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#22c55e"/></marker>
+        <marker id="arrow-chain" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#00ff88"/></marker>
+        <filter id="glow-green"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        <filter id="glow-red"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     </defs>`;
 
     // Draw edges first (behind nodes)
@@ -842,28 +1278,44 @@ function drawChainGraph(graph) {
         const isChain = e.kind === 'chain';
         const x1 = a.x + NODE_W / 2, y1 = a.y + NODE_H / 2;
         const x2 = b.x + NODE_W / 2, y2 = b.y + NODE_H / 2;
-        const stroke = isChain ? '#22c55e' : '#7c8a99';
-        const dash = isChain ? '6,4' : 'none';
+        const stroke = isChain ? '#00ff88' : '#7c8a99';
+        const dash = isChain ? '8,5' : 'none';
         const marker = isChain ? 'url(#arrow-chain)' : 'url(#arrow-seq)';
+        const sw = isChain ? 2.5 : 1.5;
+        const filter = isChain ? 'filter="url(#glow-green)"' : '';
         const curve = isChain
             ? `M ${x1} ${y1} C ${x1 + 60} ${y1}, ${x2 - 60} ${y2}, ${x2} ${y2}`
             : `M ${x1} ${y1} L ${x2} ${y2}`;
-        svg += `<path d="${curve}" fill="none" stroke="${stroke}" stroke-width="${isChain ? 2 : 1.5}" stroke-dasharray="${dash}" marker-end="${marker}">
-            <title>${isChain ? 'Exploit chain: extracted data flows' : 'Sequential step'} ${escapeXml(e.from)} → ${escapeXml(e.to)}</title></path>`;
+        svg += `<path d="${curve}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-dasharray="${dash}" marker-end="${marker}" ${filter}>
+            <title>${isChain ? '🔗 Exploit chain: extracted data flows' : '➡️ Sequential step'} ${escapeXml(e.from)} → ${escapeXml(e.to)}</title></path>`;
+        // Chain value label on the edge
+        if (isChain) {
+            const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 12;
+            const label = e.chain_var || '';
+            if (label) {
+                svg += `<rect x="${mx - 30}" y="${my - 10}" width="60" height="16" rx="4" fill="#0d1620" stroke="#00ff88" stroke-width="0.5" opacity="0.9"/>
+                <text x="${mx}" y="${my + 2}" text-anchor="middle" fill="#00ff88" font-size="9" font-family="DejaVu Sans Mono, monospace">${escapeXml(label.slice(0, 14))}</text>`;
+            }
+        }
     }
 
     // Draw nodes
     for (const n of nodes) {
         const p = pos[n.id];
         const fill = colors[n.status] || colors.pending;
-        const gate = n.gate ? '⛔' : '';
-        svg += `<g>
+        const gate = n.gate ? '⛔ ' : '';
+        const icon = statusIcons[n.status] || '❓';
+        const isClickable = currentGraphTaskId && (n.status === 'success' || n.status === 'failed');
+        const clickAttr = isClickable ? `onclick="showGraphNodeDetail('${escapeXml(n.id)}')" style="cursor:pointer"` : '';
+        const hoverFilter = n.status === 'failed' ? 'filter="url(#glow-red)"' : '';
+        svg += `<g ${clickAttr}>
             <rect x="${p.x}" y="${p.y}" width="${NODE_W}" height="${NODE_H}" rx="10"
-                  fill="#0d1620" stroke="${fill}" stroke-width="2"/>
-            <text x="${p.x + 10}" y="${p.y + 22}" fill="${fill}" font-size="13" font-weight="bold">${n.index}. ${gate} ${escapeXml(n.tool)}</text>
-            <text x="${p.x + 10}" y="${p.y + 42}" fill="#94a3b8" font-size="11">${escapeXml(n.id)}</text>
-            <text x="${p.x + 10}" y="${p.y + 57}" fill="${fill}" font-size="10">${escapeXml(String(n.status).toUpperCase())}</text>
-            <title>${escapeXml(n.description || '')}</title>
+                  fill="#0d1620" stroke="${fill}" stroke-width="2" ${hoverFilter}/>
+            <text x="${p.x + 12}" y="${p.y + 22}" fill="${fill}" font-size="13" font-weight="bold">${n.index}. ${gate}${escapeXml(n.tool)}</text>
+            <text x="${p.x + 12}" y="${p.y + 40}" fill="#94a3b8" font-size="10" font-family="DejaVu Sans Mono, monospace">${escapeXml(n.id)}</text>
+            <text x="${p.x + 12}" y="${p.y + 56}" fill="${fill}" font-size="10">${icon} ${escapeXml(String(n.status).toUpperCase())}</text>
+            ${n.gate ? `<text x="${p.x + NODE_W - 12}" y="${p.y + 22}" fill="#f59e0b" font-size="12" text-anchor="end">GATE</text>` : ''}
+            <title>${escapeXml(n.description || n.id)}${isClickable ? '\n\nClick to view sandbox output' : ''}</title>
         </g>`;
     }
 
@@ -874,17 +1326,64 @@ function drawChainGraph(graph) {
     const summary = Object.keys(fs).filter(k => fs[k] > 0)
         .map(k => `<span class="legend-item sev-${k}">${k}: ${fs[k]}</span>`).join('');
     return `<div class="graph-wrap">
-        <div class="graph-status">Status: <b>${escapeHtml(graph.status || 'not_started')}</b> · Findings: ${summary || 'none yet'}</div>
+        <div class="graph-status">Status: <b>${escapeHtml(graph.status || 'not_started')}</b> · Findings: ${summary || 'none yet'}${currentGraphTaskId ? ' · <span class="graph-task-label">Task: ' + escapeHtml(currentGraphTaskId) + '</span>' : ''}</div>
         ${svg}
         <div class="graph-legend">
             <span class="legend-item"><span class="dot seq"></span> Sequential</span>
-            <span class="legend-item"><span class="dot chain"></span> Exploit chain</span>
+            <span class="legend-item"><span class="dot chain"></span> Exploit chain (data flow)</span>
             <span class="legend-item"><span class="dot pend"></span> Pending</span>
             <span class="legend-item"><span class="dot succ"></span> Success</span>
             <span class="legend-item"><span class="dot fail"></span> Failed</span>
             <span class="legend-item"><span class="dot gate"></span> ⛔ Gate step</span>
+            ${currentGraphTaskId ? '<span class="legend-item"><span class="dot clickable"></span> Click node for sandbox output</span>' : ''}
         </div>
+        <div id="graph-node-detail"></div>
     </div>`;
+}
+
+async function showGraphNodeDetail(stepName) {
+    const detailEl = document.getElementById('graph-node-detail');
+    if (!detailEl || !currentGraphTaskId) return;
+    detailEl.innerHTML = '<div class="graph-detail-loading">⏳ Loading sandbox output for ' + escapeHtml(stepName) + '...</div>';
+    try {
+        const res = await fetch(`/api/workflows/${encodeURIComponent(currentGraphTaskId)}/sandbox/${encodeURIComponent(stepName)}`);
+        const data = await res.json();
+        if (data.error) {
+            detailEl.innerHTML = `<div class="graph-detail-error">❌ ${escapeHtml(data.error)}</div>`;
+            return;
+        }
+        let html = `<div class="graph-detail-panel">
+            <div class="graph-detail-header">
+                <h4>📋 ${escapeHtml(stepName)} — Sandbox Output</h4>
+                <button class="btn-icon" onclick="document.getElementById('graph-node-detail').innerHTML=''">✕</button>
+            </div>`;
+        if (data.stdout) {
+            html += `<div class="graph-detail-section">
+                <div class="graph-detail-label">STDOUT (${data.stdout_size} bytes)</div>
+                <pre class="graph-detail-pre">${escapeHtml(data.stdout)}</pre>
+            </div>`;
+        }
+        if (data.stderr) {
+            html += `<div class="graph-detail-section">
+                <div class="graph-detail-label">STDERR (${data.stderr_size} bytes)</div>
+                <pre class="graph-detail-pre stderr">${escapeHtml(data.stderr)}</pre>
+            </div>`;
+        }
+        if (data.log_excerpt) {
+            html += `<div class="graph-detail-section">
+                <div class="graph-detail-label">WORKFLOW LOG (related lines)</div>
+                <pre class="graph-detail-pre log">${escapeHtml(data.log_excerpt)}</pre>
+            </div>`;
+        }
+        if (!data.stdout && !data.stderr && !data.log_excerpt) {
+            html += '<div class="graph-detail-section muted">No sandbox output found for this step.</div>';
+        }
+        html += '</div>';
+        detailEl.innerHTML = html;
+        detailEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (e) {
+        detailEl.innerHTML = `<div class="graph-detail-error">❌ Failed to load: ${escapeHtml(e.message)}</div>`;
+    }
 }
 
 function escapeXml(str) {
@@ -901,10 +1400,17 @@ function showResultsTab(tab) {
     document.querySelectorAll('.results-tabs .tab').forEach(t => t.classList.remove('active'));
     const target = document.getElementById(`results-${tab}`);
     if (target) target.classList.remove('hidden');
-    // Activate clicked tab
     const tabs = document.querySelectorAll('.results-tabs .tab');
     for (const t of tabs) {
         if (t.textContent.toLowerCase().includes(tab)) t.classList.add('active');
+    }
+    // Refresh campaign mini-view when Campaign tab is selected
+    if (tab.includes('campaign') && currentCampaignId) {
+        refreshCampaignData();
+    }
+    // Load vector memory panel when Memory tab is selected
+    if (tab === 'memory') {
+        loadMemoryPanel();
     }
 }
 
@@ -988,6 +1494,259 @@ async function loadSafety() {
 // ═══════════════════════════════════════════════════════════════
 function togglePanel(id) {
     document.getElementById(id).classList.toggle('collapsed');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// C2 Campaign Dashboard
+// ═══════════════════════════════════════════════════════════════
+let currentCampaignId = null;
+let campaignPollTimer = null;
+
+function toggleCampaignPanel() {
+    const panel = document.getElementById('campaign-panel');
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden') && currentCampaignId) {
+        refreshCampaignData();
+    }
+}
+
+function openCampaignPanel() {
+    const panel = document.getElementById('campaign-panel');
+    panel.classList.remove('hidden');
+    refreshCampaignData();
+}
+
+async function refreshCampaignData() {
+    if (!currentCampaignId) return;
+    try {
+        const [detailRes, heatmapRes, riskRes] = await Promise.all([
+            fetch(`/api/campaigns/${currentCampaignId}`),
+            fetch(`/api/campaigns/${currentCampaignId}/heatmap`),
+            fetch(`/api/campaigns/${currentCampaignId}/risk`),
+        ]);
+        const detail = await detailRes.json();
+        const heatmap = await heatmapRes.json();
+        const risk = await riskRes.json();
+        if (detail.error) return;
+        renderCampaignDetail(detail);
+        renderCampaignHeatmap(heatmap);
+        renderCampaignRiskGauge(risk);
+        renderCampaignDriftGauges(detail);
+        renderCampaignMiniView(detail, risk);
+    } catch (e) {
+        console.error('Campaign refresh failed:', e);
+    }
+}
+
+function renderCampaignDetail(campaign) {
+    document.getElementById('campaign-id-display').textContent = campaign.id;
+    document.getElementById('camp-targets-total').textContent = campaign.per_target ? Object.keys(campaign.per_target).length : 0;
+    document.getElementById('camp-targets-complete').textContent = campaign.completed_targets || 0;
+    document.getElementById('camp-targets-active').textContent = campaign.active_targets || 0;
+    document.getElementById('camp-targets-failed').textContent = campaign.failed_targets || 0;
+    document.getElementById('camp-findings-total').textContent = campaign.findings_total || 0;
+    document.getElementById('camp-risk-score').textContent = (campaign.risk_score || 0).toFixed(1);
+    document.getElementById('camp-drift-avg').textContent = (campaign.drift_avg || 0).toFixed(3);
+    // Color risk score
+    const riskEl = document.getElementById('camp-risk-score');
+    riskEl.style.color = campaign.risk_score >= 75 ? 'var(--accent-red)' :
+                          campaign.risk_score >= 50 ? 'var(--accent-orange)' :
+                          campaign.risk_score >= 25 ? 'var(--accent-yellow)' : 'var(--accent-green)';
+    // Render per-target grid
+    const grid = document.getElementById('campaign-target-grid');
+    if (!campaign.per_target || Object.keys(campaign.per_target).length === 0) {
+        grid.innerHTML = '<p class="muted">No targets.</p>';
+        return;
+    }
+    grid.innerHTML = Object.values(campaign.per_target).map(t => {
+        const statusColor = t.status === 'complete' ? 'var(--accent-green)' :
+                           t.status === 'running' ? 'var(--accent-yellow)' :
+                           t.status === 'failed' || t.status === 'error' ? 'var(--accent-red)' :
+                           'var(--text-muted)';
+        const progressPct = t.progress || 0;
+        return `
+            <div class="target-card">
+                <div class="target-header">
+                    <span class="target-name">${escapeHtml(t.target)}</span>
+                    <span class="target-status" style="color:${statusColor}">${escapeHtml(t.status)}</span>
+                </div>
+                <div class="target-progress">
+                    <div class="target-progress-bar">
+                        <div class="target-progress-fill" style="width:${progressPct}%;background:${statusColor}"></div>
+                    </div>
+                    <span class="target-progress-label">${t.completed_steps || 0}/${t.total_steps || 0} steps (${progressPct}%)</span>
+                </div>
+                <div class="target-findings">
+                    <span class="target-finding-badge crit">${t.findings_by_severity?.critical || 0}</span>
+                    <span class="target-finding-badge high">${t.findings_by_severity?.high || 0}</span>
+                    <span class="target-finding-badge med">${t.findings_by_severity?.medium || 0}</span>
+                    <span class="target-finding-badge low">${t.findings_by_severity?.low || 0}</span>
+                    <span class="target-finding-badge info">${t.findings_by_severity?.info || 0}</span>
+                </div>
+                ${t.error ? `<div class="target-error">${escapeHtml(t.error)}</div>` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+function renderCampaignHeatmap(heatmap) {
+    const el = document.getElementById('campaign-heatmap');
+    if (heatmap.error || !heatmap.tools || heatmap.tools.length === 0) {
+        el.innerHTML = '<p class="muted">No findings to display.</p>';
+        return;
+    }
+    const sevs = heatmap.severities;
+    const sevColors = { critical: '#ef4444', high: '#f97316', medium: '#f59e0b', low: '#eab308', info: '#64748b' };
+    let html = '<table class="heatmap-table"><thead><tr><th>Tool</th>';
+    for (const s of sevs) html += `<th style="color:${sevColors[s]}">${s.slice(0,3).toUpperCase()}</th>`;
+    html += '<th>TOT</th></tr></thead><tbody>';
+    for (const tool of heatmap.tools) {
+        html += `<tr><td class="hm-tool">${escapeHtml(tool)}</td>`;
+        let rowTotal = 0;
+        for (const s of sevs) {
+            const count = (heatmap.grid[tool] || {})[s] || 0;
+            rowTotal += count;
+            const intensity = count > 0 ? Math.min(1.0, count / 5) : 0;
+            html += `<td class="hm-cell" style="background:${sevColors[s]};opacity:${0.15 + intensity * 0.85}">${count || ''}</td>`;
+        }
+        html += `<td class="hm-total">${rowTotal}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+}
+
+function renderCampaignRiskGauge(risk) {
+    if (risk.error) return;
+    const canvas = document.getElementById('risk-gauge-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const cx = 40, cy = 45, r = 32;
+    const score = risk.total_risk || 0;
+    const angle = (score / 100) * Math.PI;
+    ctx.clearRect(0, 0, 80, 80);
+    // Background arc
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, Math.PI, 0);
+    ctx.strokeStyle = '#1e3a5f';
+    ctx.lineWidth = 6;
+    ctx.stroke();
+    // Score arc
+    const color = score >= 75 ? '#ef4444' : score >= 50 ? '#f97316' : score >= 25 ? '#f59e0b' : '#22c55e';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, Math.PI, Math.PI + angle);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    document.getElementById('risk-gauge-label').textContent = score.toFixed(0);
+    document.getElementById('risk-gauge-label').style.color = color;
+}
+
+function renderCampaignDriftGauges(campaign) {
+    const el = document.getElementById('campaign-drift-gauges');
+    if (!campaign.per_target || Object.keys(campaign.per_target).length === 0) {
+        el.innerHTML = '<p class="muted">No drift data.</p>';
+        return;
+    }
+    el.innerHTML = Object.values(campaign.per_target).map(t => {
+        const drift = t.drift_score || 0;
+        const conf = t.drift_confidence || 'N/A';
+        const confColor = conf === 'high' ? 'var(--accent-green)' :
+                          conf === 'medium' ? 'var(--accent-yellow)' :
+                          conf === 'low' ? 'var(--accent-orange)' : 'var(--text-muted)';
+        return `
+            <div class="drift-gauge-item">
+                <span class="drift-target">${escapeHtml(t.target)}</span>
+                <div class="drift-bar">
+                    <div class="drift-fill" style="width:${drift * 100}%;background:${confColor}"></div>
+                </div>
+                <span class="drift-label" style="color:${confColor}">${(drift * 100).toFixed(0)}%</span>
+                <span class="drift-conf" style="color:${confColor}">${conf}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderCampaignMiniView(campaign, risk) {
+    const el = document.getElementById('campaign-mini-content');
+    if (!el) return;
+    const total = campaign.per_target ? Object.keys(campaign.per_target).length : 0;
+    el.innerHTML = `
+        <div class="camp-mini-stats">
+            <span><b>${escapeHtml(campaign.name || 'Campaign')}</b> — ${campaign.status}</span>
+            <span>${campaign.completed_targets || 0}/${total} targets · ${campaign.findings_total || 0} findings</span>
+            <span>Risk: <b style="color:${(risk.total_risk || 0) >= 50 ? 'var(--accent-red)' : 'var(--accent-green)'}">${(risk.total_risk || 0).toFixed(1)}</b></span>
+        </div>
+    `;
+}
+
+async function createCampaign() {
+    const name = document.getElementById('camp-name')?.value?.trim() || 'Campaign';
+    const targetsRaw = document.getElementById('camp-targets-input')?.value?.trim() || '';
+    const workflow = document.getElementById('camp-wf-select')?.value || '';
+    const targets = targetsRaw.split(',').map(t => t.trim()).filter(Boolean);
+    if (!targets.length) {
+        addSystemMessage('❌ No targets specified for campaign');
+        return;
+    }
+    try {
+        const res = await fetch('/api/campaigns', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, targets, workflow, description: `Campaign: ${name}` }),
+        });
+        const data = await res.json();
+        if (data.error) {
+            addSystemMessage(`❌ Campaign creation failed: ${escapeHtml(data.error)}`);
+            return;
+        }
+        currentCampaignId = data.id;
+        document.getElementById('campaign-id-display').textContent = data.id;
+        addSystemMessage(`📡 Campaign created: ${escapeHtml(name)} — ${targets.length} targets`);
+        openCampaignPanel();
+        refreshCampaignData();
+    } catch (e) {
+        addSystemMessage(`❌ Campaign creation error: ${escapeHtml(e.message)}`);
+    }
+}
+
+async function startCampaignRun() {
+    if (!currentCampaignId) {
+        addSystemMessage('❌ No active campaign. Create one first.');
+        return;
+    }
+    try {
+        const res = await fetch(`/api/campaigns/${currentCampaignId}/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        if (data.error) {
+            addSystemMessage(`❌ Campaign start failed: ${escapeHtml(data.error)}`);
+        } else {
+            addSystemMessage(`📡 Campaign started: ${escapeHtml(data.workflow)} against ${data.targets?.length || 0} targets`);
+            // Auto-refresh while campaign runs
+            if (campaignPollTimer) clearInterval(campaignPollTimer);
+            campaignPollTimer = setInterval(() => {
+                if (currentCampaignId) refreshCampaignData();
+            }, 5000);
+        }
+    } catch (e) {
+        addSystemMessage(`❌ Campaign start error: ${escapeHtml(e.message)}`);
+    }
+}
+
+async function loadCampaignSelectOptions() {
+    try {
+        const res = await fetch('/api/workflows');
+        const workflows = await res.json();
+        const sel = document.getElementById('camp-wf-select');
+        if (sel) {
+            sel.innerHTML = '<option value="">Select workflow...</option>' +
+                workflows.map(w => `<option value="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`).join('');
+        }
+    } catch (e) { /* silent */ }
 }
 
 // ═══════════════════════════════════════════════════════════════
