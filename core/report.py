@@ -16,11 +16,14 @@ Writers:
   - combined_report()            — multi-target combined engagement report
   - campaign_report()            — persisted campaign post-engagement report
   - autonomous_report()          — autonomous engagement fallback report
+  - paths_to_markdown()          — correlated attack-path rendering (R2)
+  - summary_to_markdown()        — findings correlation summary (R2)
   - report_prompt()              — LLM narrative prompt builder (data→prompt)
 
 All functions are pure: structured data in, markdown string out.
 """
 from typing import Dict, Any, List
+from collections import defaultdict
 
 from core.findings import get_extractor as _get_findings_extractor
 
@@ -738,3 +741,116 @@ def autonomous_report_prompt(*, objective: str, duration: str,
         f"5. Remediation Recommendations\n"
         f"6. Conclusion"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Correlation rendering (consolidated from core/correlation.py — R2)
+# Pure markdown rendering of correlated attack paths + summary. Moved out of
+# the detection engine so correlation.py owns only DETECTION, not presentation.
+# ═══════════════════════════════════════════════════════════════════
+def paths_to_markdown(paths: List[Dict[str, Any]]) -> str:
+    """Render correlated paths as markdown section content."""
+    if not paths:
+        return "No correlated attack paths identified.\n"
+
+    lines = []
+    lines.append(f"## 🎯 Correlated Attack Paths ({len(paths)} identified)\n")
+
+    # Summary table
+    lines.append("| # | Severity | Path | Score | Confidence | Kill Chain | ATT&CK |")
+    lines.append("|---|----------|------|-------|------------|------------|--------|")
+    for i, p in enumerate(paths[:15], 1):
+        sev_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡",
+                     "low": "🔵", "info": "⚪"}.get(p["severity"], "⚪")
+        kill_pct = f"{p.get('kill_chain_progress', 0)*100:.0f}%"
+        techs = ", ".join(t["id"] for t in p.get("attack_techniques", [])[:3])
+        lines.append(
+            f"| {i} | {sev_emoji} {p['severity'].upper()} | {p['title']} | "
+            f"{p['score']} | {p.get('confidence', 0)*100:.0f}% | {kill_pct} | {techs} |"
+        )
+    lines.append("")
+
+    # Detailed paths
+    for p in paths[:15]:
+        sev_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡",
+                     "low": "🔵", "info": "⚪"}.get(p["severity"], "⚪")
+
+        lines.append(f"### {sev_emoji} {p['severity'].upper()}: {p['title']}")
+        lines.append(f"- **Score**: {p['score']} | **Confidence**: {p.get('confidence', 0)*100:.0f}%")
+        lines.append(f"- **Kill Chain Progress**: {p.get('kill_chain_progress', 0)*100:.0f}% "
+                     f"(phases: {', '.join(p.get('kill_chain_phases', []))})")
+
+        if p.get("attack_techniques"):
+            tech_str = ", ".join(
+                f"`{t['id']}` {t.get('name', '')}" for t in p["attack_techniques"][:5])
+            lines.append(f"- **MITRE ATT&CK**: {tech_str}")
+
+        if p.get("finding_details"):
+            lines.append("- **Linked Findings**:")
+            for fd in p["finding_details"][:5]:
+                lines.append(f"  - [{fd['severity'].upper()}] {fd['title']} "
+                             f"(`{fd.get('source_tool', '')}`)")
+
+        lines.append("- **Remediation:**")
+        for r in p["remediation"]:
+            lines.append(f"  - {r}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def summary_to_markdown(paths: List[Dict[str, Any]],
+                        findings: List[Dict[str, Any]]) -> str:
+    """Generate a comprehensive correlation summary for the report."""
+    lines = []
+
+    # Overall stats
+    sev_counts = defaultdict(int)
+    for f in findings:
+        sev_counts[f.get("severity", "info")] += 1
+
+    lines.append("## 📊 Findings Correlation Summary\n")
+    lines.append(f"- **Total Findings**: {len(findings)}")
+    lines.append(f"- **Correlated Attack Paths**: {len(paths)}")
+
+    crit_paths = [p for p in paths if p["severity"] == "critical"]
+    high_paths = [p for p in paths if p["severity"] == "high"]
+    lines.append(f"- **Critical Paths**: {len(crit_paths)}")
+    lines.append(f"- **High Paths**: {len(high_paths)}")
+
+    if crit_paths:
+        avg_conf = sum(p.get("confidence", 0) for p in crit_paths) / len(crit_paths)
+        lines.append(f"- **Average Confidence (Critical)**: {avg_conf*100:.0f}%")
+
+    # Kill chain coverage
+    all_phases = set()
+    for p in paths:
+        all_phases.update(p.get("kill_chain_phases", []))
+    if all_phases:
+        lines.append(f"- **Kill Chain Coverage**: {', '.join(sorted(all_phases))}")
+
+    # ATT&CK coverage
+    all_techs = set()
+    for p in paths:
+        for t in p.get("attack_techniques", []):
+            all_techs.add(t["id"])
+    if all_techs:
+        lines.append(f"- **MITRE ATT&CK Techniques Mapped**: {len(all_techs)}")
+        lines.append(f"  - {', '.join(sorted(all_techs)[:15])}")
+        if len(all_techs) > 15:
+            lines.append(f"  - ... and {len(all_techs) - 15} more")
+
+    lines.append("")
+
+    # Severity breakdown
+    lines.append("### Findings by Severity\n")
+    for sev in ["critical", "high", "medium", "low", "info"]:
+        count = sev_counts.get(sev, 0)
+        if count > 0:
+            emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡",
+                     "low": "🔵", "info": "⚪"}.get(sev, "⚪")
+            lines.append(f"- {emoji} **{sev.upper()}**: {count}")
+
+    lines.append("")
+    return "\n".join(lines)
+

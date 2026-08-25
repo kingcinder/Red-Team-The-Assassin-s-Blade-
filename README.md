@@ -32,10 +32,11 @@ redteam-harness/
 ├── .gitignore                 # Ignores sessions/ output/ tasks/ wheels/ __pycache__
 ├── README.md                  # This file
 │
-├── core/                      # 18 modules — the brain of the harness
+├── core/                      # 20 modules — the brain of the harness
 │   ├── orchestrator.py        # Central loop: plan → tool-call → execute → reflect → report
 │   ├── llm_backend.py         # llama-server (OpenAI-compat) / Ollama adapter, streaming, GBNF
 │   ├── tool_registry.py       # 140+ tool definitions across 14 Kali categories
+│   ├── command_builder.py     # Pure command constructors for every registered tool
 │   ├── hardening.py           # Subprocess hardening, injection rejection, timeout enforcement
 │   ├── session.py             # JSON-backed conversation memory + command log
 │   ├── safety.py              # CIDR scope enforcement, blocked-lists, confirmation gates
@@ -45,6 +46,9 @@ redteam-harness/
 │   ├── task_scheduler.py      # Multi-target ThreadPoolExecutor with pooled findings + combined reports
 │   ├── findings.py            # Regex-based auto-findings: credentials, vulns, misconfigs, info leaks
 │   ├── correlation.py         # Rule-table attack-path linking + per-finding remediation
+│   ├── report.py              # Unified markdown report writers (incl. correlation rendering)
+│   ├── kb_data.py             # Canonical offline ATT&CK + CVE dataset (integrity-guarded)
+│   ├── knowledge_base.py      # Offline CVE/ATT&CK lookup, signatures, grounding
 │   ├── parallel.py            # ParallelExecutor — concurrent tool calls
 │   ├── result_cache.py        # LRU tool-result cache with TTL + stats
 │   ├── context_manager.py     # Sliding-window context trimmer with persistent facts

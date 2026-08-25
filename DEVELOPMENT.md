@@ -281,6 +281,26 @@ and documentation (commits `d889653` → `483eb90`):
 
 ---
 
+### 🔹 Architecture-deepening pass (re-review candidates #2 / #3 / R1–R3)
+
+A focused deepening pass generalized the flat modules into **deep, single-purpose
+modules** while keeping all 27 test suites green (net −257 lines on the touched files):
+
+| Candidate | Refactor | Result |
+|-----------|----------|--------|
+| **#2 orchestrator deepen** *(earlier)* | Prompt construction → `core/prompt_builder.py`; Python-level tool interception → `core/tool_interceptor.py`; orchestrator delegates | `orchestrator.py` 1967 → 1703 lines, −10 dead private methods |
+| **#3 dashboard split** *(earlier)* | Dashboard API → `dashboard/blueprints/*` | `server.py` slimmed |
+| **R1 KB data split** | Embedded ATT&CK + CVE dataset → canonical `core/kb_data.py`; `core/knowledge_base.py` imports + re-exports (identity preserved) | `knowledge_base.py` 1286 → ~490 lines |
+| **R2 report consolidation** | `paths_to_markdown` / `summary_to_markdown` moved from detection engine → `core/report.py`; `correlation.py` keeps thin delegating `@staticmethod`s | presentation logic leaves the correlator |
+| **R3 command-builder extraction** | All `_build_*` command constructors + dispatcher → pure, stateless `core/command_builder.py`; `ToolRegistry._build_command` is a thin facade | `tool_registry.py` 1132 → 807 lines; zero circular imports |
+| **R1 hardening** | `kb_data._validate_dataset()` runs at import, raising `ValueError` on any malformed ATT&CK/CVE record | fail-fast data integrity |
+
+Trade-offs: the R2 delegates keep a compatibility shim on `FindingCorrelator`, and the
+single `report.py` grows as new formats are added — but every writer is discoverable in
+one place.
+
+---
+
 # PART 4 — CURRENT ARCHITECTURE (v4.0)
 
 ## Module inventory
@@ -291,6 +311,10 @@ core/
 ├── orchestrator.py        # Central loop: plan → tool-call → execute → reflect → report
 ├── llm_backend.py         # llama-server (OpenAI-compat) / Ollama, streaming, GBNF grammar
 ├── tool_registry.py       # 140+ tool definitions, 14 categories, auto-detection
+├── command_builder.py     # Pure command constructors for every registered tool (R3)
+├── report.py              # Unified markdown report writers, incl. correlation rendering (R2)
+├── knowledge_base.py      # Offline CVE/ATT&CK lookup, signatures, grounding
+├── kb_data.py             # Canonical offline ATT&CK + CVE dataset (integrity-guarded)
 ├── workflow_engine.py     # YAML state machine: interpolate → chain → validate → checkpoint
 ├── workflow_generator.py  # NL objective → validated YAML workflow
 ├── task_isolation.py      # Per-workflow sandbox (tasks/<name>/<ts>/)

@@ -803,3 +803,46 @@ CVE_DATABASE: List[Dict[str, Any]] = [
 # ═══════════════════════════════════════════════════════════════════
 
 
+
+# ═══════════════════════════════════════════════════════════════════
+# DATA INTEGRITY GUARD (R1 hardening)
+# Fails fast at import time if any dataset record is malformed, so a
+# botched edit to a record can never silently corrupt retrieval or
+# grounding downstream.
+# ═══════════════════════════════════════════════════════════════════
+
+_TECHNIQUE_REQUIRED = ("name", "tactic", "detection", "mitigation")
+_CVE_REQUIRED = ("id", "title", "cvss", "severity")
+
+
+def _validate_dataset() -> None:
+    problems: List[str] = []
+    for tid, rec in ATTACK_TECHNIQUES.items():
+        if not isinstance(rec, dict):
+            problems.append(f"ATTACK_TECHNIQUES[{tid!r}] is not a dict")
+            continue
+        for field in _TECHNIQUE_REQUIRED:
+            if not rec.get(field):
+                problems.append(f"ATTACK_TECHNIQUES[{tid!r}] missing required field {field!r}")
+        if tid.startswith("T") and not tid.split(".")[0].replace("T", "").isalnum():
+            problems.append(f"ATTACK_TECHNIQUES key {tid!r} does not look like a valid technique id")
+    for i, cve in enumerate(CVE_DATABASE):
+        if not isinstance(cve, dict):
+            problems.append(f"CVE_DATABASE[{i}] is not a dict")
+            continue
+        for field in _CVE_REQUIRED:
+            if not cve.get(field):
+                problems.append(f"CVE_DATABASE[{i}] missing required field {field!r}")
+        cve_id = cve.get("id", "")
+        if not cve_id.upper().startswith("CVE-"):
+            problems.append(f"CVE_DATABASE[{i}] id {cve_id!r} not prefixed with CVE-")
+        if isinstance(cve.get("signatures"), str):
+            problems.append(f"CVE_DATABASE[{i}] 'signatures' must be a list")
+    if problems:
+        raise ValueError(
+            "Knowledge-base dataset integrity check failed:\n  - "
+            + "\n  - ".join(problems)
+        )
+
+
+_validate_dataset()
