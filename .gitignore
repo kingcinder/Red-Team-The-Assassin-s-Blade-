@@ -1,21 +1,85 @@
-# Runtime directories (generated at runtime)
+# ═══════════════════════════════════════════════════════════════
+# RedTeam Harness — .gitignore
+# ═══════════════════════════════════════════════════════════════
+
+# ── Runtime directories (generated during engagements) ──
 sessions/
 output/
 tasks/
+
+# ── Python ──
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+.venv/
+venv/
+env/
 
-# Offline wheels cache
+# ── Offline wheels cache (large, regenerate with pip download) ──
 wheels/
 
-# OS junk
+# ── Logs ──
+*.log
+logs/
+
+# ── OS junk ──
 .DS_Store
 Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
 
-# IDE
+# ── IDE / Editor ──
 .vscode/
 .idea/
+*.sublime-workspace
+*.sublime-project
+.project
+.classpath
+.settings/
 
-# Logs
-*.log
+# ── Secrets & credentials (NEVER commit these) ──
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+.htpasswd
+.env
+.env.*
+credentials.json
+service-account*.json
+
+# ── Metasploit artifacts ──
+output/msf_scripts/
+*.rc
+
+# ── Nmap output (engagement-specific) ──
+*.gnmap
+*.nmap
+*.xml.bak
+
+# ── Workflow task state (engagement-specific) ──
+tasks/**/state.json
+tasks/**/workflow.log
+
+# ── Session data (engagement-specific) ──
+sessions/*.json
+
+# ── Report output ──
+*.md.bak
+reports/
+
+# ── Temporary files ──
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
