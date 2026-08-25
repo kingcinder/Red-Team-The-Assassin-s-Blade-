@@ -1,0 +1,5 @@
+name: wf_b
+steps:
+  - name: ping
+    tool: nmap_scan
+    args: {target: '{{target}}'}

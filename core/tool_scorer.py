@@ -11,13 +11,14 @@ Scoring model:
   - "Toxic" tools (consistently failing) are flagged with suggested alternatives
   - Scores are injected into the LLM system prompt as "Tool Reliability" hints
 """
+import atexit
 import json
 import os
 import logging
 import threading
 import contextlib
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 
 logger = logging.getLogger("redteam.scorer")
 
@@ -85,6 +86,11 @@ class ToolScorer:
         self._lock = threading.Lock()
         self._scores: Dict[str, Dict[str, Any]] = {}
         self._load()
+        # Persist at interpreter exit via atexit (runs BEFORE builtins are
+        # torn down, so open() is still available). The old __del__ hook
+        # raised `name 'open' is not defined` during shutdown and never
+        # actually saved scores.
+        atexit.register(self._persist_on_exit)
 
     # ═══════════════════════════════════════════════════════════════
     # PUBLIC API
@@ -156,9 +162,10 @@ class ToolScorer:
             # Track consecutive failures
             self._update_consecutive_failures(tool_name)
 
-            # Persist periodically (every 10 writes)
+            # Persist periodically (every 10 writes). Caller holds the lock,
+            # so _save must not re-acquire it (deadlock regression fix).
             if entry["total_runs"] % 10 == 0:
-                self._save()
+                self._save(use_lock=False)
 
     def get_reliability(self, tool_name: str) -> float:
         """
@@ -279,27 +286,31 @@ class ToolScorer:
         """Reset scores for a specific tool (e.g. after reinstalling)."""
         with self._lock:
             self._scores.pop(tool_name, None)
-            self._save()
+            self._save(use_lock=False)
 
     def reset_all(self) -> None:
         """Reset all scores."""
         with self._lock:
             self._scores.clear()
-            self._save()
+            self._save(use_lock=False)
 
     def get_stats(self) -> Dict[str, Any]:
         """Quick stats for the status endpoint."""
         with self._lock:
-            return {
-                "tools_tracked": len(self._scores),
-                "total_invocations": sum(e["total_runs"] for e in self._scores.values()),
-                "reliability_hint_length": len(self.get_reliability_hint()),
-            }
+            tools_tracked = len(self._scores)
+            total_invocations = sum(e["total_runs"] for e in self._scores.values())
+        # get_reliability_hint acquires the lock itself — do NOT call it
+        # while holding self._lock (non-reentrant lock deadlock fix).
+        return {
+            "tools_tracked": tools_tracked,
+            "total_invocations": total_invocations,
+            "reliability_hint_length": len(self.get_reliability_hint()),
+        }
 
     def save(self) -> None:
         """Public save — call on shutdown to avoid losing unsaved writes."""
         with self._lock:
-            self._save()
+            self._save(use_lock=False)
 
     # ═══════════════════════════════════════════════════════════════
     # INTERNALS
@@ -337,8 +348,11 @@ class ToolScorer:
                 break
         entry["consecutive_failures"] = count
 
-    def __del__(self):
-        """Safety net — persist scores if process exits unexpectedly."""
+    def _persist_on_exit(self) -> None:
+        """atexit handler — persist scores at interpreter exit.
+        Runs before builtins/module teardown, so file I/O is safe here
+        (the old __del__ hook failed with `name 'open' is not defined`).
+        """
         try:
             self._save(use_lock=False)
         except Exception:

@@ -12,10 +12,11 @@ v2.0 Improvements:
 import json
 import logging
 import time
-import re
-from typing import Optional, Dict, Any, List, Generator, Tuple
+from typing import Dict, Any, List, Generator
 
 import requests
+
+from core.injection_defense import sanitize_tool_output
 
 logger = logging.getLogger("redteam.llm")
 
@@ -122,7 +123,23 @@ class LLMBackend:
         """
         Summarize tool output to fit within context budget.
         Uses a lightweight prompt to extract: hosts, ports, vulnerabilities, credentials.
+
+        NOTE: `text` is attacker-controlled tool output (a malicious service can
+        plant prompt-injection payloads in its banner). It is sanitized via
+        sanitize_tool_output() BEFORE being returned or embedded in the LLM
+        prompt — on BOTH the short path (≤MAX_TOOL_OUTPUT_CHARS, returned raw)
+        and the long path (embedded in the summarization prompt).
+
+        Side effect of the sanitizer: newlines/whitespace are collapsed, so
+        multi-line tool output (e.g. nmap) comes back as single-line text.
+        Readability for the LLM is unaffected; the raw stdout remains available
+        in tool_result['stdout'] for dashboards/transcripts.
         """
+        # Sanitize attacker-controlled tool output first, capping at the same
+        # 8000-char budget the summarization prompt used to slice to. This also
+        # means the returned short-path text is injection-free.
+        text = sanitize_tool_output(str(text), max_len=8000)
+
         if len(text) <= MAX_TOOL_OUTPUT_CHARS:
             return text
 
@@ -131,7 +148,7 @@ class LLMBackend:
             f"Extract: discovered hosts/IPs, open ports, service names & versions, "
             f"vulnerabilities found, credentials leaked, and any actionable findings. "
             f"Be brief — keep each bullet under 80 chars.\n\n"
-            f"Output:\n{text[:8000]}"
+            f"Output:\n{text}"
         )
         try:
             summary = self.chat([{"role": "user", "content": prompt}],

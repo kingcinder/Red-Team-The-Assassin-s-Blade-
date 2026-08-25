@@ -7,7 +7,7 @@ import os
 import shutil
 import logging
 import subprocess
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 logger = logging.getLogger("redteam.tools")

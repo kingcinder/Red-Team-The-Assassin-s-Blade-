@@ -24,7 +24,7 @@ import logging
 import threading
 import hashlib
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer

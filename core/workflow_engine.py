@@ -49,12 +49,19 @@ class WorkflowStateMachine:
 
     def __init__(self, template_path: str, sandbox: TaskSandbox,
                  runner: HardenedToolRunner, variables: Dict[str, Any],
-                 llm=None):
+                 llm=None, retry_multiplier: float = 1.0):
         self.template_path = template_path
         self.sandbox = sandbox
         self.runner = runner
         self.variables = variables or {}
         self.llm = llm  # optional LLM backend for smart retry suggestions
+        # v5.2: per-target aggressiveness — high-value targets get a higher
+        # retry budget (scaled against each step's `retries`). Clamped so a
+        # hostile config can't exceed MAX_RETRIES_PER_STEP.
+        try:
+            self.retry_multiplier = max(0.5, min(3.0, float(retry_multiplier or 1.0)))
+        except (TypeError, ValueError):
+            self.retry_multiplier = 1.0
         self.template: Dict[str, Any] = {}
         self.steps: List[Dict[str, Any]] = []
         self.state: Dict[str, Any] = {}
@@ -212,7 +219,10 @@ class WorkflowStateMachine:
             "started": datetime.now().isoformat(),
         }
 
-        max_retries = min(step.get("retries", 2), MAX_RETRIES_PER_STEP)
+        # v5.2: scale retries by the per-target aggressiveness multiplier
+        base_retries = step.get("retries", 2)
+        scaled = max(0, int(base_retries * self.retry_multiplier))
+        max_retries = min(scaled, MAX_RETRIES_PER_STEP)
         attempt = 0
         last_error = ""
         # Phase 2: LLM-guided alternatives are attempted AFTER normal retries

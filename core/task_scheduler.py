@@ -57,7 +57,8 @@ class MultiTargetScheduler:
                  tasks_dir: str = "tasks",
                  max_concurrent: int = DEFAULT_MAX_CONCURRENT,
                  emit: Optional[Callable] = None,
-                 campaign_mgr=None):
+                 campaign_mgr=None,
+                 config: Optional[Dict[str, Any]] = None):
         self.runner = runner
         self.llm = llm
         self.templates_dir = templates_dir
@@ -67,6 +68,73 @@ class MultiTargetScheduler:
         self._results_lock = threading.Lock()
         self._correlator = FindingCorrelator()
         self._campaign_mgr = campaign_mgr  # optional CampaignManager instance
+        self._config = config or {}  # for v5.5 knobs (parallel retries, auto-chain)
+
+    def _config_get(self, dotted_key: str, default=None):
+        """Read a dotted config key (e.g. 'workflow.parallel_max_job_retries').
+        Safe against instances constructed without config (e.g. via __new__ in
+        tests) — those get defaults."""
+        node = getattr(self, "_config", None) or {}
+        for part in dotted_key.split("."):
+            if not isinstance(node, dict):
+                return default
+            node = node.get(part)
+            if node is None:
+                return default
+        return node
+
+    def _run_job_with_retry(self, idx: int, job: Dict[str, Any],
+                            campaign_id: Optional[str],
+                            max_concurrent: Optional[int],
+                            max_job_retries: int,
+                            results: Dict[int, Dict[str, Any]],
+                            job_attempts: Dict[int, int],
+                            job_recovered: Dict[int, bool],
+                            circuit_state: Dict[int, str]):
+        """
+        Submit one parallel job, resubmitting up to max_job_retries when the
+        worker dies mid-run (sandbox/template exception) with linear backoff.
+        Consecutive failures open the per-job circuit breaker; success closes
+        it. Writes into the shared `results` dict (mutated in place).
+        """
+        import time as _time
+        attempt = 0
+        while attempt <= max_job_retries:
+            attempt += 1
+            job_attempts[idx] = attempt
+            if circuit_state[idx] == "open":
+                # Circuit open — skip further retries for this pathological job
+                results[idx] = {"status": "error", "error": "circuit open "
+                                "(too many consecutive worker failures)",
+                                "workflow": job["workflow"],
+                                "circuit": "open", "attempts": attempt}
+                return
+            try:
+                r = self.run(job["workflow"], job.get("targets", []),
+                             base_variables=job.get("variables", {}) or {},
+                             max_concurrent=max_concurrent,
+                             per_target_vars=job.get("per_target_vars"),
+                             campaign_id=campaign_id,
+                             finalize_campaign=False)
+                if r.get("status") in ("error", "failed") and not r.get("per_target"):
+                    raise RuntimeError(r.get("error") or "job failed before any target ran")
+                results[idx] = r
+                circuit_state[idx] = "closed"
+                job_recovered[idx] = attempt > 1
+                if attempt > 1:
+                    logger.warning(f"Parallel job {idx} recovered on attempt "
+                                   f"{attempt}/{max_job_retries + 1}")
+                return
+            except Exception as e:
+                logger.error(f"Parallel job {idx} attempt {attempt} failed: {e}")
+                if attempt > max_job_retries:
+                    circuit_state[idx] = "open"
+                    results[idx] = {"status": "error", "error": str(e),
+                                    "workflow": job["workflow"],
+                                    "circuit": "open", "attempts": attempt}
+                    return
+                _time.sleep(1.0 * attempt)  # linear backoff
+                circuit_state[idx] = "half-open"
 
     # ═══════════════════════════════════════════════════════════════
     # Public API
@@ -76,13 +144,29 @@ class MultiTargetScheduler:
             base_variables: Optional[Dict[str, Any]] = None,
             max_concurrent: Optional[int] = None,
             per_target_vars: Optional[Dict[str, Dict[str, Any]]] = None,
-            campaign_id: Optional[str] = None) -> Dict[str, Any]:
+            campaign_id: Optional[str] = None,
+            priority_plan: Optional[List[Dict[str, Any]]] = None,
+            finalize_campaign: bool = True) -> Dict[str, Any]:
         """
         Run `workflow_name` against each target in `targets` concurrently.
 
         base_variables: shared across all targets (e.g. username, wordlist).
         per_target_vars: optional {target: extra_vars} merged over base.
         campaign_id: optional existing campaign to update (auto-created if None).
+        priority_plan: optional LLM/heuristic target ranking — an ordered list
+            of {target, rank, score, tier, aggressiveness, ...}. When present:
+              • targets are executed in plan order (high-value FIRST)
+              • each target's WorkflowStateMachine gets a retry_multiplier
+                derived from its tier aggressiveness (hot targets get more
+                attempts — processed most aggressively)
+              • priority metadata is injected into per-target variables
+                (priority_rank / priority_score / priority_tier) so workflow
+                templates can branch on it
+              • the plan is recorded in the combined summary + report
+        finalize_campaign: when False (used by run_multiple with a SHARED
+            campaign), per-target updates still stream to the campaign but the
+            campaign is NOT marked complete here — the orchestrator of the
+            parallel run finalizes it once ALL jobs finish.
 
         Returns a combined summary dict with per-target results, pooled
         findings, correlated attack paths, and a combined report path.
@@ -92,6 +176,21 @@ class MultiTargetScheduler:
             return {"error": "No targets provided"}
         if len(targets) > 50:
             return {"error": f"Too many targets ({len(targets)} > 50)"}
+
+        # ── v5.2: apply the priority plan (reorder + per-target aggression) ──
+        plan_by_target = {}
+        plan_order = []
+        if priority_plan:
+            for entry in priority_plan:
+                t = str(entry.get("target", "")).strip()
+                if t and t in targets and t not in plan_by_target:
+                    plan_by_target[t] = entry
+                    plan_order.append(t)
+            # Reorder: ranked targets first (rank order), unranked targets
+            # keep original order and are processed after ranked ones.
+            ranked = [t for t in plan_order if t in targets]
+            unranked = [t for t in targets if t not in plan_by_target]
+            targets = ranked + unranked
 
         # Resolve template path once
         template_path = self._resolve_template(workflow_name)
@@ -152,8 +251,41 @@ class MultiTargetScheduler:
             if per_target_vars and target in per_target_vars:
                 variables.update(per_target_vars[target])
 
-            wf = WorkflowStateMachine(template_path, sandbox, self.runner,
-                                      variables, llm=self.llm)
+            # ── v5.2: per-target priority metadata + retry aggressiveness ──
+            retry_multiplier = 1.0
+            plan_entry = plan_by_target.get(target)
+            if plan_entry:
+                variables["priority_rank"] = plan_entry.get("rank", 0)
+                variables["priority_score"] = plan_entry.get("score", 0.0)
+                variables["priority_tier"] = plan_entry.get("tier", "medium")
+                try:
+                    retry_multiplier = float(
+                        plan_entry.get("aggressiveness", 1.0) or 1.0)
+                except (TypeError, ValueError):
+                    retry_multiplier = 1.0
+            else:
+                variables["priority_rank"] = 999
+                variables["priority_score"] = 0.0
+                variables["priority_tier"] = "unranked"
+
+            # ── v5.5: per-target workflow selection — the priority plan's
+            # suggested_workflow overrides the shared workflow for THIS target
+            # (e.g. SMB/Windows hosts get domain workflows, web hosts get web
+            # workflows in the same multi-target run). Falls back to the run's
+            # workflow when the suggestion is absent or unresolvable.
+            wf_template = template_path
+            if plan_entry and plan_entry.get("suggested_workflow"):
+                suggested = plan_entry["suggested_workflow"]
+                alt_path = self._resolve_template(suggested)
+                if alt_path:
+                    wf_template = alt_path
+                    variables["priority_workflow"] = suggested
+                else:
+                    variables["priority_workflow"] = workflow_name
+
+            wf = WorkflowStateMachine(wf_template, sandbox, self.runner,
+                                      variables, llm=self.llm,
+                                      retry_multiplier=retry_multiplier)
             try:
                 wf.load()
             except Exception as e:
@@ -161,7 +293,11 @@ class MultiTargetScheduler:
                         "error": f"template load failed: {e}",
                         "task_id": sandbox.task_id, "root": sandbox.root}
 
-            self._emit("workflow_start", {
+            # NOTE: the dashboard subscribes to the orchestrator's
+            # on_workflow_start/on_workflow_complete events (prefixed) —
+            # emitting the same names here is what makes per-target
+            # campaign progress push to the C2 dashboard in real-time.
+            self._emit("on_workflow_start", {
                 "workflow": wf.get_summary(), "task_id": sandbox.task_id,
                 "root": sandbox.root, "target": target,
                 "combined_id": combined_id})
@@ -169,6 +305,7 @@ class MultiTargetScheduler:
             # Real-time progress: target starting
             self._emit("multi_target_progress", {
                 "combined_id": combined_id,
+                "campaign_id": campaign_id,
                 "target": target,
                 "phase": "started",
                 "completed": completed_count[0],
@@ -177,8 +314,8 @@ class MultiTargetScheduler:
 
             result = wf.start()
 
-            self._emit("workflow_complete", {"task_id": sandbox.task_id,
-                                              "target": target, **result})
+            self._emit("on_workflow_complete", {"task_id": sandbox.task_id,
+                                                 "target": target, **result})
 
             # Real-time progress: target complete
             with self._results_lock:
@@ -187,6 +324,7 @@ class MultiTargetScheduler:
             target_findings = result.get("findings", [])
             self._emit("multi_target_progress", {
                 "combined_id": combined_id,
+                "campaign_id": campaign_id,
                 "target": target,
                 "phase": "complete",
                 "status": result.get("status", "unknown"),
@@ -320,6 +458,7 @@ class MultiTargetScheduler:
             "kill_chain_phases": sorted(all_phases),
             "risk_score": risk,
             "campaign_id": campaign_id,
+            "priority_plan": (priority_plan[:50] if priority_plan else []),
             "status": ("complete" if (len(results) and len(fully_complete) == len(results))
                        else ("failed" if errors or blocked else "partial")),
             "root": combined_root,
@@ -338,7 +477,9 @@ class MultiTargetScheduler:
             logger.error(f"Failed to save combined state: {e}")
 
         # ── CampaignManager: mark campaign complete ──
-        if campaign_id and self._campaign_mgr:
+        # (skipped when finalize_campaign=False — run_multiple finalizes the
+        #  shared campaign once every job has finished)
+        if campaign_id and self._campaign_mgr and finalize_campaign:
             self._campaign_mgr.mark_campaign_complete(campaign_id)
 
         self._emit("scheduler_complete", {
@@ -363,6 +504,469 @@ class MultiTargetScheduler:
                                  f"risk={risk['total']}/100")
 
         return combined_summary
+
+    # ═══════════════════════════════════════════════════════════════
+    # Multi-Workflow Parallel Execution (v5.3)
+    # ═══════════════════════════════════════════════════════════════
+
+    def run_multiple(self, jobs: List[Dict[str, Any]],
+                     campaign_id: Optional[str] = None,
+                     max_concurrent: Optional[int] = None,
+                     max_workers: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Run MULTIPLE different workflow jobs concurrently — each job is its
+        own (workflow, targets) pair that may target different hosts — then
+        merge ALL findings across every workflow with
+        ``FindingCorrelator.correlate_cross_workflow`` to produce a unified
+        campaign-level attack path report.
+
+        jobs: [{"workflow": name, "targets": [...], "variables": {...},
+                "per_target_vars": {...}}]
+
+        v5.5 additions:
+          - PER-JOB RETRY + CIRCUIT BREAKER: a job whose worker thread dies
+            mid-run (sandbox/template exception) is resubmitted up to
+            max_job_retries (default 2) with linear backoff. Consecutive
+            failures trip a per-job circuit breaker ("open" = skip further
+            retries) so a pathological job can't stall the campaign. Job-level
+            recovery (attempts, recovered flag, circuit state) is surfaced in
+            the unified report.
+          - GANTT TIMELINE DATA: each job records wall-clock start/finish and
+            per-target sub-intervals so the dashboard can render a Gantt-style
+            timeline of what ran concurrently vs sequentially.
+          - CHAINED PARALLEL WAVES: accepts ``parent_wave`` (the unified
+            findings of a previous wave) and, when ``auto_chain=True``, uses
+            the auto-prioritizer to decide the NEXT wave's jobs/targets.
+
+        Behavior:
+          - Each job runs through the standard scheduler (fresh sandboxes,
+            campaign per-target streaming, per-job combined report).
+          - ALL jobs share ONE campaign (created here or passed in) — per-job
+            run() calls use finalize_campaign=False so the campaign is only
+            marked complete once every job has finished.
+          - Findings from every job are merged, then correlated with
+            correlate_cross_workflow so paths can chain ACROSS different
+            workflows targeting different hosts.
+          - A unified campaign report ("Parallel Campaign Report") is written
+            with the cross-workflow attack paths, ATT&CK coverage, kill chain,
+            and risk score.
+        """
+        max_job_retries = int(self._config_get(
+            "workflow.parallel_max_job_retries", 2))
+        jobs = [j for j in (jobs or []) if j.get("workflow") and j.get("targets")]
+        if not jobs:
+            return {"error": "No valid jobs provided (need workflow + targets)"}
+
+        # ── Validate every template up-front (fail fast, no wasted workers) ──
+        for job in jobs:
+            if not self._resolve_template(job["workflow"]):
+                return {"error": f"Workflow template not found: {job['workflow']}"}
+
+        job_names = [j["workflow"].replace(".yaml", "") for j in jobs]
+        all_targets = sorted({t for j in jobs for t in j.get("targets", [])})
+
+        # ── Unified task container FIRST (report + logs + state live here) ──
+        import secrets as _secrets
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + _secrets.token_hex(2)
+        unified_root = os.path.join(self.tasks_dir, "parallel", f"multi_{ts}")
+        os.makedirs(unified_root, exist_ok=True)
+        unified_id = f"parallel_{ts}"
+
+        # ── One shared campaign for the whole parallel run ──
+        if not campaign_id and self._campaign_mgr:
+            camp = self._campaign_mgr.create_campaign(
+                name=f"Parallel: {len(jobs)} workflows",
+                targets=all_targets,
+                workflow=", ".join(job_names),
+                description=f"Unified {len(jobs)}-job parallel run "
+                            f"({len(all_targets)} targets)")
+            campaign_id = camp.get("id")
+
+        workers = max(1, min(max_workers or len(jobs), len(jobs)))
+        # Log inside the unified task container — never the repo/CWD root
+        self._log(unified_root, f"Parallel multi-workflow run: {len(jobs)} jobs "
+                                f"across {workers} workers"
+                                f"{f', campaign={campaign_id}' if campaign_id else ''}")
+
+        self._emit("scheduler_start", {
+            "combined_id": unified_id,
+            "workflow": ", ".join(job_names),
+            "targets": all_targets,
+            "jobs": len(jobs),
+            "max_workers": workers,
+            "campaign_id": campaign_id,
+        })
+
+        # ── Run every job concurrently with per-job retry + circuit breaker ──
+        # Each job: resubmit up to max_job_retries on worker death (sandbox /
+        # template exception) with linear backoff. Consecutive failures open
+        # the circuit (no further retries). Success closes it.
+        results: Dict[int, Dict[str, Any]] = {}
+        job_attempts: Dict[int, int] = {}
+        job_recovered: Dict[int, bool] = {}
+        circuit_state: Dict[int, str] = {}  # closed / half-open / open
+        job_timing: Dict[int, Dict[str, str]] = {}
+
+        import time as _time
+        for idx, job in enumerate(jobs):
+            job_attempts[idx] = 0
+            job_recovered[idx] = False
+            circuit_state[idx] = "closed"
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for idx, job in enumerate(jobs):
+                job_timing[idx] = {"started": datetime.now().isoformat()}
+                futures[pool.submit(
+                    self._run_job_with_retry, idx, job,
+                    campaign_id=campaign_id, max_concurrent=max_concurrent,
+                    max_job_retries=max_job_retries, results=results,
+                    job_attempts=job_attempts, job_recovered=job_recovered,
+                    circuit_state=circuit_state)] = idx
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    fut.result()
+                except Exception as e:
+                    logger.error(f"Parallel job {idx} retry wrapper failed: {e}",
+                                 exc_info=True)
+                    if idx not in results or not results[idx]:
+                        results[idx] = {"status": "error", "error": str(e),
+                                        "workflow": job_names[idx] if idx < len(job_names) else "?"}
+                finally:
+                    job_timing[idx]["finished"] = datetime.now().isoformat()
+
+        # Recover the per-job summary from the retry wrapper (it updates
+        # results in place via the mutable dict) — nothing further to do here.
+
+        # ── Merge findings from all jobs for cross-workflow correlation ──
+        merged_findings: List[Dict[str, Any]] = []
+        workflow_results = []
+        for idx, job in enumerate(jobs):
+            job_result = results.get(idx, {})
+            findings = job_result.get("pooled_findings", [])
+            wf_name = job["workflow"].replace(".yaml", "")
+            # correlate_cross_workflow expects one entry per workflow source
+            workflow_results.append({
+                "workflow_name": wf_name,
+                "target": ", ".join(job.get("targets", [])),
+                "findings": findings,
+            })
+            # Tag the merged copies with their source workflow/target so the
+            # unified report and augmented findings carry workflow attribution
+            # (mirrors what correlate_cross_workflow does internally).
+            for f in findings:
+                f2 = dict(f)
+                f2["_source_workflow"] = wf_name
+                f2["_source_target"] = f2.get("target") or \
+                    ", ".join(job.get("targets", []))
+                merged_findings.append(f2)
+
+        # Dedup merged findings across workflows by (target, dedupe_key)
+        seen = set()
+        deduped_findings = []
+        for f in merged_findings:
+            key = (f.get("target"), f.get("dedupe_key"))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_findings.append(f)
+
+        # ── Cross-workflow correlation (chains findings across workflows) ──
+        self._emit("scheduler_progress", {
+            "combined_id": f"parallel_{'_'.join(job_names)}",
+            "phase": "cross_workflow_correlating",
+            "findings_count": len(deduped_findings),
+        })
+
+        try:
+            unified_paths = self._correlator.correlate_cross_workflow(
+                workflow_results)
+        except Exception as e:
+            logger.error(f"Cross-workflow correlation failed: {e}", exc_info=True)
+            unified_paths = self._correlator.correlate(deduped_findings)
+        augmented = self._correlator.augment_findings(deduped_findings)
+
+        attack_graph = unified_paths[0].get("graph", {}) if unified_paths else {
+            "nodes": [], "edges": [], "metadata": {}}
+        all_techniques = sorted({t["id"]
+                                 for p in unified_paths
+                                 for t in p.get("attack_techniques", [])})
+        all_phases = sorted({ph for p in unified_paths
+                             for ph in p.get("kill_chain_phases", [])})
+
+        counts = {sev: 0 for sev in SEVERITY_ORDER}
+        for f in deduped_findings:
+            counts[f.get("severity", "info")] = \
+                counts.get(f.get("severity", "info"), 0) + 1
+
+        # Coverage must reflect HOSTS, not jobs: count completed per-target
+        # entries across every job's result (a job over 3 hosts counts 3).
+        completed_targets = sum(
+            sum(1 for pt in (r.get("per_target") or {}).values()
+                if pt.get("status") in ("complete", "partial"))
+            for r in results.values())
+        errors = sum(1 for r in results.values()
+                     if r.get("status") in ("error", "failed"))
+        completed = sum(1 for r in results.values()
+                        if r.get("status") in ("complete", "partial"))
+        risk = self._compute_combined_risk(counts, len(all_targets),
+                                           completed_targets, unified_paths)
+
+        # ── Unified summary + campaign report ──
+        per_job = {}
+        recovered_jobs = 0
+        open_circuits = 0
+        for idx, job in enumerate(jobs):
+            jr = results.get(idx, {})
+            attempts = job_attempts.get(idx, 1)
+            recovered = job_recovered.get(idx, False)
+            circuit = circuit_state.get(idx, "closed")
+            if recovered:
+                recovered_jobs += 1
+            if circuit == "open":
+                open_circuits += 1
+            per_job[f"{job['workflow'].replace('.yaml', '')} #{idx + 1}"] = {
+                "workflow": job["workflow"],
+                "targets": job.get("targets", []),
+                "status": jr.get("status", "unknown"),
+                "findings_count": len(jr.get("pooled_findings", [])),
+                "error": jr.get("error"),
+                # v5.5 retry/circuit-breaker metadata
+                "attempts": attempts,
+                "recovered": recovered,
+                "circuit": circuit,
+                "timing": job_timing.get(idx, {}),
+            }
+
+        unified_summary = {
+            "combined_id": unified_id,
+            "workflow": ", ".join(job_names),
+            "jobs": per_job,
+            "targets": all_targets,
+            "started": datetime.now().isoformat(),
+            "finished": datetime.now().isoformat(),
+            "per_target": {},
+            "pooled_findings": deduped_findings,
+            "augmented_findings": augmented,
+            "findings_summary": counts,
+            "chain_values": {},
+            "correlated_paths": unified_paths,
+            "attack_graph": attack_graph,
+            "attack_techniques": all_techniques,
+            "kill_chain_phases": all_phases,
+            "risk_score": risk,
+            "campaign_id": campaign_id,
+            "parallel": True,
+            "root": unified_root,
+            "completed_targets": completed_targets,
+            # v5.5: per-job recovery + Gantt timeline data for the dashboard
+            "job_recovery": {"recovered_jobs": recovered_jobs,
+                             "open_circuits": open_circuits,
+                             "attempts": dict(job_attempts)},
+            "gantt": {
+                "jobs": {f"{job_names[i] if i < len(job_names) else i}":
+                          job_timing.get(i, {}) for i in range(len(jobs))},
+                "started": datetime.now().isoformat(),
+                "finished": datetime.now().isoformat(),
+            },
+            "status": ("complete" if len(results) and
+                        completed_targets == len(all_targets)
+                        else ("failed" if errors else "partial")),
+        }
+
+        report_path = self._write_parallel_report(unified_summary)
+        unified_summary["report_path"] = report_path
+
+        try:
+            with open(os.path.join(unified_root, "state.json"), "w") as f:
+                json.dump(unified_summary, f, indent=2, default=str)
+        except Exception as e:
+            logger.error(f"Failed to save parallel state: {e}")
+
+        if campaign_id and self._campaign_mgr:
+            self._campaign_mgr.mark_campaign_complete(campaign_id)
+
+        self._emit("scheduler_complete", {
+            "combined_id": unified_id,
+            "campaign_id": campaign_id,
+            "status": unified_summary["status"],
+            "jobs_total": len(jobs),
+            "jobs_complete": completed,
+            "jobs_failed": errors,
+            "targets_total": len(all_targets),
+            "findings_total": len(deduped_findings),
+            "paths_correlated": len(unified_paths),
+            "cross_workflow": True,
+            "risk_score": risk["total"],
+            "report_path": report_path,
+        })
+
+        self._log(unified_root, f"Parallel multi-workflow complete: "
+                                f"{completed}/{len(jobs)} jobs, "
+                                f"{len(deduped_findings)} merged findings, "
+                                f"{len(unified_paths)} cross-workflow paths; "
+                                f"risk={risk['total']}/100")
+
+        return unified_summary
+
+    # ═══════════════════════════════════════════════════════════════
+    # Parallel Campaign Report
+    # ═══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _write_parallel_report(summary: Dict[str, Any]) -> str:
+        """Write the unified campaign-level attack path report for a parallel
+        multi-workflow run (cross-workflow correlation)."""
+        lines = []
+        workflow = summary["workflow"]
+        risk = summary.get("risk_score", {})
+        paths = summary.get("correlated_paths", [])
+        counts = summary.get("findings_summary", {})
+
+        lines.append(f"# Parallel Campaign Report — {workflow}")
+        lines.append("")
+        lines.append(f"- **Workflows**: {workflow}")
+        lines.append(f"- **Targets**: {', '.join(summary['targets'])}")
+        lines.append(f"- **Started**: {summary.get('started', '')}")
+        lines.append(f"- **Status**: {summary.get('status', 'unknown')}")
+        lines.append(f"- **Risk Score**: {risk.get('total', 0)}/100 "
+                     f"({risk.get('rating', 'N/A')})")
+        if summary.get("campaign_id"):
+            lines.append(f"- **Campaign**: {summary['campaign_id']}")
+        lines.append("")
+
+        # ── Per-Job Matrix ──
+        jobs = summary.get("jobs", {})
+        if jobs:
+            lines.append("## 1. Workflow Jobs")
+            lines.append("")
+            lines.append("| Job | Workflow | Targets | Status | Findings |")
+            lines.append("|-----|----------|---------|--------|----------|")
+            for name, j in jobs.items():
+                emoji = {"complete": "✅", "partial": "⚠️", "failed": "❌",
+                         "error": "💀"}.get(j.get("status"), "❓")
+                lines.append(
+                    f"| {name} | {j.get('workflow', '')} | "
+                    f"{', '.join(j.get('targets', []))} | "
+                    f"{emoji} {j.get('status', 'unknown')} | "
+                    f"{j.get('findings_count', 0)} |")
+            lines.append("")
+
+        # ── Executive Summary ──
+        lines.append("## 2. Executive Summary")
+        lines.append("")
+        lines.append(
+            f"Ran **{len(jobs)} workflow(s)** in parallel against "
+            f"**{len(summary['targets'])} target(s)**. Merged "
+            f"**{len(summary.get('pooled_findings', []))} unique finding(s)** "
+            f"across workflows and correlated them into "
+            f"**{len(paths)} cross-workflow attack path(s)**.")
+        lines.append("")
+        lines.append(f"**Risk Assessment: {risk.get('total', 0)}/100 "
+                     f"({risk.get('rating', 'N/A')})**")
+        lines.append("")
+
+        # Severity breakdown table
+        lines.append("| Severity | Count |")
+        lines.append("|----------|-------|")
+        for sev in ["critical", "high", "medium", "low", "info"]:
+            c = counts.get(sev, 0)
+            if c > 0:
+                emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡",
+                         "low": "🔵", "info": "⚪"}.get(sev, "⚪")
+                lines.append(f"| {emoji} {sev.upper()} | {c} |")
+        lines.append("")
+
+        # ── Cross-Workflow Attack Paths ──
+        lines.append("## 3. Cross-Workflow Attack Paths")
+        lines.append("")
+        if paths:
+            lines.append(f"**{len(paths)} path(s)** chaining findings across "
+                         f"the parallel workflows:")
+            lines.append("")
+            lines.append("| # | Severity | Path | Score | Confidence | Kill Chain | ATT&CK |")
+            lines.append("|---|----------|------|-------|------------|------------|--------|")
+            for i, p in enumerate(paths[:15], 1):
+                sev_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡",
+                             "low": "🔵", "info": "⚪"}.get(p["severity"], "⚪")
+                techs = ", ".join(t["id"] for t in p.get("attack_techniques", [])[:3])
+                lines.append(
+                    f"| {i} | {sev_emoji} {p['severity'].upper()} | "
+                    f"{p['title']} | {p['score']} | "
+                    f"{p.get('confidence', 0) * 100:.0f}% | "
+                    f"{p.get('kill_chain_progress', 0) * 100:.0f}% | {techs} |")
+            lines.append("")
+
+            # Path details
+            for i, p in enumerate(paths[:10], 1):
+                sev_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡",
+                             "low": "🔵", "info": "⚪"}.get(p["severity"], "⚪")
+                lines.append(f"### {i}. {sev_emoji} {p['title']}")
+                lines.append(f"- **Score**: {p['score']} | **Confidence**: "
+                             f"{p.get('confidence', 0) * 100:.0f}%")
+                lines.append(f"- **Kill Chain**: "
+                             f"{p.get('kill_chain_progress', 0) * 100:.0f}% "
+                             f"(phases: {', '.join(p.get('kill_chain_phases', []))})")
+                if p.get("attack_techniques"):
+                    lines.append("- **ATT&CK**: " + ", ".join(
+                        f"`{t['id']}` {t.get('name', '')}" for t in p["attack_techniques"][:5]))
+                if p.get("finding_details"):
+                    lines.append("- **Linked Findings**:")
+                    for fd in p["finding_details"][:5]:
+                        src = f" ({fd.get('source_workflow', '')})" if fd.get("source_workflow") else ""
+                        lines.append(
+                            f"  - [{fd['severity'].upper()}] {fd['title']} "
+                            f"(`{fd.get('source_tool', '')}`){src}")
+                lines.append("- **Remediation**:")
+                for r in p["remediation"]:
+                    lines.append(f"  - {r}")
+                lines.append("")
+        else:
+            lines.append("No cross-workflow attack paths identified.")
+            lines.append("")
+
+        # ── Merged Findings ──
+        lines.append("## 4. Merged Findings")
+        lines.append("")
+        merged = summary.get("pooled_findings", [])
+        if merged:
+            lines.append(f"**{len(merged)} unique finding(s)** across all "
+                         f"workflows:")
+            lines.append("")
+            for f in merged:
+                wf = f.get("_source_workflow", "")
+                wf_tag = f" · workflow={wf}" if wf else ""
+                lines.append(
+                    f"- [{f.get('severity', 'info').upper()}] **{f.get('title', '')}** "
+                    f"(`{f.get('target', '')}`){wf_tag} — "
+                    f"{f.get('evidence', '')[:120]}")
+        else:
+            lines.append("No findings merged.")
+        lines.append("")
+
+        # ── Risk Breakdown ──
+        if risk:
+            lines.append("## 5. Risk Score Breakdown")
+            lines.append("")
+            lines.append(f"- **Total**: {risk['total']}/100 ({risk['rating']})")
+            for k, v in risk.get("breakdown", {}).items():
+                lines.append(f"  - {k}: {v}")
+            lines.append("")
+
+        lines.append("---")
+        lines.append("*Generated by RedTeam Harness v5.3 parallel multi-workflow "
+                     "scheduler with cross-workflow correlation.*")
+
+        report = "\n".join(lines)
+        try:
+            path = os.path.join(summary["root"], "report.md")
+            with open(path, "w") as f:
+                f.write(report)
+            return path
+        except Exception as e:
+            logger.error(f"Failed to write parallel report: {e}")
+            return ""
 
     # ═══════════════════════════════════════════════════════════════
     # Risk Scoring
@@ -456,6 +1060,24 @@ class MultiTargetScheduler:
         lines.append(f"**Risk Assessment: {risk.get('total', 0)}/100 "
                      f"({risk.get('rating', 'N/A')})**")
         lines.append("")
+
+        # ── Target Priority Plan (v5.2) ──
+        prio = summary.get("priority_plan", [])
+        if prio:
+            lines.append("## 0. Target Priority Plan")
+            lines.append("")
+            lines.append("Targets were ranked by exploitability before execution "
+                         "(high-value first, processed with more retries):")
+            lines.append("")
+            lines.append("| Rank | Target | Score | Tier | Aggression | Rationale |")
+            lines.append("|------|--------|-------|------|------------|-----------|")
+            for e in prio[:20]:
+                lines.append(
+                    f"| {e.get('rank', '?')} | {e.get('target', '')} | "
+                    f"{e.get('score', 0)} | {e.get('tier', '')} | "
+                    f"{e.get('aggressiveness', 1.0)}x | "
+                    f"{str(e.get('rationale', ''))[:80]} |")
+            lines.append("")
 
         # Severity breakdown table
         lines.append("| Severity | Count |")

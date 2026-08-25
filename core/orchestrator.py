@@ -32,6 +32,7 @@ from core.prioritizer import TargetPrioritizer
 from core.tool_installer import ToolInstaller
 from core.tool_scorer import ToolScorer
 from core.vector_memory import VectorMemory
+from core.knowledge_base import KnowledgeBase
 from core.injection_defense import sanitize_for_llm, sanitize_tool_output
 from core.autonomous import AutonomousAgent
 
@@ -49,6 +50,19 @@ PHASE_TOOLS = {
     "vuln":   ["vuln", "web"],
     "exploit": ["exploit", "password", "wireless", "social"],
     "postex":  ["postex", "forensics", "reversing", "hardware"],
+}
+
+# ── Workflow chaining (v4.3) ──
+MAX_CHAIN_LINKS_HARD_CAP = 10
+CHAIN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "continue": {"type": "boolean"},
+        "next_objective": {"type": "string"},
+        "rationale": {"type": "string"},
+        "suggested_variables": {"type": "object"},
+    },
+    "required": ["continue", "next_objective", "rationale"],
 }
 
 
@@ -91,6 +105,10 @@ class Orchestrator:
             "on_report_generated": [],
             "on_workflow_start": [],
             "on_workflow_complete": [],
+            "multi_target_progress": [],
+            "on_chain_start": [],
+            "on_chain_link": [],
+            "on_chain_complete": [],
         }
         self._system_prompt_base = self._build_base_system_prompt()
         wf_cfg = config.get("workflow", {})
@@ -101,6 +119,7 @@ class Orchestrator:
             tasks_dir=wf_cfg.get("tasks_dir", "tasks"),
             max_concurrent=wf_cfg.get("max_concurrent_targets", 3),
             emit=self._emit,
+            config=config,  # v5.5: scheduler reads parallel retry/chain knobs
         )
         self.generator = WorkflowGenerator(
             self.llm, self.tools,
@@ -111,6 +130,11 @@ class Orchestrator:
         scorer_dir = config.get("harness", {}).get("session_dir", "./sessions")
         self.scorer = ToolScorer(scorer_dir)
         self.memory = VectorMemory(scorer_dir)
+        # v5.5: tactical engine can now ground suggestions in prior sessions
+        self.tactics.set_memory(self.memory)
+        # v5.6: offline knowledge base — CVE / ATT&CK / exploit signatures /
+        # remediation playbooks, indexed for fast local retrieval.
+        self.kb = KnowledgeBase()
         self.autonomous_agent = None  # Created on demand
 
     # ═══════════════════════════════════════════════════════════════
@@ -328,6 +352,7 @@ When finished, state clearly that the engagement is complete.
         self.autonomous_agent.on("on_error", lambda d: self._emit("on_autonomous_error", d))
         self.autonomous_agent.on("on_retry_escalation", lambda d: self._emit("on_autonomous_retry", d))
         self.autonomous_agent.on("on_report_generated", lambda d: self._emit("on_autonomous_report", d))
+        self.autonomous_agent.on("on_priority_update", lambda d: self._emit("on_autonomous_priority", d))
         return self.autonomous_agent.start(targets, objective)
 
     def stop_autonomous_engagement(self) -> Dict[str, Any]:
@@ -353,6 +378,14 @@ When finished, state clearly that the engagement is complete.
         if self.autonomous_agent:
             return self.autonomous_agent.get_status()
         return {"state": "idle"}
+
+    def get_autonomous_mission_control(self) -> Dict[str, Any]:
+        """Get the full Mission Control payload (kill-chain progress, heatmap,
+        retry history, phase-transition timeline) for the autonomous agent."""
+        if self.autonomous_agent:
+            return self.autonomous_agent.mission_control()
+        return {"state": "idle", "targets": [], "retry_history": [],
+                "timeline": [], "targets_count": 0}
 
     # ═══════════════════════════════════════════════════════════════
     # MAIN ENGAGEMENT LOOP
@@ -1169,6 +1202,23 @@ When finished, state clearly that the engagement is complete.
                 if findings:
                     correlation = self.correlate_findings(findings)
                     result["correlation"] = correlation
+
+                # ── Post-execution template self-improvement (v4.2) ──
+                # Ask the LLM to analyze the run and improve the saved template
+                improve_cfg = self.config.get("workflow", {}).get(
+                    "template_self_improve", True)
+                if improve_cfg:
+                    try:
+                        self._emit("on_llm_thinking", {
+                            "session_id": self._current_session,
+                            "step": "template-improvement",
+                        })
+                        improvement = self.generator.improve_template(
+                            result["path"], exec_result, apply=True)
+                        result["template_improvement"] = improvement
+                    except Exception as e:
+                        logger.error(f"Template improvement pass failed: {e}")
+                        result["template_improvement"] = {"error": str(e)}
             except Exception as e:
                 logger.error(f"Auto-workflow execution failed: {e}")
                 result["phase"] = "execution_failed"
@@ -1178,21 +1228,393 @@ When finished, state clearly that the engagement is complete.
         return result
 
     # ═══════════════════════════════════════════════════════════════
+    # PHASE 8: WORKFLOW CHAINING (v4.3)
+    # ═══════════════════════════════════════════════════════════════
+
+    def chain_workflows(self, objective: str,
+                        variables: Dict[str, Any] = None,
+                        max_links: int = None) -> Dict[str, Any]:
+        """
+        Chain multiple auto-generated workflows together.
+
+        After each workflow completes, the LLM is asked to decide the next
+        logical workflow objective based on the sanitized findings from that
+        run. If it recommends continuing, the next workflow is auto-generated,
+        saved, and executed with the previous run's chain values + variables
+        carried forward. Repeats until the LLM says stop, max_links is reached,
+        a loop is detected, or any link fails fatally.
+
+        Returns the full chain record: per-link results, pooled findings,
+        correlated attack paths, and a combined markdown report.
+        Never raises — failures are recorded in the chain dict.
+        """
+        max_links = int(max_links or self.config.get("workflow", {}).get(
+            "chain_max_links", 3))
+        max_links = max(1, min(max_links, MAX_CHAIN_LINKS_HARD_CAP))
+
+        chain = {
+            "chain_id": datetime.now().strftime("chain_%Y%m%d_%H%M%S"),
+            "objective": objective,
+            "status": "running",
+            "links": [],
+            "used_objectives": [objective],
+            "chain_values": dict(variables or {}),
+            "findings": [],
+            "error": None,
+        }
+        self._emit("on_chain_start", {"chain_id": chain["chain_id"],
+                                       "objective": objective})
+
+        current_objective = objective
+        current_vars = dict(variables or {})
+
+        try:
+            for link_no in range(1, max_links + 1):
+                self._emit("on_llm_thinking", {
+                    "session_id": self._current_session,
+                    "step": f"chain-link-{link_no}",
+                })
+                link = self.auto_workflow(current_objective,
+                                          variables=current_vars,
+                                          auto_execute=True)
+                link["link_number"] = link_no
+                link["objective"] = current_objective
+                chain["links"].append(link)
+                self._emit("on_chain_link", {
+                    "chain_id": chain["chain_id"],
+                    "link_number": link_no,
+                    "objective": current_objective,
+                    "status": link.get("status"),
+                    "workflow": (link.get("execution") or {}).get("workflow", ""),
+                })
+
+                # Carry chain values + findings forward from this link
+                exec_result = link.get("execution") or {}
+                for k, v in (exec_result.get("chain_values") or {}).items():
+                    chain["chain_values"][k] = v
+                chain["findings"].extend(exec_result.get("findings") or [])
+
+                # A hard execution failure terminates the chain
+                if link.get("status") in ("failed", "execution_failed") \
+                        or exec_result.get("error"):
+                    chain["status"] = "failed"
+                    chain["error"] = exec_result.get("error") or "link failed"
+                    break
+
+                # Ask the LLM what to do next (only if this link found something)
+                if not chain["findings"]:
+                    chain["status"] = "complete"
+                    break
+
+                decision = self._decide_next_workflow(
+                    chain["findings"], chain["chain_values"],
+                    chain["used_objectives"])
+                if not decision or not decision.get("continue"):
+                    chain["status"] = "complete"
+                    break
+
+                next_obj = decision.get("next_objective", "")
+                if not next_obj:
+                    chain["status"] = "complete"
+                    break
+
+                # Loop / drift guard: never re-run an objective
+                if next_obj in chain["used_objectives"]:
+                    chain["status"] = "complete"
+                    chain["loop_guard"] = next_obj
+                    break
+
+                # Propagate suggested variables from the LLM + prior chain values
+                suggested = decision.get("suggested_variables") or {}
+                current_vars = {**current_vars, **chain["chain_values"], **suggested}
+                chain["used_objectives"].append(next_obj)
+                current_objective = next_obj
+
+            if chain["status"] == "running":
+                chain["status"] = "complete"
+        except Exception as e:
+            logger.error(f"Workflow chain failed: {e}", exc_info=True)
+            chain["status"] = "failed"
+            chain["error"] = str(e)
+
+        # ── Pool + correlate + combined report ──
+        chain["links_count"] = len(chain["links"])
+        chain["findings_count"] = len(chain["findings"])
+        if chain["findings"]:
+            chain["correlation"] = self.correlate_findings(chain["findings"])
+        chain["report"] = self._build_chain_report(chain)
+        self._emit("on_chain_complete", {
+            "chain_id": chain["chain_id"],
+            "status": chain["status"],
+            "links_count": chain["links_count"],
+            "findings_count": chain["findings_count"],
+        })
+        return chain
+
+    def _decide_next_workflow(self, findings: List[Dict],
+                              chain_values: Dict[str, Any],
+                              used_objectives: List[str]) -> Optional[Dict]:
+        """
+        Ask the local LLM whether to continue the chain and what the next
+        workflow objective should be, based on sanitized findings.
+        Returns None on any failure (chain stops safely). Never raises.
+        """
+        try:
+            # Sanitize everything that came from tool output (attacker-controlled)
+            # with the AGGRESSIVE tool-output sanitizer — findings titles and chain
+            # values originate in service banners/page content. Only used_objectives
+            # (operator/system text) uses the narrower operator-text sanitizer.
+            findings_brief = []
+            for f in findings[-15:]:
+                findings_brief.append(
+                    f"- [{sanitize_tool_output(str(f.get('severity', 'info')).upper(), max_len=12)}] "
+                    f"{sanitize_tool_output(str(f.get('title', ''))[:120], max_len=140)} "
+                    f"(tool={sanitize_tool_output(str(f.get('source_tool', '?')), max_len=40)})")
+            done = ", ".join(sanitize_for_llm(o, max_len=120) for o in used_objectives)
+            cv = sanitize_tool_output(json.dumps(chain_values, default=str)[:500], max_len=500)
+
+            prompt = (
+                "You are orchestrating a chained penetration-testing campaign. "
+                "A workflow just completed with these findings:\n\n"
+                + "\n".join(findings_brief) +
+                f"\n\nAlready executed objectives: {done}\n"
+                f"Discovered values to propagate: {cv}\n\n"
+                "Decide whether to launch the next chained workflow. Return strict JSON:\n"
+                "{\"continue\": true/false, \"next_objective\": \"...\", "
+                "\"rationale\": \"...\", \"suggested_variables\": {}}\n"
+                "- continue=true only if a clearly valuable next step exists "
+                "(e.g. pivot recon→exploit on a discovered service, follow up a "
+                "critical finding, deepen postex).\n"
+                "- continue=false if the engagement is exhausted, findings are "
+                "informational only, or the next step would be redundant.\n"
+                "- next_objective: a concrete, scoped objective using only "
+                "discovered targets/services; NEVER repeat an already-executed "
+                "objective.\n"
+                "- suggested_variables: optional {key: value} to carry into the "
+                "next workflow (e.g. discovered host, port, credentials)."
+            )
+            response = self.llm.chat_structured(
+                [{"role": "system",
+                  "content": "You are an expert penetration-testing campaign planner. "
+                             "Output strict JSON only."},
+                 {"role": "user", "content": prompt}],
+                CHAIN_SCHEMA, max_tokens=512, temperature=0.3)
+            if response.startswith("[ERROR]"):
+                return None
+            data = self._parse_json(response)
+            if not data:
+                return None
+            return {
+                "continue": bool(data.get("continue", False)),
+                "next_objective": str(data.get("next_objective", "")).strip(),
+                "rationale": sanitize_for_llm(str(data.get("rationale", ""))[:300], max_len=320),
+                "suggested_variables": data.get("suggested_variables")
+                if isinstance(data.get("suggested_variables"), dict) else {},
+            }
+        except Exception as e:
+            logger.warning(f"Chain decision failed (non-fatal): {e}")
+            return None
+
+    def _build_chain_report(self, chain: Dict[str, Any]) -> str:
+        """Build a combined markdown report for a completed workflow chain."""
+        lines = [
+            f"# Chained Workflow Report — {chain['chain_id']}",
+            "",
+            f"- **Status**: {chain['status']}",
+            f"- **Links executed**: {chain.get('links_count', len(chain.get('links', [])))}",
+            f"- **Total findings**: {chain.get('findings_count', len(chain.get('findings', [])))}",
+            "",
+            "## Chain Objectives",
+            "",
+        ]
+        for i, link in enumerate(chain.get("links", []), 1):
+            ex = link.get("execution") or {}
+            lines.append(f"{i}. **{link.get('objective', '?')}** → "
+                         f"`{ex.get('workflow', '?')}` "
+                         f"[{ex.get('status', link.get('status', '?'))}] "
+                         f"({ex.get('completed_steps', 0)}/{ex.get('total_steps', 0)} steps)")
+            if link.get("template_improvement"):
+                ti = link["template_improvement"]
+                if not ti.get("error") and ti.get("applied"):
+                    lines.append(f"    ↳ template improved: {len(ti.get('applied_changes', {}).get('removed', []))} removed, "
+                                 f"{len(ti.get('applied_changes', {}).get('modified', []))} modified, "
+                                 f"{len(ti.get('applied_changes', {}).get('added', []))} added")
+        if chain.get("loop_guard"):
+            lines.append(f"\n*Chain stopped by loop guard: '{chain['loop_guard']}' "
+                         f"was already executed.*")
+
+        findings = chain.get("findings", [])
+        if findings:
+            counts = {}
+            for f in findings:
+                sev = str(f.get("severity", "info")).lower()
+                counts[sev] = counts.get(sev, 0) + 1
+            lines.append("")
+            lines.append("## Findings Summary")
+            lines.append("")
+            for sev in ("critical", "high", "medium", "low", "info"):
+                if counts.get(sev):
+                    lines.append(f"- **{sev.upper()}**: {counts[sev]}")
+            lines.append("")
+            lines.append("## Findings")
+            lines.append("")
+            for f in findings:
+                lines.append(f"- [{str(f.get('severity', 'info')).upper()}] "
+                             f"{f.get('title', '?')} — {f.get('description', '')}")
+        if chain.get("correlation") and chain["correlation"].get("paths"):
+            lines.append("")
+            lines.append("## Correlated Attack Paths")
+            lines.append("")
+            lines.append(self.correlator.paths_to_markdown(
+                chain["correlation"]["paths"]))
+        lines.append("")
+        lines.append("---")
+        lines.append("*Generated automatically by RedTeam Harness.*")
+        return "\n".join(lines)
+
+    # ═══════════════════════════════════════════════════════════════
     # PHASE 6: CONCURRENT MULTI-TARGET EXECUTION
     # ═══════════════════════════════════════════════════════════════
+
+    def run_parallel_workflows(self, jobs: List[Dict[str, Any]],
+                               campaign_id: str = None,
+                               max_concurrent: int = None,
+                               max_workers: int = None) -> Dict[str, Any]:
+        """
+        v5.3: run MULTIPLE different workflow jobs concurrently (each job =
+        {workflow, targets, variables, per_target_vars}) and merge ALL findings
+        across workflows via correlate_cross_workflow into a unified
+        campaign-level attack path report.
+        """
+        return self.scheduler.run_multiple(jobs or [],
+                                           campaign_id=campaign_id,
+                                           max_concurrent=max_concurrent,
+                                           max_workers=max_workers)
+
+    def chain_parallel_waves(self, seed_jobs: List[Dict[str, Any]],
+                             max_waves: int = 3,
+                             campaign_id: str = None) -> Dict[str, Any]:
+        """
+        v5.5: chained parallel waves — a campaign of campaigns. After each
+        multi-workflow wave completes, feed its unified findings into the
+        auto-prioritizer to decide which workflows/targets the NEXT wave
+        should hit. Each wave is a run_multiple() over the chosen jobs;
+        the chain stops when the LLM/heuristic finds nothing new, max_waves
+        is reached, or a wave fails fatally. Fire-and-forget; never raises.
+        """
+        max_waves = max(1, min(int(max_waves), 5))
+        waves = []
+        result = {
+            "chain_id": datetime.now().strftime("chainwave_%Y%m%d_%H%M%S"),
+            "status": "running",
+            "waves": waves,
+            "findings": [],
+            "error": None,
+        }
+        self._emit("on_chain_start", {"chain_id": result["chain_id"],
+                                       "campaign_id": campaign_id,
+                                       "waves": max_waves})
+        import threading as _threading
+
+        def _run():
+            try:
+                current_jobs = list(seed_jobs or [])
+                wave_no = 0
+                while current_jobs and wave_no < max_waves:
+                    wave_no += 1
+                    self._emit("on_llm_thinking", {
+                        "session_id": self._current_session,
+                        "step": f"parallel-wave-{wave_no}",
+                    })
+                    wave = self.run_parallel_workflows(
+                        current_jobs, campaign_id=campaign_id)
+                    wave["wave_number"] = wave_no
+                    waves.append(wave)
+                    result["findings"].extend(wave.get("pooled_findings", []) or [])
+                    self._emit("on_chain_link", {
+                        "chain_id": result["chain_id"],
+                        "campaign_id": campaign_id,
+                        "wave": wave_no,
+                        "status": wave.get("status"),
+                        "jobs": len(current_jobs),
+                        "findings": len(wave.get("pooled_findings", []) or []),
+                    })
+                    if wave.get("status") in ("failed", "error") or wave.get("error"):
+                        result["status"] = "failed"
+                        result["error"] = wave.get("error") or "wave failed"
+                        break
+                    if not result["findings"]:
+                        result["status"] = "complete"
+                        break
+                    # Decide the next wave from the unified findings
+                    decision = self._decide_next_workflow(
+                        result["findings"], {}, [])
+                    if not decision or not decision.get("continue"):
+                        result["status"] = "complete"
+                        break
+                    next_obj = decision.get("next_objective", "")
+                    if not next_obj:
+                        result["status"] = "complete"
+                        break
+                    gen = self.auto_workflow(next_obj, auto_execute=False)
+                    next_wf = ((gen.get("execution") or {}).get("workflow")
+                               or gen.get("workflow_name") or "")
+                    if not next_wf:
+                        result["status"] = "complete"
+                        break
+                    # Re-target: hit the same hosts with the new workflow
+                    current_jobs = [{"workflow": next_wf,
+                                     "targets": wave.get("targets", [])}]
+                if result["status"] == "running":
+                    result["status"] = "complete"
+            except Exception as e:
+                logger.error(f"Chained parallel waves failed: {e}", exc_info=True)
+                result["status"] = "failed"
+                result["error"] = str(e)
+            finally:
+                if campaign_id and self.scheduler._campaign_mgr:
+                    self.scheduler._campaign_mgr.mark_campaign_complete(campaign_id)
+                self._emit("on_chain_complete", {
+                    "chain_id": result["chain_id"],
+                    "campaign_id": campaign_id,
+                    "status": result["status"],
+                    "waves": len(waves),
+                })
+
+        _threading.Thread(target=_run, daemon=True).start()
+        return {"chain_id": result["chain_id"], "campaign_id": campaign_id,
+                "status": "started", "max_waves": max_waves}
 
     def run_multi_workflow(self, workflow_name: str, targets: List[str],
                            variables: Dict[str, Any] = None,
                            max_concurrent: int = None,
-                           campaign_id: str = None) -> Dict[str, Any]:
+                           campaign_id: str = None,
+                           priority_plan: List[Dict[str, Any]] = None,
+                           auto_prioritize: bool = False,
+                           targets_data: List[Dict[str, Any]] = None,
+                           findings: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Run a workflow against multiple targets concurrently with per-target
         isolation and combined aggregation.
+
+        v5.2: optional LLM-driven target prioritization. When
+        ``auto_prioritize=True`` (and no ``priority_plan`` is supplied), the
+        auto-prioritizer ranks the targets by exploitability first — the
+        scheduler then processes high-value targets first and with a higher
+        retry budget. ``targets_data`` (ports/services per target) and
+        ``findings`` feed the ranking when available.
         """
+        plan = priority_plan
+        if auto_prioritize and not plan:
+            td = targets_data or [{"target": t} for t in (targets or [])]
+            ranked = self.auto_prioritize_targets(td, findings or [])
+            if "error" not in ranked:
+                plan = ranked.get("ordered_targets", [])
         return self.scheduler.run(workflow_name, targets or [],
                                   base_variables=variables or {},
                                   max_concurrent=max_concurrent,
-                                  campaign_id=campaign_id)
+                                  campaign_id=campaign_id,
+                                  priority_plan=plan)
 
     # ═══════════════════════════════════════════════════════════════
     # PHASE 7: FINDING CORRELATION + AUTO-REMEDIATION
@@ -1202,6 +1624,12 @@ When finished, state clearly that the engagement is complete.
         """Correlate findings into scored attack paths with remediation."""
         paths = self.correlator.correlate(findings or [])
         augmented = self.correlator.augment_findings(findings or [])
+        # v5.6: ground every finding in the offline KB (CVE / ATT&CK /
+        # exploit signature / remediation playbook) before returning.
+        try:
+            augmented = self.kb.ground_findings(augmented or [])
+        except Exception as e:
+            logger.warning(f"KB grounding skipped for correlation: {e}")
         return {"paths": paths, "findings": augmented,
                 "paths_count": len(paths)}
 
@@ -1243,6 +1671,200 @@ When finished, state clearly that the engagement is complete.
                            findings: List[Dict] = None) -> List[Dict]:
         """Score and prioritize targets for multi-target campaigns."""
         return self.prioritizer.prioritize(targets_data or [], findings)
+
+    def auto_prioritize_targets(self, targets_data: List[Dict],
+                                findings: List[Dict] = None) -> Dict[str, Any]:
+        """
+        LLM-driven target ranking (v5.2). Ranks discovered targets by
+        exploitability using the local LLM, falling back to the heuristic
+        scorer when the LLM is unavailable or produces invalid output.
+
+        Returns a plan dict: {ordered_targets, used_llm, fallback_reason,
+        llm_rankings} — ordered_targets is [{target, rank, score, tier,
+        aggressiveness, rationale, suggested_workflow}].
+        """
+        from core.auto_prioritizer import AutoTargetPrioritizer
+        ap = AutoTargetPrioritizer(llm=self.llm, config=self.config)
+        return ap.prioritize(targets_data or [], findings or [])
+
+    # ═══════════════════════════════════════════════════════════════
+    # V5.5: LLM ANALYST BRIEF + CAMPAIGN AUTO-START CHAIN
+    # ═══════════════════════════════════════════════════════════════
+
+    def llm_campaign_brief(self, compare: Dict[str, Any]) -> str:
+        """
+        Ask the local LLM to write a 2-paragraph analyst brief on a campaign
+        comparison — the risk delta between the two engagements and which
+        persistent exposures deserve immediate remediation. Falls back to a
+        template-based brief when the LLM is unavailable. Never raises.
+        """
+        try:
+            a = compare.get("campaign_a", {}) or {}
+            b = compare.get("campaign_b", {}) or {}
+            overlap = compare.get("overlap", []) or []
+            uniq_a = compare.get("unique_a", []) or []
+            uniq_b = compare.get("unique_b", []) or []
+            pto = compare.get("per_target_overlap", []) or []
+
+            def _sev_txt(cam):
+                sc = cam.get("severity_counts", {}) or {}
+                return (f"{sc.get('critical', 0)} crit / {sc.get('high', 0)} high / "
+                        f"{sc.get('medium', 0)} med / {sc.get('low', 0)} low")
+
+            risk_a = (a.get("risk") or {}).get("score", 0)
+            risk_b = (b.get("risk") or {}).get("score", 0)
+            delta = round(risk_b - risk_a, 1)
+
+            ov_txt = "\n".join(
+                f"- {o.get('dedupe_key', '')} (sev {o.get('severity_a', '')}/{o.get('severity_b', '')}, "
+                f"persistent={o.get('persistent', False)})"
+                for o in overlap[:12])
+            ua_txt = "\n".join(f"- {u.get('dedupe_key', '')} [{u.get('severity', '')}]"
+                                for u in uniq_a[:10])
+            ub_txt = "\n".join(f"- {u.get('dedupe_key', '')} [{u.get('severity', '')}]"
+                                for u in uniq_b[:10])
+            pto_txt = "\n".join(
+                f"- {p.get('target', '')}: {', '.join(v.get('dedupe_key', '') for v in p.get('vulns', []))}"
+                for p in pto[:10])
+
+            prompt = (
+                "You are a senior penetration-testing analyst. Two campaigns "
+                "just completed. Write a 2-paragraph analyst brief: "
+                "(1) the risk delta between the two engagements and what it "
+                "means; (2) which persistent exposures (vulnerabilities found "
+                "in BOTH campaigns, especially on the same host) deserve "
+                "immediate remediation, prioritized by severity. Be specific "
+                "and cite finding names."
+                f"\n\nCampaign A risk={risk_a}, findings: {_sev_txt(a)}"
+                f"\nCampaign B risk={risk_b} (delta {delta:+}), findings: {_sev_txt(b)}"
+                f"\n\nOverlapping exposures ({len(overlap)}):\n{ov_txt or '(none)'}"
+                f"\n\nUnique to A ({len(uniq_a)}):\n{ua_txt or '(none)'}"
+                f"\n\nUnique to B ({len(uniq_b)}):\n{ub_txt or '(none)'}"
+                f"\n\nSame-host persistent exposures ({len(pto)}):\n{pto_txt or '(none)'}"
+            )
+            response = self.llm.chat([
+                {"role": "system",
+                 "content": "You are a concise penetration-testing analyst. "
+                            "Output plain text only, 2 paragraphs."},
+                {"role": "user", "content": sanitize_for_llm(prompt, max_len=6000)},
+            ], max_tokens=700, temperature=0.4)
+            response = (response or "").strip()
+            if response and not response.startswith("[ERROR]"):
+                return response
+        except Exception as e:
+            logger.warning(f"LLM campaign brief failed (fallback): {e}")
+        return (f"Risk delta between engagements: {delta:+} points "
+                f"(A={risk_a}, B={risk_b}). {len(overlap)} overlapping "
+                f"exposure(s) identified. Prioritize remediation of "
+                f"persistent findings on shared hosts: "
+                f"{', '.join((o.get('dedupe_key', '') for o in overlap[:5])) or 'none'}.")
+
+    def start_campaign_chain(self, campaign_id: str, workflow: str,
+                             targets: List[str],
+                             variables: Optional[Dict[str, Any]] = None,
+                             max_links: Optional[int] = None) -> Dict[str, Any]:
+        """
+        v5.5: live campaign auto-start flow. Picks a workflow + target list,
+        runs it through the scheduler (tracking in the campaign), then asks
+        the LLM to decide the next workflow objective for the campaign based
+        on the findings — generates + executes the next workflow, all tracked
+        live in the same dashboard campaign. Fire-and-forget; never raises.
+        """
+        max_links = int(max_links or self.config.get("workflow", {}).get(
+            "chain_max_links", 3))
+        max_links = max(1, min(max_links, MAX_CHAIN_LINKS_HARD_CAP))
+        chain = {
+            "chain_id": datetime.now().strftime("chain_%Y%m%d_%H%M%S"),
+            "campaign_id": campaign_id,
+            "status": "running",
+            "links": [],
+            "used_objectives": [],
+            "chain_values": dict(variables or {}),
+            "findings": [],
+            "error": None,
+        }
+        self._emit("on_chain_start", {"chain_id": chain["chain_id"],
+                                       "campaign_id": campaign_id,
+                                       "workflow": workflow})
+        import threading as _threading
+
+        def _run():
+            try:
+                current_workflow = workflow
+                current_vars = dict(variables or {})
+                for link_no in range(1, max_links + 1):
+                    link_result = self.run_multi_workflow(
+                        current_workflow, targets, current_vars,
+                        campaign_id=campaign_id)
+                    chain["links"].append({
+                        "link_number": link_no,
+                        "workflow": current_workflow,
+                        "status": link_result.get("status", "unknown"),
+                        "combined_id": link_result.get("combined_id"),
+                    })
+                    self._emit("on_chain_link", {
+                        "chain_id": chain["chain_id"],
+                        "campaign_id": campaign_id,
+                        "link_number": link_no,
+                        "workflow": current_workflow,
+                        "status": link_result.get("status"),
+                    })
+                    link_findings = link_result.get("pooled_findings", []) or []
+                    chain["findings"].extend(link_findings)
+                    for k, v in (link_result.get("chain_values") or {}).items():
+                        chain["chain_values"][k] = v
+                    if link_result.get("status") in ("failed", "error") or \
+                            link_result.get("error"):
+                        chain["status"] = "failed"
+                        chain["error"] = link_result.get("error") or "link failed"
+                        break
+                    if not chain["findings"]:
+                        chain["status"] = "complete"
+                        break
+                    decision = self._decide_next_workflow(
+                        chain["findings"], chain["chain_values"],
+                        chain["used_objectives"])
+                    if not decision or not decision.get("continue"):
+                        chain["status"] = "complete"
+                        break
+                    next_obj = decision.get("next_objective", "")
+                    if not next_obj or next_obj in chain["used_objectives"]:
+                        chain["status"] = "complete"
+                        break
+                    # Auto-generate the next workflow from the LLM objective
+                    gen = self.auto_workflow(next_obj,
+                                             variables=current_vars,
+                                             auto_execute=False)
+                    next_wf = ((gen.get("execution") or {}).get("workflow")
+                               or gen.get("workflow_name") or "")
+                    if not next_wf:
+                        chain["status"] = "complete"
+                        chain["error"] = gen.get("error") or "next workflow generation failed"
+                        break
+                    suggested = decision.get("suggested_variables") or {}
+                    current_vars = {**current_vars, **chain["chain_values"],
+                                    **suggested}
+                    chain["used_objectives"].append(next_obj)
+                    current_workflow = next_wf
+                if chain["status"] == "running":
+                    chain["status"] = "complete"
+            except Exception as e:
+                logger.error(f"Campaign chain failed: {e}", exc_info=True)
+                chain["status"] = "failed"
+                chain["error"] = str(e)
+            finally:
+                if campaign_id and self.scheduler._campaign_mgr:
+                    self.scheduler._campaign_mgr.mark_campaign_complete(campaign_id)
+                self._emit("on_chain_complete", {
+                    "chain_id": chain["chain_id"],
+                    "campaign_id": campaign_id,
+                    "status": chain["status"],
+                    "links": len(chain["links"]),
+                })
+
+        _threading.Thread(target=_run, daemon=True).start()
+        return {"chain_id": chain["chain_id"], "campaign_id": campaign_id,
+                "status": "started"}
 
     # ═══════════════════════════════════════════════════════════════
     # DIRECT TOOL EXECUTION
@@ -1388,4 +2010,5 @@ When finished, state clearly that the engagement is complete.
             "parallel": self.parallel.get_stats(),
             "tool_scorer": self.scorer.get_stats(),
             "vector_memory": self.memory.get_stats(),
+            "knowledge_base": self.kb.get_stats(),
         }

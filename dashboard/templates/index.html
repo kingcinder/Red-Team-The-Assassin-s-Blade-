@@ -121,9 +121,13 @@
                         <button class="tab" onclick="showResultsTab('tactics')">🎯 Tactics</button>
                         <button class="tab" onclick="showResultsTab('report')">📄 Report</button>
                         <button class="tab" onclick="showResultsTab('graph')">🔗 Chain</button>
+                        <button class="tab" data-tab="attackgraph" onclick="showResultsTab('attackgraph')">🕸️ Attack Graph</button>
+                        <button class="tab" data-tab="attackmatrix" onclick="showResultsTab('attackmatrix')">🔱 ATT&CK</button>
                         <button class="tab" onclick="showResultsTab('log')">Command Log</button>
                     <button class="tab" onclick="showResultsTab('campaign')">📡 Campaign</button>
                     <button class="tab" onclick="showResultsTab('memory')">🧠 Memory</button>
+                    <button class="tab" onclick="showResultsTab('kb')">📚 KB</button>
+                    <button class="tab" onclick="showResultsTab('mission')">🛰️ Mission</button>
                     </div>
                 </div>
                 <div class="results-content" id="results-live">
@@ -153,8 +157,69 @@
                     </div>
                     <div id="graph-content"><p class="muted">Pick a workflow to see its attack chain graph. Solid arrows = sequence, dashed arrows = exploit chaining (extracted data flows into later steps).</p></div>
                 </div>
+                <div class="results-content hidden" id="results-attackgraph">
+                    <div class="graph-toolbar">
+                        <select id="attackgraph-task-select" class="modal-select" style="max-width:340px" onchange="onAttackGraphTaskChange()">
+                            <option value="">Select task run...</option>
+                        </select>
+                        <select id="attackgraph-campaign-select" class="modal-select" style="max-width:340px" onchange="onAttackGraphCampaignChange()">
+                            <option value="">Select campaign...</option>
+                        </select>
+                        <button class="btn-primary" onclick="renderAttackGraph()">🕸️ Render Graph</button>
+                        <button class="btn-icon" onclick="resetAttackGraphView()" title="Reset zoom/pan">⤢</button>
+                    </div>
+                    <div class="attackgraph-wrap">
+                        <div id="attackgraph-canvas" class="attackgraph-canvas"><p class="muted">Pick a task run or campaign to visualize its correlated attack paths. Nodes = attack paths &amp; findings (severity-coded); edges = chaining &amp; membership. Wheel = zoom, drag = pan, click a node for details.</p></div>
+                        <div class="attackgraph-minimap hidden" id="attackgraph-minimap"><canvas id="attackgraph-minimap-canvas" width="160" height="100"></canvas></div>
+                    </div>
+                    <div class="attackgraph-legend hidden" id="attackgraph-legend"></div>
+                    <div id="attackgraph-detail"></div>
+                </div>
+                <div class="results-content hidden" id="results-attackmatrix">
+                    <div class="graph-toolbar">
+                        <select id="attackmatrix-task-select" class="modal-select" style="max-width:340px" onchange="onAttackMatrixTaskChange()">
+                            <option value="">Select task run...</option>
+                        </select>
+                        <select id="attackmatrix-campaign-select" class="modal-select" style="max-width:340px" onchange="onAttackMatrixCampaignChange()">
+                            <option value="">Select campaign...</option>
+                        </select>
+                        <button class="btn-primary" onclick="renderAttackMatrix()">🔱 Render Matrix</button>
+                    </div>
+                    <div id="attackmatrix-summary" class="attackmatrix-summary"></div>
+                    <div class="attackmatrix-scroll">
+                        <table class="attackmatrix-table" id="attackmatrix-table"></table>
+                    </div>
+                    <div class="attackmatrix-legend" id="attackmatrix-legend"></div>
+                    <div id="attackmatrix-detail"></div>
+                </div>
                 <div class="results-content hidden" id="results-log">
                     <div id="command-log"><p class="muted">No commands executed yet.</p></div>
+                </div>
+                <div class="results-content hidden" id="results-mission">
+                    <div class="mission-panel">
+                        <div class="mission-header">
+                            <h3>🛰️ Mission Control — Autonomous Kill Chain</h3>
+                            <div class="mission-actions">
+                                <button class="btn-primary" onclick="loadMissionControl()">🔄 Refresh</button>
+                            </div>
+                        </div>
+                        <div class="mission-summary" id="mission-summary">
+                            <p class="muted">No autonomous engagement running. Start one to see live kill-chain progress here.</p>
+                        </div>
+                        <div class="mission-grid" id="mission-grid"></div>
+                        <div class="mission-section">
+                            <h4>🔥 Finding Severity Heatmap</h4>
+                            <div id="mission-heatmap"><p class="muted">No findings yet.</p></div>
+                        </div>
+                        <div class="mission-section">
+                            <h4>⚠️ Retry Escalations</h4>
+                            <div id="mission-retry"><p class="muted">No retry escalations.</p></div>
+                        </div>
+                        <div class="mission-section">
+                            <h4>🕐 Phase Transition Timeline</h4>
+                            <div id="mission-timeline"><p class="muted">No phase transitions yet.</p></div>
+                        </div>
+                    </div>
                 </div>
                 <div class="results-content hidden" id="results-memory">
                     <div class="memory-panel">
@@ -179,6 +244,29 @@
                         </div>
                     </div>
                 </div>
+                <div class="results-content hidden" id="results-kb">
+                    <div class="memory-panel">
+                        <div class="memory-header">
+                            <h3>📚 Offline Knowledge Base <span class="kb-badge">AIR-GAPPED</span></h3>
+                            <div class="memory-actions">
+                                <button class="btn-primary" onclick="kbSearch()">🔍 Search</button>
+                                <button class="btn-primary" onclick="kbGroundClipboard()">🧪 Ground Text</button>
+                            </div>
+                        </div>
+                        <div class="memory-search-bar">
+                            <input class="modal-input" id="kb-search-input" placeholder="Search CVEs, ATT&CK techniques, exploit signatures, remediation (e.g. 'Apache log4j RCE 2021')" onkeydown="if(event.key==='Enter')kbSearch()" data-ctrl-help="Full-text search across the embedded offline database — CVE descriptions, MITRE ATT&CK techniques, exploit signatures, and remediation playbooks. Works with zero internet access.">
+                        </div>
+                        <div class="kb-quick-row">
+                            <span class="kb-quick-label">Quick lookup:</span>
+                            <input class="modal-input" id="kb-cve-input" placeholder="CVE-2021-44228" style="flex:0 0 180px" onkeydown="if(event.key==='Enter')kbLookupCVE()" data-ctrl-help="Jump straight to a specific CVE record. Formats: CVE-YYYY-NNNNN.">
+                            <button class="btn-primary" onclick="kbLookupCVE()">Lookup CVE</button>
+                            <input class="modal-input" id="kb-tech-input" placeholder="T1059.001" style="flex:0 0 140px" onkeydown="if(event.key==='Enter')kbLookupTech()" data-ctrl-help="Look up a MITRE ATT&CK technique or sub-technique by ID.">
+                            <button class="btn-primary" onclick="kbLookupTech()">ATT&CK ID</button>
+                        </div>
+                        <div class="memory-stats" id="kb-stats"><p class="muted">Loading offline database...</p></div>
+                        <div class="kb-results" id="kb-results"></div>
+                    </div>
+                </div>
                 <div class="results-content hidden" id="results-campaign">
                     <div id="campaign-mini-view">
                         <div class="campaign-mini-header">
@@ -188,13 +276,13 @@
                         <div id="campaign-mini-content"><p class="muted">No active campaign. Create one to track multi-target runs.</p></div>
                         <div class="campaign-create-form">
                             <label class="modal-label">Campaign Name</label>
-                            <input class="modal-input" id="camp-name" placeholder="e.g. Internal Network Assessment">
+                            <input class="modal-input" id="camp-name" placeholder="e.g. Internal Network Assessment" data-ctrl-help="Give the campaign a human-readable name — it appears in history, comparisons, and the trends leaderboard.">
                             <label class="modal-label">Targets (comma-separated)</label>
-                            <input class="modal-input" id="camp-targets-input" placeholder="10.0.0.1,10.0.0.2,10.0.0.3">
+                            <input class="modal-input" id="camp-targets-input" placeholder="10.0.0.1,10.0.0.2,10.0.0.3" data-ctrl-help="Comma-separated host list (IPs, hostnames, CIDR ranges). Each target runs in its own sandbox with the workflow applied concurrently.">
                             <label class="modal-label">Workflow (optional)</label>
-                            <select class="modal-select" id="camp-wf-select"><option value="">Select workflow...</option></select>
+                            <select class="modal-select" id="camp-wf-select" data-ctrl-help="Pick the workflow template to run against every target. Leave empty to choose at start time."><option value="">Select workflow...</option></select>
                             <div style="margin-top:10px;display:flex;gap:8px">
-                                <button class="btn-primary" onclick="createCampaign()">📡 Create Campaign</button>
+                                <button class="btn-primary" onclick="createCampaign()" data-ctrl-help="Create the campaign shell (pending targets, zero findings). Then hit Start Campaign to execute, or Auto-Prioritize to LLM-rank targets first.">📡 Create Campaign</button>
                             </div>
                         </div>
                     </div>
@@ -275,10 +363,112 @@
                     </div>
                 </div>
 
+                <!-- Campaign Comparison (side-by-side) -->
+                <div class="campaign-section">
+                    <h3>⚔️ Campaign Comparison</h3>
+                    <div class="compare-controls">
+                        <select class="modal-select" id="compare-campaign-a"><option value="">Select campaign A...</option></select>
+                        <span class="compare-vs">VS</span>
+                        <select class="modal-select" id="compare-campaign-b"><option value="">Select campaign B...</option></select>
+                        <button class="btn-primary" onclick="runCampaignCompare()">⚔️ Compare</button>
+                    </div>
+                    <div class="compare-results hidden" id="compare-results">
+                        <p class="muted">Pick two completed campaigns to compare findings, attack paths, risk, and overlapping vulnerabilities.</p>
+                    </div>
+                </div>
+
+                <!-- Target Priority Plan (v5.2 LLM auto-prioritizer) -->
+                <div class="campaign-section">
+                    <h3>⚡ Target Priority Plan</h3>
+                    <p class="muted" style="margin:0 0 8px">LLM-ranks targets by exploitability before the scheduler runs — high-value targets go first with a higher retry budget.</p>
+                    <div class="prio-controls">
+                        <button class="btn-primary" onclick="prioritizeCampaign()">⚡ Auto-Prioritize</button>
+                        <span class="prio-mode" id="prio-mode-label">Heuristic fallback available</span>
+                    </div>
+                    <div class="prio-list hidden" id="campaign-prio-list"></div>
+                </div>
+
+                <!-- Parallel Multi-Workflow (v5.3 cross-workflow correlation) -->
+                <div class="campaign-section">
+                    <h3>⚙️ Parallel Multi-Workflow</h3>
+                    <p class="muted" style="margin:0 0 8px">Run multiple workflows against these targets concurrently — all findings merge via cross-workflow correlation into one unified campaign report.</p>
+                    <input class="modal-input" id="parallel-wf-input" placeholder="Workflow names, comma-separated (e.g. network_recon, web_recon, domain_recon)">
+                    <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+                        <button class="btn-primary" onclick="runParallelWorkflows()">⚙️ Run Parallel</button>
+                        <button class="btn-primary" onclick="runParallelChain()" title="Campaign of campaigns — each wave feeds the next">🔁 Chained Waves</button>
+                        <span class="prio-mode" id="parallel-status"></span>
+                    </div>
+                    <div class="prio-list hidden" id="parallel-result"></div>
+                </div>
+
+                <!-- Live Auto-Start Chain (v5.5) -->
+                <div class="campaign-section">
+                    <h3>🔁 Live Auto-Start Chain</h3>
+                    <p class="muted" style="margin:0 0 8px">Run the workflow, then let the LLM pick the next objective per campaign — chaining workflows live in this panel.</p>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <button class="btn-primary" onclick="startCampaignChain()">🔁 Auto-Start Chain</button>
+                        <span class="prio-mode" id="chain-status"></span>
+                    </div>
+                    <div class="prio-list hidden" id="chain-result"></div>
+                </div>
+
+                <!-- Persistence + Snapshot/Diff (v5.5) -->
+                <div class="campaign-section">
+                    <h3>💾 Persistence · Snapshots · Diff</h3>
+                    <p class="muted" style="margin:0 0 8px">Save the campaign to disk, capture a mid-run snapshot, and diff it against the final state to see exactly which findings appeared after a specific step.</p>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                        <button class="btn-primary" onclick="saveCampaign()">💾 Save to Disk</button>
+                        <button class="btn-primary" onclick="snapshotCampaign()">📸 Snapshot</button>
+                        <button class="btn-primary" onclick="diffCampaign()">🔍 Diff Latest</button>
+                        <span class="prio-mode" id="persist-status"></span>
+                    </div>
+                    <div class="prio-list hidden" id="persist-result"></div>
+                </div>
+
+                <!-- Campaign History (v5.5) -->
+                <div class="campaign-section">
+                    <h3>🗂️ Campaign History</h3>
+                    <p class="muted" style="margin:0 0 8px">All campaigns — live plus persisted runs on disk. Click one to reload it for post-engagement review or comparison.</p>
+                    <div class="compare-controls">
+                        <button class="btn-primary" onclick="loadCampaignHistory()">🗂️ Refresh History</button>
+                        <span class="prio-mode" id="history-status"></span>
+                    </div>
+                    <div class="prio-list hidden" id="campaign-history-list"></div>
+                </div>
+
+                <!-- Gantt Timeline (v5.5) -->
+                <div class="campaign-section">
+                    <h3>📊 Gantt Timeline</h3>
+                    <p class="muted" style="margin:0 0 8px">Which workflow jobs ran concurrently vs sequentially, with per-job wall-clock intervals.</p>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <button class="btn-primary" onclick="loadCampaignGantt()">📊 Load Gantt</button>
+                        <span class="prio-mode" id="gantt-status"></span>
+                    </div>
+                    <div class="prio-list hidden" id="campaign-gantt"></div>
+                </div>
+
+                <!-- Cross-Campaign Trends (v5.5) -->
+                <div class="campaign-section">
+                    <h3>📈 Cross-Campaign Trends</h3>
+                    <p class="muted" style="margin:0 0 8px">Leaderboard of persistent exposures — which vulnerabilities recur most often across ALL engagements.</p>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <button class="btn-primary" onclick="loadCampaignTrends()">📈 Load Trends</button>
+                        <span class="prio-mode" id="trends-status"></span>
+                    </div>
+                    <div class="prio-list hidden" id="campaign-trends"></div>
+                </div>
+
+                <!-- Target Drill-Down (v5.5) -->
+                <div class="campaign-section">
+                    <h3>🔬 Target Drill-Down</h3>
+                    <p class="muted" style="margin:0 0 8px">Click a target card above, then open its full step list, drift scores, findings with evidence, and start/finish timeline here.</p>
+                    <div class="prio-list hidden" id="campaign-drilldown"></div>
+                </div>
+
                 <!-- Campaign Actions -->
                 <div class="campaign-actions">
-                    <button class="btn-primary" onclick="startCampaignRun()">▶ Start Campaign</button>
-                    <button class="btn-danger" onclick="toggleCampaignPanel()">✕ Close</button>
+                    <button class="btn-primary" onclick="startCampaignRun()" data-ctrl-help="Start the campaign: run the selected workflow against ALL targets concurrently. Uses the stored priority plan if you auto-prioritized first. Progress streams live into this panel via WebSocket.">▶ Start Campaign</button>
+                    <button class="btn-danger" onclick="toggleCampaignPanel()" data-ctrl-help="Close the C2 campaign dashboard overlay. The mini campaign view stays in the Results tab.">✕ Close</button>
                 </div>
             </div>
         </div>

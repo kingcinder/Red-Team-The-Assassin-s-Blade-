@@ -49,6 +49,10 @@ workflow:
   # LLM workflow generator (v3.2)
   generator_max_steps: 20
   generator_max_arg_len: 500
+  # Post-execution template self-improvement (v4.2)
+  template_self_improve: true
+  # Workflow chaining (v4.3)
+  chain_max_links: 3
 
 # v4.0 Assassin's Blade Configuration
 assassins_blade:
@@ -70,6 +74,10 @@ assassins_blade:
   # Phase 7: Target Prioritization
   prioritizer_max_targets: 100
   prioritizer_parallel_scans: true
+  # v5.2: LLM-driven auto target prioritization (ranks targets by
+  # exploitability before the multi-target scheduler; heuristic fallback
+  # when the LLM is unavailable)
+  prioritizer_llm_enabled: true
 
 # Safety & Scope Configuration
 safety:

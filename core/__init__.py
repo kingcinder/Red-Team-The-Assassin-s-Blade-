@@ -21,6 +21,7 @@ Modules:
     context_manager     — Context-window trimming for LLM prompts
     tactics             — Tactical suggestion engine (next-action recommendations)
     prioritizer         — Target prioritization by risk score
+    auto_prioritizer    — LLM-driven target ranking by exploitability (v5.2)
     task_scheduler      — Multi-target concurrent workflow scheduler
     autonomous          — Fire-and-forget autonomous agent (recon→vuln→exploit→postex)
     campaign            — Multi-target campaign manager with risk scoring

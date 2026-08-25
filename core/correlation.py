@@ -18,7 +18,15 @@ v5.0 enhancements over v4.0:
 import re
 import logging
 from collections import defaultdict
-from typing import Dict, Any, List, Optional, Tuple, Set
+from typing import Dict, Any, List, Optional
+
+# MITRE ATT&CK catalogue (names, tactics, matrix order) is owned by the
+# offline knowledge base — single source of truth. correlation.py keeps only
+# the rule-key → technique-id mapping below (mapping logic, not data) and
+# re-exports the KB tables so existing importers keep working.
+from core.knowledge_base import (
+    ATTACK_TACTICS, ATTACK_TACTIC_ORDER, TECHNIQUE_NAMES,
+)
 
 logger = logging.getLogger("redteam.correlation")
 
@@ -37,64 +45,182 @@ KILL_CHAIN_PHASES = {
 }
 
 # ── MITRE ATT&CK technique mappings ──
+# Rule key → technique id. Names/tactics resolve through the KB catalogue
+# (TECHNIQUE_NAMES imported above), so this table carries no data, only the
+# keyword-rule mapping used by _map_attack_techniques.
 ATTACK_TECHNIQUES = {
     # Reconnaissance
-    "port_scan":          {"id": "T1046", "name": "Network Service Discovery"},
-    "dns_enum":           {"id": "T1596", "name": "Search Open Technical Databases"},
-    "subdomain_enum":     {"id": "T1596.001", "name": "DNS/Passive DNS"},
-    "osint":              {"id": "T1593", "name": "Search Open Websites/Domains"},
-    "email_harvest":      {"id": "T1589", "name": "Gather Victim Identity Information"},
+    "port_scan":          "T1046",
+    "dns_enum":           "T1596",
+    "subdomain_enum":     "T1596.001",
+    "osint":              "T1593",
+    "email_harvest":      "T1589",
     # Initial Access
-    "sql_injection":      {"id": "T1190", "name": "Exploit Public-Facing Application"},
-    "xss":                {"id": "T1189", "name": "Drive-by Compromise"},
-    "ssrf":               {"id": "T1190", "name": "Exploit Public-Facing Application"},
-    "auth_bypass":        {"id": "T1133", "name": "External Remote Services"},
-    "file_upload":        {"id": "T1190", "name": "Exploit Public-Facing Application"},
-    "xxe":                {"id": "T1190", "name": "Exploit Public-Facing Application"},
-    "deserialization":    {"id": "T1190", "name": "Exploit Public-Facing Application"},
+    "sql_injection":      "T1190",
+    "xss":                "T1189",
+    "ssrf":               "T1190",
+    "auth_bypass":        "T1133",
+    "file_upload":        "T1190",
+    "xxe":                "T1190",
+    "deserialization":    "T1190",
     # Execution
-    "command_injection":  {"id": "T1059", "name": "Command and Scripting Interpreter"},
-    "code_execution":     {"id": "T1059", "name": "Command and Scripting Interpreter"},
-    "powershell":         {"id": "T1059.001", "name": "PowerShell"},
-    "python_script":      {"id": "T1059.006", "name": "Python"},
+    "command_injection":  "T1059",
+    "code_execution":     "T1059",
+    "powershell":         "T1059.001",
+    "python_script":      "T1059.006",
     # Persistence
-    "scheduled_task":     {"id": "T1053", "name": "Scheduled Task/Job"},
-    "registry_mod":       {"id": "T1547", "name": "Boot or Logon Autostart Execution"},
-    "web_shell":          {"id": "T1505.003", "name": "Web Shell"},
+    "scheduled_task":     "T1053",
+    "registry_mod":       "T1547",
+    "web_shell":          "T1505.003",
     # Privilege Escalation
-    "kernel_exploit":     {"id": "T1068", "name": "Exploitation for Privilege Escalation"},
-    "suid_abuse":         {"id": "T1548", "name": "Abuse Elevation Control Mechanism"},
-    "sudo_abuse":         {"id": "T1548.003", "name": "Sudo and Sudo Caching"},
-    "token_manipulation": {"id": "T1134", "name": "Access Token Manipulation"},
+    "kernel_exploit":     "T1068",
+    "suid_abuse":         "T1548",
+    "sudo_abuse":         "T1548.003",
+    "token_manipulation": "T1134",
     # Defense Evasion
-    "process_injection":  {"id": "T1055", "name": "Process Injection"},
-    "obfuscation":        {"id": "T1027", "name": "Obfuscated Files or Information"},
+    "process_injection":  "T1055",
+    "obfuscation":        "T1027",
     # Credential Access
-    "kerberoasting":      {"id": "T1558.003", "name": "Kerberoasting"},
-    "asrep_roasting":     {"id": "T1558.004", "name": "AS-REP Roasting"},
-    "dcsync":             {"id": "T1003.006", "name": "DCSync"},
-    "mimikatz":           {"id": "T1003.001", "name": "LSASS Memory (Mimikatz)"},
-    "password_spray":     {"id": "T1110.003", "name": "Password Spraying"},
-    "brute_force":        {"id": "T1110", "name": "Brute Force"},
-    "credential_dump":    {"id": "T1003", "name": "OS Credential Dumping"},
+    "kerberoasting":      "T1558.003",
+    "asrep_roasting":     "T1558.004",
+    "dcsync":             "T1003.006",
+    "mimikatz":           "T1003.001",
+    "password_spray":     "T1110.003",
+    "brute_force":        "T1110",
+    "credential_dump":    "T1003",
     # Lateral Movement
-    "pass_the_hash":      {"id": "T1550.002", "name": "Pass the Hash"},
-    "pass_the_ticket":    {"id": "T1550.003", "name": "Pass the Ticket"},
-    "rdp_lateral":        {"id": "T1021.001", "name": "Remote Desktop Protocol"},
-    "smb_lateral":        {"id": "T1021.002", "name": "SMB/Windows Admin Shares"},
-    "ssh_lateral":        {"id": "T1021.004", "name": "SSH"},
-    "wmi_exec":           {"id": "T1047", "name": "Windows Management Instrumentation"},
+    "pass_the_hash":      "T1550.002",
+    "pass_the_ticket":    "T1550.003",
+    "rdp_lateral":        "T1021.001",
+    "smb_lateral":        "T1021.002",
+    "ssh_lateral":        "T1021.004",
+    "wmi_exec":           "T1047",
     # Collection / Exfiltration
-    "data_exfil":         {"id": "T1041", "name": "Exfiltration Over C2 Channel"},
-    "sensitive_file":     {"id": "T1005", "name": "Data from Local System"},
+    "data_exfil":         "T1041",
+    "sensitive_file":     "T1005",
     # Cloud
-    "imds_abuse":         {"id": "T1552.005", "name": "Cloud Instance Metadata API"},
-    "iam_esc":            {"id": "T1078.004", "name": "Valid Accounts: Cloud Accounts"},
+    "imds_abuse":         "T1552.005",
+    "iam_esc":            "T1078.004",
     # Container / K8s
-    "container_escape":   {"id": "T1611", "name": "Escape to Host"},
-    "k8s_rbac_abuse":     {"id": "T1610", "name": "Deploy Container"},
-    "docker_socket":      {"id": "T1611", "name": "Escape to Host"},
+    "container_escape":   "T1611",
+    "k8s_rbac_abuse":     "T1610",
+    "docker_socket":      "T1611",
 }
+
+_SEV_RANK = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1,
+             "unknown": 0}
+
+
+def build_attack_matrix(findings: List[Dict[str, Any]],
+                        paths: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """
+    Build a MITRE ATT&CK tactic × technique matrix from findings + correlated
+    attack paths. Each technique cell aggregates:
+      - worst finding severity (drives cell color)
+      - findings count, source tools, affected targets
+      - evidence snippets and the attack path titles that chain it
+    Returns {tactics, rows, summary, total_findings, total_paths}. Pure
+    computation — safe to call from the dashboard without side effects.
+    """
+    paths = paths or []
+    # Index findings by technique id (findings may already carry attack_techniques
+    # from augment_findings; otherwise map them on the fly).
+    tech_findings: Dict[str, List[Dict[str, Any]]] = {}
+    for f in findings:
+        techs = f.get("attack_techniques") or []
+        if not techs:
+            mapped = FindingCorrelator._map_attack_techniques(f)
+            techs = mapped or []
+        for t in techs:
+            tid = t.get("id", "") if isinstance(t, dict) else str(t)
+            if tid:
+                tech_findings.setdefault(tid, []).append(f)
+
+    # Index paths by technique id.
+    tech_paths: Dict[str, List[Dict[str, Any]]] = {}
+    for p in paths:
+        for t in p.get("attack_techniques", []):
+            tid = t.get("id", "") if isinstance(t, dict) else str(t)
+            if tid:
+                tech_paths.setdefault(tid, []).append(p)
+
+    all_ids = set(tech_findings) | set(tech_paths)
+    rows = []
+    summary = {sev: 0 for sev in ("critical", "high", "medium", "low", "info")}
+    for f in findings:
+        sev = f.get("severity", "info")
+        summary[sev if sev in summary else "info"] += 1
+
+    for tid in sorted(all_ids):
+        fs = tech_findings.get(tid, [])
+        ps = tech_paths.get(tid, [])
+        # Worst severity across linked findings (paths alone → info-level)
+        worst = "info"
+        worst_rank = -1
+        for f in fs:
+            sev = f.get("severity", "info")
+            r = _SEV_RANK.get(sev, 0)
+            if r > worst_rank:
+                worst, worst_rank = sev, r
+        # Technique name: from any finding/path entry, then lookup table
+        name = ""
+        for src in [fs, ps]:
+            for f in src:
+                for t in f.get("attack_techniques", []) if isinstance(f, dict) else []:
+                    if isinstance(t, dict) and t.get("id") == tid and t.get("name"):
+                        name = t["name"]
+                        break
+                if name:
+                    break
+            if name:
+                break
+        if not name:
+            for p in ps:
+                for t in p.get("attack_techniques", []):
+                    if isinstance(t, dict) and t.get("id") == tid and t.get("name"):
+                        name = t["name"]
+                        break
+                if name:
+                    break
+        name = name or TECHNIQUE_NAMES.get(tid, tid)
+
+        tactic = ATTACK_TACTICS.get(tid, "Other")
+        sources = sorted({f.get("source_tool", "") for f in fs if f.get("source_tool")})
+        targets = sorted({str(f.get("target", "")) for f in fs if f.get("target")})
+        evidence = []
+        for f in fs:
+            ev = str(f.get("evidence", "")).strip()
+            if ev and ev not in evidence:
+                evidence.append(ev[:160])
+        path_titles = [p.get("title", "") for p in ps if p.get("title")]
+        score = max((p.get("score", 0) for p in ps), default=0)
+
+        rows.append({
+            "id": tid,
+            "name": name,
+            "tactic": tactic,
+            "severity": worst,
+            "severity_rank": worst_rank,
+            "findings_count": len(fs),
+            "path_count": len(ps),
+            "sources": sources[:8],
+            "targets": targets[:8],
+            "evidence": evidence[:4],
+            "paths": path_titles[:6],
+            "score": score,
+        })
+
+    rows.sort(key=lambda r: (-r["severity_rank"], -r["findings_count"], r["id"]))
+
+    return {
+        "tactics": ATTACK_TACTIC_ORDER + [t for t in sorted({r["tactic"]
+                 for r in rows} - set(ATTACK_TACTIC_ORDER))],
+        "rows": rows,
+        "summary": summary,
+        "total_findings": len(findings),
+        "total_paths": len(paths),
+        "total_techniques": len(rows),
+    }
 
 # ── Correlation rule table ──
 # Each rule: trigger keywords, companion keywords, path title, severity,
@@ -591,6 +717,57 @@ class FindingCorrelator:
     # MITRE ATT&CK technique mapping
     # ═══════════════════════════════════════════════════════════════
 
+    # Direct keyword matching against ATT&CK table — class-level so it is
+    # built once, not re-allocated on every finding mapped (hot path).
+    # Use specific patterns to avoid false positives.
+    _KEYWORD_MAP = {
+        "port_scan": ["port scan", "nmap scan", "/tcp open"],
+        "dns_enum": ["dns enumeration", "dns recon", "dns enum"],
+        "subdomain_enum": ["subdomain", "subdomain enum"],
+        "osint": ["osint", "open source intelligence"],
+        "email_harvest": ["email harvest", "email address"],
+        "sql_injection": ["sql injection", "sqli", "union select"],
+        "xss": ["cross-site scripting", "xss", "reflected xss"],
+        "ssrf": ["ssrf", "server-side request"],
+        "auth_bypass": ["auth bypass", "authentication bypass", "unauthenticated"],
+        "file_upload": ["file upload", "unrestricted upload"],
+        "xxe": ["xxe", "xml external entity"],
+        "deserialization": ["deserialization", "insecure deserialization", "pickle", "yaml.load"],
+        "command_injection": ["command injection", "os command"],
+        "code_execution": ["code execution", "rce", "remote code"],
+        "powershell": ["powershell"],
+        "python_script": ["python script", "python payload"],
+        "scheduled_task": ["scheduled task", "cron job"],
+        "registry_mod": ["registry modification", "autorun"],
+        "web_shell": ["web shell", "webshell", "php shell"],
+        "kernel_exploit": ["kernel exploit", "kernel vulnerability"],
+        "suid_abuse": ["suid", "suid binary"],
+        "sudo_abuse": ["sudo abuse", "sudo vulnerability"],
+        "token_manipulation": ["token manipulation", "access token"],
+        "process_injection": ["process injection", "code injection"],
+        "obfuscation": ["obfuscation", "obfuscated"],
+        "kerberoasting": ["kerberoast", "krb5tgs"],
+        "asrep_roasting": ["asrep roast", "krb5asrep"],
+        "dcsync": ["dcsync"],
+        "mimikatz": ["mimikatz"],
+        "password_spray": ["password spray"],
+        "brute_force": ["brute force"],
+        "credential_dump": ["credential dump", "credential harvesting"],
+        "pass_the_hash": ["pass the hash", "pass-the-hash", "pth"],
+        "pass_the_ticket": ["pass the ticket", "pass-the-ticket"],
+        "rdp_lateral": ["rdp", "remote desktop"],
+        "smb_lateral": ["smb lateral", "smb share"],
+        "ssh_lateral": ["ssh lateral", "ssh key"],
+        "wmi_exec": ["wmi exec", "wmi command"],
+        "data_exfil": ["exfiltration", "data exfil"],
+        "sensitive_file": ["sensitive file", "private key"],
+        "imds_abuse": ["metadata endpoint", "169.254.169.254", "imds"],
+        "iam_esc": ["iam privilege escalation", "iam:passrole"],
+        "container_escape": ["container escape", "breakout"],
+        "k8s_rbac_abuse": ["kubernetes rbac", "clusterrole", "kubelet"],
+        "docker_socket": ["docker.sock", "docker socket"],
+    }
+
     @staticmethod
     def _map_attack_techniques(finding: Dict[str, Any]) -> List[Dict[str, str]]:
         """Map a finding to MITRE ATT&CK techniques based on title/category."""
@@ -598,62 +775,14 @@ class FindingCorrelator:
         techniques = []
         seen = set()
 
-        # Direct keyword matching against ATT&CK table
-        # Use specific patterns to avoid false positives
-        keyword_map = {
-            "port_scan": ["port scan", "nmap scan", "/tcp open"],
-            "dns_enum": ["dns enumeration", "dns recon", "dns enum"],
-            "subdomain_enum": ["subdomain", "subdomain enum"],
-            "osint": ["osint", "open source intelligence"],
-            "email_harvest": ["email harvest", "email address"],
-            "sql_injection": ["sql injection", "sqli", "union select"],
-            "xss": ["cross-site scripting", "xss", "reflected xss"],
-            "ssrf": ["ssrf", "server-side request"],
-            "auth_bypass": ["auth bypass", "authentication bypass", "unauthenticated"],
-            "file_upload": ["file upload", "unrestricted upload"],
-            "xxe": ["xxe", "xml external entity"],
-            "deserialization": ["deserialization", "insecure deserialization", "pickle", "yaml.load"],
-            "command_injection": ["command injection", "os command"],
-            "code_execution": ["code execution", "rce", "remote code"],
-            "powershell": ["powershell"],
-            "python_script": ["python script", "python payload"],
-            "scheduled_task": ["scheduled task", "cron job"],
-            "registry_mod": ["registry modification", "autorun"],
-            "web_shell": ["web shell", "webshell", "php shell"],
-            "kernel_exploit": ["kernel exploit", "kernel vulnerability"],
-            "suid_abuse": ["suid", "suid binary"],
-            "sudo_abuse": ["sudo abuse", "sudo vulnerability"],
-            "token_manipulation": ["token manipulation", "access token"],
-            "process_injection": ["process injection", "code injection"],
-            "obfuscation": ["obfuscation", "obfuscated"],
-            "kerberoasting": ["kerberoast", "krb5tgs"],
-            "asrep_roasting": ["asrep roast", "krb5asrep"],
-            "dcsync": ["dcsync"],
-            "mimikatz": ["mimikatz"],
-            "password_spray": ["password spray"],
-            "brute_force": ["brute force"],
-            "credential_dump": ["credential dump", "credential harvesting"],
-            "pass_the_hash": ["pass the hash", "pass-the-hash", "pth"],
-            "pass_the_ticket": ["pass the ticket", "pass-the-ticket"],
-            "rdp_lateral": ["rdp", "remote desktop"],
-            "smb_lateral": ["smb lateral", "smb share"],
-            "ssh_lateral": ["ssh lateral", "ssh key"],
-            "wmi_exec": ["wmi exec", "wmi command"],
-            "data_exfil": ["exfiltration", "data exfil"],
-            "sensitive_file": ["sensitive file", "private key"],
-            "imds_abuse": ["metadata endpoint", "169.254.169.254", "imds"],
-            "iam_esc": ["iam privilege escalation", "iam:passrole"],
-            "container_escape": ["container escape", "breakout"],
-            "k8s_rbac_abuse": ["kubernetes rbac", "clusterrole", "kubelet"],
-            "docker_socket": ["docker.sock", "docker socket"],
-        }
-
-        for key, keywords in keyword_map.items():
-            if key in ATTACK_TECHNIQUES and any(kw in text for kw in keywords):
-                tech = ATTACK_TECHNIQUES[key]
-                if tech["id"] not in seen:
-                    techniques.append(tech)
-                    seen.add(tech["id"])
+        for key, keywords in FindingCorrelator._KEYWORD_MAP.items():
+            tid = ATTACK_TECHNIQUES.get(key)
+            if tid and any(kw in text for kw in keywords) and tid not in seen:
+                techniques.append({
+                    "id": tid,
+                    "name": TECHNIQUE_NAMES.get(tid, tid),
+                })
+                seen.add(tid)
 
         return techniques[:5]  # Cap at 5 techniques per finding
 
@@ -826,30 +955,42 @@ class FindingCorrelator:
 
         paths = []
 
+        # ── HOT PATH (perf v5.8) ──
+        # _finding_text / _extract_tokens are pure functions of each finding
+        # dict — compute them ONCE per correlate() call instead of once per
+        # rule × regex (previously ~60k string joins + ~40k token regex ops
+        # on a mid-size engagement). Keys are object ids: findings are
+        # unhashable dicts but stable for the lifetime of this call.
+        texts = {id(f): self._finding_text(f) for f in findings}
+        tokens = {id(f): self._extract_tokens(f) for f in findings}
+
         # Group findings by shared tokens (evidence linkage)
         token_map: Dict[str, List[Dict]] = {}
         for f in findings:
-            for tok in self._extract_tokens(f):
+            for tok in tokens[id(f)]:
                 token_map.setdefault(tok, []).append(f)
 
         for rule in self._rules:
             triggers = [f for f in findings
-                        if any(rx.search(self._finding_text(f)) for rx in rule["trigger"])]
+                        if any(rx.search(texts[id(f)]) for rx in rule["trigger"])]
             if not triggers:
                 continue
 
             # Companions: findings matching companion keywords AND sharing a
-            # token with a trigger finding
+            # token with a trigger finding. Membership is by object identity
+            # (deliberate, perf v5.8): two distinct findings with identical
+            # content from different hosts must NOT be treated as one trigger.
+            trigger_ids = {id(f) for f in triggers}
             companions = []
             trigger_tokens = set()
             for t in triggers:
-                trigger_tokens.update(self._extract_tokens(t))
+                trigger_tokens.update(tokens[id(t)])
 
             for f in findings:
-                if f in triggers:
+                if id(f) in trigger_ids:
                     continue
-                if any(rx.search(self._finding_text(f)) for rx in rule["companions"]):
-                    ft = set(self._extract_tokens(f))
+                if any(rx.search(texts[id(f)]) for rx in rule["companions"]):
+                    ft = set(tokens[id(f)])
                     if trigger_tokens and ft:
                         if not (ft & trigger_tokens):
                             continue
@@ -910,6 +1051,9 @@ class FindingCorrelator:
                         "evidence": f.get("evidence", "")[:200],
                         "source_tool": f.get("source_tool", ""),
                         "category": f.get("category", ""),
+                        # Cross-workflow attribution (empty for single-run)
+                        "source_workflow": f.get("_source_workflow", ""),
+                        "source_target": f.get("_source_target", ""),
                     }
                     for f in members[:10]
                 ],

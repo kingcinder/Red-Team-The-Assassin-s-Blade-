@@ -9,7 +9,7 @@ import shutil
 import secrets
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Optional
 
 logger = logging.getLogger("redteam.sandbox")
 

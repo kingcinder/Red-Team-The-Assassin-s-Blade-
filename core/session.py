@@ -7,7 +7,7 @@ import json
 import uuid
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 
 logger = logging.getLogger("redteam.session")
 

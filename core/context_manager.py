@@ -12,7 +12,7 @@ Strategy:
 """
 import re
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
 logger = logging.getLogger("redteam.context")
 

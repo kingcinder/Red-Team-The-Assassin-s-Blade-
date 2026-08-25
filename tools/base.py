@@ -2,7 +2,6 @@
 RedTeam Harness — Base Tool Class
 All tool modules inherit from this base class.
 """
-from typing import Dict, Any
 
 
 class BaseTool:

@@ -28,6 +28,7 @@ sys.path.insert(0, PROJECT_ROOT)
 from core.orchestrator import Orchestrator
 from core.tool_registry import ToolRegistry
 from core.workflow_generator import WorkflowGenerator
+from core.replay import EngagementReplay, parse_tool_calls
 
 # ═══════════════════════════════════════════════════════════════
 # Setup Logging
@@ -269,6 +270,180 @@ def handle_direct_tool(orchestrator, raw_args):
 # ═══════════════════════════════════════════════════════════════
 # Dashboard Mode
 # ═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# Engagement Replay CLI (v4.2)
+# ═══════════════════════════════════════════════════════════════
+def run_replay_cli(config, session_id=None, interactive=True,
+                   export_path=None, export_format="jsonl"):
+    """
+    Replay a completed engagement from a session file or replay bundle.
+
+    Sources are resolved in order:
+      1. sessions/replays/<id>.json     (autonomous campaign bundles)
+      2. sessions/<id>.json             (session files)
+      3. tasks/<...>/state.json         (task runs)
+      4. exact path given
+    """
+    session_dir = config.get("harness", {}).get("session_dir", "./sessions")
+    replay_dir = os.path.join(session_dir, "replays")
+
+    candidates = []
+    if session_id:
+        candidates = [
+            os.path.join(replay_dir, f"{session_id}.json"),
+            os.path.join(session_dir, f"{session_id}.json"),
+            session_id,  # may be an exact path
+        ]
+        if os.path.isdir(session_id):
+            candidates = []  # handled below
+
+    if not session_id or os.path.isdir(session_id):
+        # List mode: show all available replays
+        print(f"\n{'='*60}")
+        print(f"  🎬 Engagement Replay — Available Sessions")
+        print(f"{'='*60}\n")
+        found_any = False
+        for src_dir, label in ((replay_dir, "Campaign bundles"),
+                               (session_dir, "Sessions")):
+            if not os.path.isdir(src_dir):
+                continue
+            entries = []
+            for fn in sorted(os.listdir(src_dir), reverse=True):
+                if not fn.endswith(".json") or fn in ("tool_scores.json",):
+                    continue
+                path = os.path.join(src_dir, fn)
+                try:
+                    with open(path) as f:
+                        data = json.load(f)
+                    if data.get("type") == "autonomous_campaign":
+                        desc = (f"objective={data.get('objective', '')[:50]} "
+                                f"targets={data.get('targets_count', 0)} "
+                                f"findings={data.get('total_findings', 0)}")
+                    else:
+                        desc = (f"name={data.get('name', '')} "
+                                f"msgs={len(data.get('messages', []))} "
+                                f"tools={len(data.get('tool_log', []))}")
+                    entries.append((fn.replace(".json", ""), label, desc))
+                except Exception:
+                    continue
+            if entries:
+                found_any = True
+                print(f"  ── {label} ──")
+                for sid, label2, desc in entries[:40]:
+                    print(f"    • {sid}  [{label2}]  {desc}")
+        if not found_any:
+            print("  No replays found yet. Run an engagement first, then replay it:")
+            print(f"    python3 harness.py --replay <session_id>")
+        print()
+        return
+
+    path = next((c for c in candidates if os.path.exists(c)), None)
+    if not path:
+        print(f"  ✗ Replay source not found for: {session_id}")
+        print(f"    Looked in: {replay_dir}, {session_dir}")
+        return
+
+    try:
+        replay = EngagementReplay.from_file(path)
+    except Exception as e:
+        print(f"  ✗ Failed to load replay: {e}")
+        return
+
+    print(f"\n{'='*60}")
+    print(f"  🎬 Engagement Replay — {replay.session_id}")
+    print(f"{'='*60}")
+    stats = replay.analyze()
+    print(f"  Events: {stats['events']} | Decisions: {stats['decisions']} | "
+          f"Steps: {stats['steps']} | Tool execs: {stats['tool_executions']}")
+    print(f"  Findings: {stats['findings']} "
+          f"(crit={stats['findings_by_severity'].get('critical', 0)}, "
+          f"high={stats['findings_by_severity'].get('high', 0)})")
+    if stats.get("phase_transitions"):
+        phases = " → ".join(p["phase"] for p in stats["phase_transitions"])
+        print(f"  Phases: {phases}")
+    if stats.get("success_rate") is not None:
+        print(f"  Tool success rate: {stats['success_rate']}%")
+
+    # Training export mode
+    if export_path:
+        records = replay.export_training(export_path, format=export_format)
+        print(f"\n  📦 Training data exported: {len(records)} records → {export_path}")
+        return
+
+    # Interactive transcript / step-through mode
+    if not interactive:
+        print(f"\n  Transcript:\n")
+        print(replay.render_transcript())
+        return
+
+    print(f"\n  Commands: [Enter]=next  p=prev  j=<idx>  t=transcript  s=stats  q=quit")
+    print(f"  {'─'*60}")
+    replay.reset()
+    while True:
+        ev = replay.current()
+        if ev is None:
+            ev = replay.next()
+        if ev is None:
+            print("  — end of replay —")
+            break
+        _print_replay_event(ev)
+        try:
+            cmd = input("\n\033[96mreplay>\033[0m ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if cmd in ("q", "quit", "exit"):
+            break
+        if cmd == "t":
+            print()
+            print(replay.render_transcript())
+        elif cmd == "s":
+            print(json.dumps(replay.analyze(), indent=2, default=str)[:4000])
+        elif cmd.startswith("j"):
+            try:
+                replay.seek(int(cmd[1:].strip()))
+            except ValueError:
+                pass
+        elif cmd == "p":
+            replay.prev()
+        else:
+            replay.next()
+
+
+def _print_replay_event(ev):
+    """Pretty-print a single replay event in the CLI."""
+    d = ev.data
+    if ev.type == "decision":
+        content = str(d.get("content", "")).strip()
+        print(f"\n\033[93m[LLM DECISION step {ev.step_index}]\033[0m")
+        if content:
+            print(content[:1500])
+        calls = parse_tool_calls(content)
+        if calls:
+            print(f"  \033[92m→ calls: {json.dumps(calls, default=str)[:300]}\033[0m")
+    elif ev.type == "execution":
+        icon = "✅" if d.get("status") in ("success", None) else "❌"
+        print(f"  {icon} \033[94m[{d.get('tool', '?')}]\033[0m "
+              f"args={json.dumps(d.get('args', {}), default=str)[:150]} "
+              f"exit={d.get('exit_code')} ({d.get('duration', '?')}s)"
+              + (f" target={d['target']}" if d.get("target") else ""))
+        if d.get("stdout_preview"):
+            print(f"     ↳ {str(d['stdout_preview'])[:200]}")
+    elif ev.type == "result":
+        content = str(d.get("content", ""))[:200]
+        if content.strip():
+            print(f"  \033[90m[result] {content}\033[0m")
+    elif ev.type == "system":
+        content = str(d.get("content", ""))[:200]
+        if content.strip():
+            print(f"  \033[95m[SYSTEM] {content}\033[0m")
+    elif ev.type == "user":
+        print(f"  \033[96m[USER] {str(d.get('content', ''))[:200]}\033[0m")
+    elif ev.type == "finding":
+        print(f"  📌 FINDING [{str(d.get('severity', 'info')).upper()}] "
+              f"{d.get('title', d.get('summary', ''))}")
+
+
 def run_dashboard(config):
     """Launch the web dashboard."""
     from dashboard.server import create_app
@@ -338,6 +513,9 @@ Examples:
   python3 harness.py --port 8888      Custom port
   python3 harness.py --cli            Interactive CLI mode
   python3 harness.py --check          Check tool availability
+  python3 harness.py --replay         List available replays
+  python3 harness.py --replay <id>    Step through an engagement
+  python3 harness.py --replay <id> --replay-export train.jsonl
   python3 harness.py --config my.yaml Custom config
         """,
     )
@@ -361,6 +539,16 @@ Examples:
                         help="Max concurrent targets for multi-target runs")
     parser.add_argument("--generate", type=str, default=None,
                         help="LLM-generate a workflow from a natural-language objective")
+    parser.add_argument("--replay", type=str, nargs="?", const="", default=None,
+                        help="Replay a completed engagement (session_id or replay bundle). "
+                             "Omit id to list available replays")
+    parser.add_argument("--replay-export", type=str, default=None,
+                        help="Export the replay as training data to this JSONL path")
+    parser.add_argument("--replay-format", type=str, default="jsonl",
+                        choices=["jsonl", "pairs"],
+                        help="Training export format (default: jsonl)")
+    parser.add_argument("--replay-script", action="store_true",
+                        help="Print the full replay transcript instead of stepping interactively")
 
     args = parser.parse_args()
     setup_logging(debug=args.debug)
@@ -380,6 +568,11 @@ Examples:
 
     if args.check:
         run_check(config)
+    elif args.replay is not None:
+        run_replay_cli(config, args.replay or None,
+                       interactive=not args.replay_script,
+                       export_path=args.replay_export,
+                       export_format=args.replay_format)
     elif args.generate:
         run_generate_cli(config, args.generate)
     elif args.workflow is not None:

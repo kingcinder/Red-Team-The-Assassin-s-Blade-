@@ -8,7 +8,6 @@ Supports: apt (.deb), Go binaries (GitHub releases), pip packages,
 Ruby gems, and manual script/binary downloads.
 """
 import os
-import re
 import json
 import shutil
 import logging
@@ -16,7 +15,7 @@ import subprocess
 import tempfile
 import urllib.request
 import urllib.error
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 from datetime import datetime
 
 logger = logging.getLogger("redteam.installer")

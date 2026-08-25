@@ -14,7 +14,7 @@ import re
 import bisect
 import logging
 from collections import defaultdict
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("redteam.findings")
 

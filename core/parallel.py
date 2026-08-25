@@ -14,7 +14,7 @@ Safety:
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("redteam.parallel")
 

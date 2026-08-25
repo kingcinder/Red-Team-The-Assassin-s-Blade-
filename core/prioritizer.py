@@ -13,7 +13,7 @@ Output: ordered list of (target, score, breakdown, suggested_workflow).
 """
 import re
 import logging
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any
 
 logger = logging.getLogger("redteam.prioritizer")
 

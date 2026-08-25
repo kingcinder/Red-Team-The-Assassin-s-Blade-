@@ -104,17 +104,34 @@ SUGGEST_THRESHOLD = 0.50    # Suggest in chat but require confirmation
 
 
 class TacticalEngine:
-    """Maps findings → next actions using predefined rules."""
+    """Maps findings → next actions using predefined rules (+ vector memory)."""
 
     def __init__(self):
         self._total_suggestions = 0
         self._auto_actions = 0
+        self._memory = None  # optional VectorMemory for cross-session memory
+        self._memory_suggestions_count = 0
+
+    def set_memory(self, memory) -> None:
+        """Attach the harness's VectorMemory so suggestions can leverage
+        prior sessions (e.g. open port found but never exploited → suggest
+        exploitation; service down last time but now up → suggest re-test)."""
+        self._memory = memory
 
     def evaluate(self, findings: List[Dict[str, Any]],
                  context: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         """
         Evaluate findings against tactical rules and return suggested actions.
         Each action: {tool, args, confidence, reasoning, auto_run}.
+
+        When vector memory is attached, findings that carry target context are
+        cross-checked against prior sessions (v5.5):
+          - a port/service that prior sessions found open but never exploited
+            → raise an exploitation suggestion (hydra/sqlmap/…)
+          - a service that was DOWN in a prior session but is now UP (i.e. the
+            current finding sees it open) → suggest re-testing it
+        These memory-derived suggestions are tagged with
+        `memory_grounded: true` and `prior_session: <target>`.
         """
         suggestions = []
         context = context or {}
@@ -145,6 +162,10 @@ class TacticalEngine:
                 })
                 self._total_suggestions += 1
 
+        # ── v5.5: memory-grounded suggestions (vector memory attached) ──
+        if self._memory is not None:
+            suggestions.extend(self._memory_suggestions(findings, context))
+
         # Deduplicate (same tool+args = single suggestion, keep highest confidence)
         seen = {}
         unique = []
@@ -156,6 +177,98 @@ class TacticalEngine:
 
         self._auto_actions += sum(1 for s in unique if s["auto_run"])
         return unique
+
+    def _memory_suggestions(self, findings: List[Dict[str, Any]],
+                            context: Dict[str, str]) -> List[Dict[str, Any]]:
+        """
+        Query vector memory for prior-session context on each finding's target:
+          - Prior open port/service never exploited → suggest exploitation.
+          - Prior DOWN service now OPEN in this session → suggest re-testing.
+        Never raises; missing/unfitted memory returns [].
+        """
+        out = []
+        try:
+            from core.vector_memory import VectorMemory  # noqa: F401
+            for finding in findings:
+                target = finding.get("target") or context.get("host")
+                text = self._finding_to_text(finding)
+                if not target or not text:
+                    continue
+                # Pull the top prior findings for this target
+                prior = self._memory.query_by_target(str(target), top_k=10)
+                if not prior:
+                    continue
+                port_m = re.search(r'(\d{2,5})/(?:tcp|udp)\s+open\s+(\S+)', text)
+                if not port_m:
+                    continue
+                port, service = port_m.group(1), port_m.group(2)
+                # 1. Open now + seen open before but never exploited → exploit
+                exploited_before = any(
+                    self._looks_exploited(p) for p in prior)
+                if not exploited_before:
+                    # Suggest exploitation of the discovered service
+                    exploit_map = {
+                        "ssh": ("hydra_brute", {"target": target, "service": "ssh",
+                                                  "port": port}, 0.70,
+                                 f"Memory: {target}:{port} ({service}) was open in a "
+                                 f"prior session but never exploited — attempt exploitation now"),
+                        "http": ("nikto_scan", {"target": f"http://{target}:{port}"},
+                                  0.65,
+                                  f"Memory: {target}:{port} HTTP service was never "
+                                  f"scanned for vulns in prior sessions — scan now"),
+                        "https": ("nikto_scan", {"target": f"https://{target}:{port}"},
+                                   0.65,
+                                   f"Memory: {target}:{port} HTTPS service was never "
+                                   f"vuln-scanned — scan now"),
+                        "smb": ("enum4linux", {"target": target}, 0.75,
+                                f"Memory: SMB on {target} was open but never "
+                                f"enumerated in prior sessions — enumerate now"),
+                    }
+                    mapped = exploit_map.get(service.lower())
+                    if mapped:
+                        tool, args, conf, reason = mapped
+                        out.append({
+                            "tool": tool, "args": args, "confidence": conf,
+                            "reasoning": reason,
+                            "auto_run": conf >= AUTO_RUN_THRESHOLD,
+                            "memory_grounded": True,
+                            "prior_session": target,
+                            "triggered_by": f"memory:{target}:{port}",
+                        })
+                        self._memory_suggestions_count += 1
+                # 2. Down before + open now → re-test (service recently appeared)
+                was_down = any(
+                    "down" in str(p.get("title", "")).lower() or
+                    "closed" in str(p.get("title", "")).lower() or
+                    "no response" in str(p.get("evidence", "")).lower()
+                    for p in prior)
+                if was_down:
+                    out.append({
+                        "tool": "nmap_scan",
+                        "args": {"target": target, "ports": f"{port}"},
+                        "confidence": 0.60,
+                        "reasoning": f"Memory: {target}:{port} ({service}) was DOWN/"
+                                     f"closed in a prior session but is OPEN now — "
+                                     f"re-test the newly-exposed service",
+                        "auto_run": False,
+                        "memory_grounded": True,
+                        "prior_session": target,
+                        "triggered_by": f"memory-revive:{target}:{port}",
+                    })
+                    self._memory_suggestions_count += 1
+        except Exception as e:
+            logger.warning(f"Memory-grounded suggestions skipped: {e}")
+        return out
+
+    @staticmethod
+    def _looks_exploited(prior_finding: Dict[str, Any]) -> bool:
+        """Heuristic: does a prior session show exploitation of this target?"""
+        blob = " ".join(str(prior_finding.get(k, "")) for k in
+                        ("title", "description", "evidence", "source_tool"))
+        blob = blob.lower()
+        return any(k in blob for k in ("exploit", "meterpreter", "shell",
+                                       "gained access", "session opened",
+                                       "pwned", "credential"))
 
     def _finding_to_text(self, finding: Dict[str, Any]) -> str:
         """Convert a finding dict to a searchable text blob."""
@@ -241,6 +354,8 @@ class TacticalEngine:
             "rules_loaded": len(TACTICAL_RULES),
             "total_suggestions": self._total_suggestions,
             "auto_actions_taken": self._auto_actions,
+            "memory_suggestions": self._memory_suggestions_count,
+            "memory_grounded": self._memory is not None,
         }
 
 

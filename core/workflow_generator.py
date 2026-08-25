@@ -19,6 +19,8 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
+from core.injection_defense import sanitize_for_llm
+
 logger = logging.getLogger("redteam.gen")
 
 # ── Limits ──
@@ -42,6 +44,50 @@ INJECTION_PATTERNS = [
     r"subprocess",
     r"os\.system",
 ]
+
+# ── JSON schema for post-execution template improvement ──
+IMPROVE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "assessment": {"type": "string"},
+        "step_verdicts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "step": {"type": "string"},
+                    "verdict": {"type": "string"},
+                    "rationale": {"type": "string"},
+                    "replacement_tool": {"type": "string"},
+                    "replacement_args": {"type": "object"},
+                    "new_gate": {"type": "boolean"},
+                    "new_retries": {"type": "integer"},
+                    "new_timeout": {"type": "integer"},
+                },
+                "required": ["step", "verdict", "rationale"],
+            },
+        },
+        "new_steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "tool": {"type": "string"},
+                    "args": {"type": "object"},
+                    "description": {"type": "string"},
+                    "expected_output": {"type": "string"},
+                    "gate": {"type": "boolean"},
+                    "retries": {"type": "integer"},
+                    "timeout": {"type": "integer"},
+                },
+                "required": ["name", "tool", "args"],
+            },
+        },
+    },
+    "required": ["assessment", "step_verdicts"],
+}
+
 
 # ── JSON schema handed to the LLM via GBNF json_schema enforcement ──
 GENERATOR_SCHEMA = {
@@ -158,6 +204,288 @@ class WorkflowGenerator:
             "variables": list(definition.get("variables", {}).keys()),
             "objective": cleaned,
             "created": datetime.now().isoformat(),
+        }
+
+    # ═══════════════════════════════════════════════════════════════
+    # Post-execution template self-improvement (v4.2)
+    # ═══════════════════════════════════════════════════════════════
+
+    def improve_template(self, template_path: str, exec_result: Dict[str, Any],
+                         apply: bool = False,
+                         max_new_steps: int = 3) -> Dict[str, Any]:
+        """
+        Analyze a workflow run's per-step outcomes with the LLM and propose
+        concrete improvements to the saved template: keep/modify/remove
+        verdicts per step, replacement tool choices, and new steps to add.
+
+        Every proposed tool/arg change is validated against the tool registry
+        before being returned; if ``apply`` is True, validated changes are
+        written back to ``template_path`` (a backup .bak file is kept).
+
+        Never raises — failures are returned in the dict.
+
+        Returns:
+            {
+              "assessment": str,
+              "verdicts": [{step, verdict, rationale, changes}...],
+              "new_steps": [...validated...],
+              "rejected": [{step, reason}...],
+              "applied": bool,
+              "applied_changes": {removed, modified, added},
+              "path": str,
+              "error": str (only on hard failure),
+            }
+        """
+        if not os.path.exists(template_path):
+            return {"error": f"Template not found: {template_path}"}
+        if not self.llm:
+            return {"error": "No LLM backend configured — cannot analyze template"}
+
+        # ── Load current template ──
+        try:
+            with open(template_path) as f:
+                template = yaml.safe_load(f) or {}
+        except Exception as e:
+            return {"error": f"Cannot load template: {e}"}
+        steps = template.get("steps", [])
+        if not isinstance(steps, list) or not steps:
+            return {"error": "Template has no steps to analyze"}
+
+        # ── Build per-step outcome brief (sanitized) ──
+        outcome_by_step = {}
+        for s in exec_result.get("steps", []) or []:
+            if not isinstance(s, dict):
+                continue
+            name = s.get("step", "")
+            outcome_by_step[name] = {
+                "status": str(s.get("status", "?")),
+                "attempts": int(s.get("attempts", 1)),
+                "duration": s.get("duration"),
+                "drift": s.get("drift_score"),
+                "confidence": s.get("confidence", "N/A"),
+                "findings": int(s.get("findings_added", 0)),
+                "llm_alt": (s.get("llm_alt") or {}).get("tool", "") if s.get("llm_alt") else "",
+            }
+        warn_by_step = {}
+        for w in exec_result.get("warnings", []) or []:
+            if isinstance(w, dict):
+                warn_by_step[w.get("step", "")] = sanitize_for_llm(
+                    str(w.get("reason", ""))[:200], max_len=200)
+
+        brief_lines = []
+        for i, step in enumerate(steps, 1):
+            name = step.get("name", f"step_{i}")
+            o = outcome_by_step.get(name, {})
+            warn = warn_by_step.get(name, "")
+            parts = [f"{i}. {name} (tool={step.get('tool', '')})"]
+            if o:
+                parts.append(f"status={o['status']} attempts={o['attempts']} "
+                             f"drift={o.get('drift')} conf={o.get('confidence')} "
+                             f"findings_added={o['findings']}")
+                if o.get("llm_alt"):
+                    parts.append(f"llm_alt={o['llm_alt']}")
+            else:
+                parts.append("status=not_run")
+            if warn:
+                parts.append(f"warn={warn}")
+            brief_lines.append(" | ".join(parts))
+
+        tool_names = sorted(self.registry.get_all_tools().keys())
+        tool_hint = ", ".join(tool_names[:80])
+
+        prompt = (
+            "A penetration-testing workflow template just finished executing. "
+            "Analyze the run and recommend improvements to the template.\n\n"
+            f"Workflow: {sanitize_for_llm(str(template.get('name', '')), max_len=200)}\n"
+            f"Run status: {sanitize_for_llm(str(exec_result.get('status', '?')), max_len=50)}\n\n"
+            "## Per-step outcomes\n" + "\n".join(brief_lines) + "\n\n"
+            f"Available tools (use ONLY these exact names): {tool_hint}\n\n"
+            "For EACH step return a verdict:\n"
+            "  - keep: step works well, leave unchanged\n"
+            "  - modify: step is weak (failed, high drift, retried, no findings) — "
+            "provide a better replacement_tool and/or replacement_args, "
+            "or adjust gate/retries/timeout\n"
+            "  - remove: step is ineffective or redundant — drop it\n"
+            f"Optionally propose up to {max_new_steps} NEW steps that would "
+            "strengthen the workflow (each with name, tool, args, description, "
+            "expected_output, gate, retries, timeout).\n"
+            "Also write a 2-3 sentence assessment of the run.\n"
+            "Rules: only reference exact tool names from the list; args values "
+            "must be safe strings/IPs/paths (no shell metacharacters); "
+            "variables must use {{var}} placeholders. Strict JSON only."
+        )
+
+        try:
+            raw = self.llm.chat_structured(
+                [{"role": "system",
+                  "content": "You are an expert penetration-testing workflow optimizer. "
+                             "Output strict JSON only."},
+                 {"role": "user", "content": prompt}],
+                IMPROVE_SCHEMA,
+                max_tokens=2048,
+                temperature=0.2,
+            )
+        except Exception as e:
+            logger.error(f"LLM template improvement failed: {e}")
+            return {"error": f"LLM template improvement failed: {e}"}
+
+        if raw.startswith("[ERROR]"):
+            return {"error": raw}
+
+        data = self._parse_json(raw)
+        if not data:
+            return {"error": "LLM returned unparseable JSON for template improvement",
+                    "raw": raw[:500]}
+
+        # ── Normalize + validate verdicts ──
+        step_names = [s.get("name") for s in steps]
+        all_tools = self.registry.get_all_tools()
+        verdicts, rejected = [], []
+        for v in data.get("step_verdicts", []) or []:
+            if not isinstance(v, dict):
+                continue
+            v_step = v.get("step", "")
+            verdict = str(v.get("verdict", "keep")).lower()
+            if v_step not in step_names:
+                rejected.append({"step": v_step,
+                                 "reason": "not a step in this template"})
+                continue
+            if verdict not in ("keep", "modify", "remove"):
+                verdict = "keep"
+            entry = {
+                "step": v_step,
+                "verdict": verdict,
+                "rationale": sanitize_for_llm(str(v.get("rationale", ""))[:300], max_len=300),
+                "changes": {},
+            }
+            if verdict == "modify":
+                repl_tool = str(v.get("replacement_tool", "") or "").strip()
+                if repl_tool and repl_tool not in all_tools:
+                    rejected.append({"step": v_step,
+                                     "reason": f"unknown tool '{repl_tool}'"})
+                    # Fall back to keep — don't apply an unknown tool
+                    entry["verdict"] = "keep"
+                else:
+                    if repl_tool:
+                        entry["changes"]["tool"] = repl_tool
+                    repl_args = v.get("replacement_args")
+                    if isinstance(repl_args, dict) and repl_args:
+                        entry["changes"]["args"] = repl_args
+                    for field, key in (("new_gate", "gate"),
+                                       ("new_retries", "retries"),
+                                       ("new_timeout", "timeout")):
+                        val = v.get(field)
+                        if val is not None:
+                            try:
+                                entry["changes"][key] = (
+                                    bool(val) if field == "new_gate" else int(val))
+                            except (ValueError, TypeError):
+                                pass
+            verdicts.append(entry)
+
+        # ── Validate proposed new steps ──
+        new_steps = []
+        for ns in (data.get("new_steps", []) or [])[:max_new_steps]:
+            if not isinstance(ns, dict) or not ns.get("name") or not ns.get("tool"):
+                continue
+            ns_name = str(ns["name"])
+            # Reject name collisions with existing steps or other new steps
+            if ns_name in step_names or any(
+                    ns_name == (s.get("name") or "") for s in new_steps):
+                rejected.append({"step": ns_name,
+                                 "reason": "new step name collides with an existing step"})
+                continue
+            if ns["tool"] not in all_tools:
+                rejected.append({"step": ns_name,
+                                 "reason": f"new step uses unknown tool '{ns['tool']}'"})
+                continue
+            # Validate through the same strict pipeline used for generation
+            errors = self._validate({
+                "name": template.get("name", "improved"),
+                "description": template.get("description", ""),
+                "category": template.get("category", "general"),
+                "variables": template.get("variables", {}) or {},
+                "steps": [ns],
+            })
+            if errors:
+                rejected.append({"step": ns.get("name", "?"),
+                                 "reason": "; ".join(errors[:2])})
+            else:
+                new_steps.append(ns)
+
+        # ── Apply validated changes if requested ──
+        applied = False
+        applied_changes = {"removed": [], "modified": [], "added": []}
+        if apply:
+            modified_steps = []
+            remove_names = {v["step"] for v in verdicts if v["verdict"] == "remove"}
+            for step in steps:
+                name = step.get("name", "")
+                if name in remove_names:
+                    applied_changes["removed"].append(name)
+                    continue
+                entry = next((v for v in verdicts
+                              if v["step"] == name and v["verdict"] == "modify"), None)
+                if entry and entry["changes"]:
+                    new_step = dict(step)
+                    new_step.update(entry["changes"])
+                    # Resolve variable refs in args before arg-safety check
+                    modified_steps.append(new_step)
+                    applied_changes["modified"].append(name)
+                else:
+                    modified_steps.append(step)
+            for ns in new_steps:
+                modified_steps.append(ns)
+                applied_changes["added"].append(ns.get("name", "?"))
+
+            # Full re-validation of the modified template before writing
+            full_def = {
+                "name": template.get("name", "improved"),
+                "description": template.get("description", ""),
+                "category": template.get("category", "general"),
+                "variables": template.get("variables", {}) or {},
+                "steps": modified_steps,
+            }
+            errors = self._validate(full_def)
+            if errors:
+                rejected.append({"step": "(template)",
+                                 "reason": "full re-validation failed: "
+                                            "; ".join(errors[:3])})
+                # Nothing was written — do not report phantom changes
+                applied_changes = {"removed": [], "modified": [], "added": []}
+            elif modified_steps != steps or new_steps:
+                # Only write if something actually changed
+                try:
+                    backup = template_path + \
+                        f".bak.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    with open(backup, "w") as bf:
+                        yaml.safe_dump(template, bf, sort_keys=False, default_flow_style=False)
+                    template["steps"] = modified_steps
+                    template["description"] = (template.get("description", "") or "") \
+                        .split(" [auto-improved")[0] \
+                        + f" [auto-improved {datetime.now().strftime('%Y-%m-%d')}]"
+                    with open(template_path, "w") as f:
+                        yaml.safe_dump(template, f, sort_keys=False, default_flow_style=False)
+                    applied = True
+                    logger.info(f"Template improved and saved: {template_path} "
+                                f"({len(applied_changes['removed'])} removed, "
+                                f"{len(applied_changes['modified'])} modified, "
+                                f"{len(applied_changes['added'])} added)")
+                except Exception as e:
+                    return {"error": f"Failed to write improved template: {e}",
+                            "assessment": data.get("assessment", ""),
+                            "verdicts": verdicts, "new_steps": new_steps,
+                            "rejected": rejected, "applied": False}
+
+        return {
+            "assessment": sanitize_for_llm(
+                str(data.get("assessment", ""))[:600], max_len=600),
+            "verdicts": verdicts,
+            "new_steps": new_steps,
+            "rejected": rejected,
+            "applied": applied,
+            "applied_changes": applied_changes,
+            "path": template_path,
         }
 
     # ═══════════════════════════════════════════════════════════════

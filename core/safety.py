@@ -4,7 +4,7 @@ Enforces scope limits, confirms dangerous operations, and logs all actions.
 """
 import logging
 import ipaddress
-from typing import Tuple, List
+from typing import Tuple
 
 logger = logging.getLogger("redteam.safety")
 
