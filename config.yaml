@@ -89,6 +89,8 @@ safety:
     - "mimikatz_dump"
     - "hping3_test"
     - "slowhttptest_test"
+    - "install_tool"
+    - "install_all_missing"
   allowed_targets:
     - "192.168.0.0/16"
     - "10.0.0.0/8"

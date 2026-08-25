@@ -6,6 +6,47 @@
 # ═══════════════════════════════════════════════════════════════
 set -e
 
+# ── Verify mode ───────────────────────────────────────────
+if [ "$1" = "--verify" ]; then
+    echo "Running verification checks..."
+    ERRORS=0
+    # Check Python version
+    PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
+    if [ -z "$PYVER" ]; then echo "✗ Python 3 not found"; ERRORS=$((ERRORS+1));
+    else echo "✓ Python $PYVER"; fi
+    # Dynamic wheel count: count direct deps in requirements.txt
+    REQ_COUNT=$(grep -cvE '^#|^$' requirements.txt 2>/dev/null || echo 9)
+    WHEEL_COUNT=$(ls wheels/*.whl 2>/dev/null | wc -l)
+    if [ "$WHEEL_COUNT" -lt "$REQ_COUNT" ]; then echo "✗ Only $WHEEL_COUNT wheels found (need ≥$REQ_COUNT for direct deps)"; ERRORS=$((ERRORS+1));
+    else echo "✓ $WHEEL_COUNT offline wheels present (≥$REQ_COUNT direct deps)"; fi
+    # Check no source dists in wheels (only .whl)
+    SDIST=$(ls wheels/*.tar.gz 2>/dev/null | wc -l)
+    if [ "$SDIST" -gt 0 ]; then echo "✗ Found $SDIST source distributions (only .whl allowed)"; ERRORS=$((ERRORS+1));
+    else echo "✓ Wheelhouse contains only pre-built .whl files"; fi
+    # Check all .py compile
+    COMPILE_OK=$(python3 -c "import py_compile, os; [py_compile.compile(os.path.join(r,f), doraise=True) for r,d,fs in os.walk('.') for f in fs if f.endswith('.py')]" 2>&1 && echo OK)
+    if [ "$COMPILE_OK" = "OK" ]; then echo "✓ All Python modules compile clean";
+    else echo "✗ Compilation errors detected"; ERRORS=$((ERRORS+1)); fi
+    # Check SHA256SUMS — wheels + Python source
+    if [ -f SHA256SUMS ]; then
+        WHL_HASHES=$(grep -c '\.whl$' SHA256SUMS 2>/dev/null || echo 0)
+        SRC_HASHES=$(grep -c '\.py$' SHA256SUMS 2>/dev/null || echo 0)
+        echo "✓ SHA256SUMS present ($WHL_HASHES wheels, $SRC_HASHES source files)"
+        # Verify wheel hashes
+        if sha256sum -c SHA256SUMS --quiet 2>/dev/null; then
+            echo "✓ All SHA256 hashes verified"
+        else
+            echo "✗ SHA256 hash mismatch — files may be corrupted"; ERRORS=$((ERRORS+1))
+        fi
+    else
+        echo "✗ SHA256SUMS missing"; ERRORS=$((ERRORS+1))
+    fi
+    echo ""
+    if [ "$ERRORS" -eq 0 ]; then echo "✓ All verification checks passed — air-gap ready";
+    else echo "✗ $ERRORS checks failed"; exit 1; fi
+    exit 0
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -42,6 +83,20 @@ if [ -z "$PYTHON" ]; then
     echo -e "${RED}  ✗ Python 3.10+ required. Install it first.${NC}"
     exit 1
 fi
+# Check Python version against built-for version
+BUILD_PYVER=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+PYTAG=$("$PYTHON" -c "import sys, struct; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+if [ -d "$WHEEL_DIR" ] && [ "$(ls -A "$WHEEL_DIR" 2>/dev/null)" ]; then
+    # Check if any wheel matches this Python version
+    MATCHING=$(ls "$WHEEL_DIR"/*${PYTAG}*.whl 2>/dev/null | wc -l)
+    TOTAL_WHEELS=$(ls "$WHEEL_DIR"/*.whl 2>/dev/null | wc -l)
+    if [ "$MATCHING" -eq 0 ] && [ "$TOTAL_WHEELS" -gt 0 ]; then
+        echo -e "${YELLOW}  ⚠ Warning: No wheels built for Python $BUILD_PYVER (wheels may be for a different version)${NC}"
+        echo -e "${YELLOW}    Some binary extensions may fail to install. Consider rebuilding wheels on this host.${NC}"
+    else
+        echo -e "${GREEN}  ✓ Wheels compatible with Python $BUILD_PYVER${NC}"
+    fi
+fi
 
 # ── Phase 2: Install Python dependencies ───────────────────
 echo -e "${BOLD}[2/6] Installing Python dependencies...${NC}"
@@ -56,9 +111,20 @@ fi
 
 if [ -d "$WHEEL_DIR" ] && [ "$(ls -A "$WHEEL_DIR" 2>/dev/null)" ]; then
     echo -e "${CYAN}  Installing from local wheelhouse (offline)...${NC}"
-    "$PYTHON" -m pip install --no-index --find-links="$WHEEL_DIR" -r requirements.txt $PIP_FLAGS 2>/dev/null || \
-    "$PYTHON" -m pip install --no-index --find-links="$WHEEL_DIR" -r requirements.txt
-    echo -e "${GREEN}  ✓ Installed from offline wheels${NC}"
+    # --no-deps --no-index: true air-gap, all deps in wheelhouse
+    if "$PYTHON" -m pip install --no-index --no-deps --find-links="$WHEEL_DIR" -r requirements.txt $PIP_FLAGS 2>/dev/null; then
+        echo -e "${GREEN}  ✓ Installed from offline wheels (--no-deps --no-index)${NC}"
+    elif "$PYTHON" -m pip install --no-index --find-links="$WHEEL_DIR" -r requirements.txt $PIP_FLAGS 2>/dev/null; then
+        # Fallback: allow pip to resolve deps (in case wheel metadata is slightly off)
+        echo -e "${GREEN}  ✓ Installed from offline wheels (deps-resolved mode)${NC}"
+    else
+        echo -e "${RED}  ✗ Offline install failed. Possible causes:${NC}"
+        echo -e "    • Python version mismatch (wheels built for different Python)"
+        echo -e "    • Missing wheels (run: pip3 download -r requirements.txt -d ./wheels on a connected host)"
+        echo -e "    • Platform mismatch (wheels built for different architecture)"
+        echo -e "    • Run: bash install.sh --verify for diagnostics"
+        exit 1
+    fi
 elif [ -f "$HARNESS_DIR/requirements.txt" ]; then
     echo -e "${YELLOW}  No local wheels found — attempting online install...${NC}"
     "$PYTHON" -m pip install -r requirements.txt $PIP_FLAGS 2>/dev/null || \
@@ -205,10 +271,10 @@ echo -e "    Run workflow: ${CYAN}python3 harness.py --workflow network_recon --
 echo -e "    Multi-target: ${CYAN}python3 harness.py --workflow network_recon --targets 10.0.0.1,10.0.0.2${NC}"
 echo -e "    Generate WF:  ${CYAN}python3 harness.py --generate \"compromise the web tier\"${NC}"
 echo ""
-echo -e "  ${BOLD}Offline air-gap setup:${NC}"
-echo -e "    ${YELLOW}1. On connected machine:  pip3 download -r requirements.txt -d ./wheels${NC}"
-echo -e "    ${YELLOW}2. Copy this directory + wheels/ to air-gapped host${NC}"
-echo -e "    ${YELLOW}3. Run: bash install.sh  (detects offline wheels automatically)${NC}"
+echo -e "  ${BOLD}Offline air-gap setup:${NC}"echo -e "    ${YELLOW}1. On connected machine:  pip3 download -r requirements.txt -d ./wheels${NC}"
+    echo -e "    ${YELLOW}2. Copy this directory + wheels/ to air-gapped host${NC}"
+    echo -e "    ${YELLOW}3. Run: bash install.sh          (detects offline wheels automatically)${NC}"
+    echo -e "    ${YELLOW}4. Run: bash install.sh --verify  (validate air-gap readiness)${NC}"
 echo ""
 echo -e "  ${BOLD}7-Phase Assassin's Blade:${NC}"
 echo -e "    P1: Parallel Execution  P2: Smart Cache    P3: Context Manager"

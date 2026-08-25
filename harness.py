@@ -20,8 +20,6 @@ import json
 import yaml
 import logging
 import argparse
-import shutil
-from datetime import datetime
 
 # Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
