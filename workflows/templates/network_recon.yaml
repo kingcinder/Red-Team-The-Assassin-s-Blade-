@@ -1,0 +1,80 @@
+name: "Network Reconnaissance"
+description: "Full external/internal network recon: host discovery, port scan, service enumeration, banner grab, and web probe. Chains discovered hosts into deeper scans."
+category: recon
+attack_vector: "Passive/active network discovery"
+variables:
+  target:
+    required: true
+    description: "Target IP, CIDR, or hostname"
+  ports:
+    required: false
+    default: "1-1000"
+    description: "Port range to scan"
+cutting_edge: false
+references: ["NMAP scanning guide", "PTES Recon phase"]
+
+steps:
+  - name: "host_discovery"
+    tool: "host_discovery"
+    description: "Discover live hosts in the target range"
+    args:
+      target: "{{target}}"
+      method: "ping"
+    expected_output: "up|Nmap scan report|Host is up"
+    timeout: 300
+    gate: true
+    retries: 2
+    extracts:
+      - var: "live_hosts"
+        regex: "Nmap scan report for ([\\d\\.]+)"
+
+  - name: "port_scan"
+    tool: "nmap_scan"
+    description: "Scan top ports on live hosts"
+    args:
+      target: "{{target}}"
+      ports: "{{ports}}"
+      scan_type: "-sS -Pn -T4"
+    expected_output: "open"
+    timeout: 600
+    gate: true
+    retries: 2
+    extracts:
+      - var: "open_ports"
+        regex: "([\\d\\.]+)/tcp\\s+open"
+
+  - name: "service_enum"
+    tool: "service_enum"
+    description: "Enumerate services and versions on open ports"
+    args:
+      target: "{{target}}"
+      ports: "{{ports}}"
+    expected_output: "tcp.*open"
+    timeout: 600
+    gate: false
+    retries: 2
+
+  - name: "banner_grab"
+    tool: "banner_grab"
+    description: "Grab service banners for fingerprinting"
+    args:
+      target: "{{target}}"
+      ports: "{{ports}}"
+    expected_output: null
+    timeout: 120
+    gate: false
+    retries: 1
+
+  - name: "httpx_probe"
+    tool: "httpx_probe"
+    description: "Probe discovered hosts for HTTP services and tech detection"
+    args:
+      targets: "{{target}}"
+      tech_detect: true
+    expected_output: "\\[\\d{3}\\].*(http|https)"
+    timeout: 120
+    gate: false
+    retries: 2
+    extracts:
+      - var: "web_targets"
+        regex: "(https?://[\\w\\.\\-\\/]+)"

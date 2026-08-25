@@ -1,0 +1,21 @@
+# Runtime directories (generated at runtime)
+sessions/
+output/
+tasks/
+__pycache__/
+*.pyc
+*.pyo
+
+# Offline wheels cache
+wheels/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

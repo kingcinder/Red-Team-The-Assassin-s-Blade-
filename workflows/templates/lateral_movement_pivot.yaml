@@ -1,0 +1,57 @@
+name: "Lateral Movement & Pivoting Chain"
+description: "Modern post-exploitation: establish a pivot through a compromised host, route traffic, then move laterally to internal services."
+category: postex
+attack_vector: "Pivoting via SSH/chisel tunnels → lateral movement"
+variables:
+  pivot_host:
+    required: true
+    description: "Compromised host IP"
+  internal_subnet:
+    required: true
+    description: "Internal subnet to reach through pivot (e.g. 10.0.0.0/24)"
+  ssh_user:
+    required: true
+    description: "SSH user on pivot host"
+  ssh_password:
+    required: false
+    description: "SSH password (or key)"
+cutting_edge: true
+references: ["MITRE ATT&CK T1021.001", "sshuttle pivot", "chisel tunnel"]
+
+steps:
+  - name: "sshuttle_pivot"
+    tool: "sshuttle_pivot"
+    description: "Establish transparent VPN pivot over SSH"
+    args:
+      target: "{{internal_subnet}}"
+      ssh_host: "{{ssh_user}}@{{pivot_host}}"
+    expected_output: "Starting firewall|c: Connected|Firewall"
+    timeout: 300
+    gate: true
+    retries: 2
+
+  - name: "chisel_tunnel"
+    tool: "chisel_tunnel"
+    description: "Alternate: fast HTTP tunnel for firewall traversal"
+    args:
+      mode: "client"
+      bind: "{{pivot_host}}:8080"
+    expected_output: null
+    timeout: 300
+    gate: false
+    retries: 1
+
+  - name: "internal_recon"
+    tool: "nmap_scan"
+    description: "Scan internal subnet through the pivot"
+    args:
+      target: "{{internal_subnet}}"
+      ports: "22,80,443,3389,445,5985"
+      scan_type: "-sS -Pn -T4"
+    expected_output: "open"
+    timeout: 600
+    gate: false
+    retries: 2
+    extracts:
+      - var: "internal_targets"
+        regex: "Nmap scan report for ([\\d\\.]+)"

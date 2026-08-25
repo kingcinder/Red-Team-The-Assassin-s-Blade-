@@ -1,0 +1,80 @@
+name: "Kubernetes Cluster Assessment & Container Breakout"
+description: "Discover K8s API servers, probe for unauthenticated access, enumerate workloads, check RBAC misconfigurations and attempt container escape via privileged pods."
+category: container
+attack_vector: "K8s API exposure → unauthenticated access → RBAC abuse → container breakout"
+variables:
+  target:
+    required: true
+    description: "K8s API server or cluster IP (e.g. 10.0.0.10)"
+  kube_port:
+    required: false
+    default: 6443
+    description: "Kubernetes API port"
+cutting_edge: true
+references: ["OWASP Kubernetes Top 10", "kube-hunter", "Kubernetes pentest methodology"]
+
+steps:
+  - name: "kube_api_discovery"
+    tool: "nmap_scan"
+    description: "Scan for Kubernetes API server and kubelet ports (6443, 8443, 10250, 2379)"
+    args:
+      target: "{{target}}"
+      ports: "6443,8443,10250,10255,2379,2380"
+      scan_type: "-sT"
+    expected_output: "open"
+    timeout: 300
+    gate: true
+    retries: 1
+    extracts:
+      - var: "api_port"
+        regex: "(\\d{4,5})/tcp\\s+open"
+
+  - name: "unauthenticated_api_probe"
+    tool: "curl_request"
+    description: "Probe the K8s API server for unauthenticated access"
+    args:
+      url: "https://{{target}}:{{kube_port}}/api"
+      method: "GET"
+      insecure: true
+    expected_output: "apiVersion|kind|Unauthorized|forbidden"
+    timeout: 60
+    gate: false
+    retries: 1
+
+  - name: "kubelet_probe"
+    tool: "curl_request"
+    description: "Probe kubelet read-only port for pod/container info leaks"
+    args:
+      url: "https://{{target}}:10250/pods"
+      method: "GET"
+      insecure: true
+    expected_output: null
+    timeout: 60
+    gate: false
+    retries: 0
+    extracts:
+      - var: "pod_name"
+        regex: "\"metadata\"\\s*:\\s*\\{\"name\"\\s*:\\s*\"([^\"]+)\""
+
+  - name: "etcd_probe"
+    tool: "curl_request"
+    description: "Probe etcd port for unauthenticated key-value access (secrets dump)"
+    args:
+      url: "http://{{target}}:2379/v2/keys/?recursive=true"
+      method: "GET"
+      insecure: true
+    expected_output: "action|node|error"
+    timeout: 60
+    gate: false
+    retries: 0
+
+  - name: "cluster_vuln_scan"
+    tool: "nuclei_scan"
+    description: "Run nuclei Kubernetes misconfiguration templates"
+    args:
+      target: "https://{{target}}:{{kube_port}}"
+      templates: "http/misconfiguration/kubernetes"
+    expected_output: null
+    timeout: 600
+    gate: false
+    retries: 0

