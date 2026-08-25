@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Functional test for the enhanced Finding Correlation Engine v5.0."""
 import sys
+import os
 import py_compile
+
+# Add parent dir so 'core' package resolves when run from tests/
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # 1. Compile check
 for m in ["core/correlation.py", "core/workflow_engine.py"]:
