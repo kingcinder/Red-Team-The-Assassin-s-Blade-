@@ -42,3 +42,7 @@ ALL_TOOL_MODULES = [
     SniffingTools, ExploitTools, ForensicsTools, ReversingTools,
     SocialTools, PostExTools, OSINTTools, StressTools, HardwareTools,
 ]
+
+# Explicit public API — BaseTool is re-exported so `from tools import BaseTool`
+# works for consumers who only need the ABC, mirroring the module docstring.
+__all__ = ["BaseTool", "ALL_TOOL_MODULES"]

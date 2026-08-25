@@ -349,54 +349,10 @@ class FindingsExtractor:
         ])
 
     def to_report_section(self, findings: List[Dict]) -> str:
-        """Generate a structured markdown findings section for reports."""
-        if not findings:
-            return "No findings extracted during this run.\n"
-
-        lines = []
-        severity_groups = self.group_by_severity(findings)
-        risk = self.compute_risk_score(findings)
-
-        # Risk summary header
-        lines.append(f"**Overall Risk Score: {risk['score']}/100 (Grade: {risk['grade']})**")
-        lines.append("")
-        lines.append(f"| Severity | Count |")
-        lines.append(f"|----------|-------|")
-        for sev in ["critical", "high", "medium", "low", "info"]:
-            count = risk["breakdown"].get(sev, 0)
-            if count > 0:
-                lines.append(f"| {sev.upper()} | {count} |")
-        lines.append("")
-
-        # Per-severity detail sections
-        for sev in ["critical", "high", "medium", "low", "info"]:
-            sev_findings = severity_groups.get(sev, [])
-            if not sev_findings:
-                continue
-
-            emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}.get(sev, "⚪")
-            lines.append(f"### {emoji} {sev.upper()} Findings ({len(sev_findings)})")
-            lines.append("")
-
-            for i, f in enumerate(sev_findings, 1):
-                lines.append(f"**{i}. {f.get('title', 'Finding')}**")
-                lines.append(f"- **Category**: {f.get('category', 'n/a')}")
-                lines.append(f"- **Source**: `{f.get('source_tool', '')}` (step: {f.get('source_step', '')})")
-                lines.append(f"- **Evidence**: `{f.get('evidence', '')[:300]}`")
-                if f.get("context"):
-                    lines.append(f"- **Context**:")
-                    lines.append(f"  ```")
-                    lines.append(f"  {f['context'][:300]}")
-                    lines.append(f"  ```")
-                # Add remediation
-                remediation = self.get_remediation(f.get("category", ""))
-                if remediation:
-                    lines.append(f"- **Remediation**:")
-                    for r in remediation[:3]:
-                        lines.append(f"  - {r}")
-                lines.append("")
-
-        return "\n".join(lines)
+        """Generate a structured markdown findings section for reports.
+        Formatting delegated to core.report (single report writer)."""
+        from core.report import findings_section
+        return findings_section(findings)
 
 
 # ── Module-level singleton ──

@@ -152,8 +152,9 @@ def test_raw_findings_and_empty():
 # ═══════════════════════════════════════════════════════════════
 def test_wiring():
     print("\n── dashboard wiring ──")
+    # v5.7: attack matrix REST route lives in the campaigns blueprint.
     srv = open(os.path.join(os.path.dirname(__file__), "..",
-                            "dashboard", "server.py")).read()
+                            "dashboard", "blueprints", "campaigns.py")).read()
     html = open(os.path.join(os.path.dirname(__file__), "..",
                              "dashboard", "templates", "index.html")).read()
     js = open(os.path.join(os.path.dirname(__file__), "..",

@@ -15,6 +15,14 @@ modules = [
     "core/orchestrator.py",
     "core/campaign.py",
     "dashboard/server.py",
+    # v5.7: per-domain blueprint modules (split out of server.py)
+    "dashboard/blueprints/__init__.py",
+    "dashboard/blueprints/core.py",
+    "dashboard/blueprints/workflows.py",
+    "dashboard/blueprints/campaigns.py",
+    "dashboard/blueprints/msf.py",
+    "dashboard/blueprints/replay.py",
+    "dashboard/blueprints/memory_kb.py",
 ]
 ok = True
 for m in modules:

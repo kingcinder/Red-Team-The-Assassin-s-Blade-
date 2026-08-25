@@ -25,6 +25,9 @@ class ResultCache:
         self.max_size = max_size
         self.ttl = ttl_seconds
         self._cache: OrderedDict[str, Tuple[float, Dict[str, Any]]] = OrderedDict()
+        # tool → set of hashed keys, for O(1) tool-scoped invalidation
+        # (the hashed key itself can never contain the tool name)
+        self._tool_keys: Dict[str, set] = {}
         self._lock = threading.Lock()
         self._hits = 0
         self._misses = 0
@@ -49,8 +52,13 @@ class ResultCache:
                     self._total_saved_seconds += result.get("duration", 0)
                     return result
                 else:
-                    # Expired
+                    # Expired — keep the tool index consistent
                     del self._cache[key]
+                    bucket = self._tool_keys.get(tool)
+                    if bucket:
+                        bucket.discard(key)
+                        if not bucket:
+                            del self._tool_keys[tool]
             self._misses += 1
         return None
 
@@ -61,18 +69,26 @@ class ResultCache:
             if key in self._cache:
                 self._cache.move_to_end(key)
             self._cache[key] = (time.time(), result)
+            self._tool_keys.setdefault(tool, set()).add(key)
             while len(self._cache) > self.max_size:
-                self._cache.popitem(last=False)
+                evicted_key, _ = self._cache.popitem(last=False)
+                # keep tool index consistent with evicted key, pruning
+                # now-empty index sets so the index can't grow unbounded
+                for t, keys in list(self._tool_keys.items()):
+                    keys.discard(evicted_key)
+                    if not keys:
+                        del self._tool_keys[t]
 
     def invalidate(self, tool: Optional[str] = None):
         """Invalidate cache entries, optionally filtered by tool name."""
         with self._lock:
             if tool is None:
                 self._cache.clear()
+                self._tool_keys.clear()
             else:
-                extinct = [k for k in self._cache if tool in k]
-                for k in extinct:
-                    del self._cache[k]
+                keys = self._tool_keys.pop(tool, set())
+                for k in keys:
+                    self._cache.pop(k, None)
 
     def get_stats(self) -> Dict[str, Any]:
         """Return cache statistics."""
@@ -95,3 +111,4 @@ class ResultCache:
         """Clear all cached entries."""
         with self._lock:
             self._cache.clear()
+            self._tool_keys.clear()

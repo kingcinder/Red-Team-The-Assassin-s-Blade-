@@ -160,8 +160,9 @@ def test_wiring():
                                   "core", "task_scheduler.py")).read()
     orch_src = open(os.path.join(os.path.dirname(__file__), "..",
                                  "core", "orchestrator.py")).read()
+    # v5.7: parallel REST route + socket handler live in the workflows blueprint.
     srv_src = open(os.path.join(os.path.dirname(__file__), "..",
-                                "dashboard", "server.py")).read()
+                                "dashboard", "blueprints", "workflows.py")).read()
 
     # Scheduler: run_multiple + cross-workflow correlation + parallel report
     assert "def run_multiple" in sched_src

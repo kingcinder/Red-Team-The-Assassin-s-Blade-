@@ -829,105 +829,18 @@ class WorkflowStateMachine:
         """
         Generate a markdown pentest report from findings, steps, and chain
         values. Writes to the sandbox as report.md and stores in state.
+        Formatting is delegated to core.report (single report writer).
         """
+        from core.report import workflow_report
+
         findings = self.state.get("findings", [])
         completed = self.state.get("steps_completed", [])
         warnings = self.state.get("warnings", [])
 
-        lines = []
-        lines.append(f"# Penetration Test Report — {self.template.get('name', 'Unknown workflow')}")
-        lines.append("")
-        lines.append(f"- **Workflow**: {self.template.get('name', '')}")
-        lines.append(f"- **Category**: {self.template.get('category', 'general')}")
-        lines.append(f"- **Attack vector**: {self.template.get('attack_vector', 'N/A')}")
-        lines.append(f"- **Task ID**: {self.sandbox.task_id}")
-        lines.append(f"- **Status**: {self.state.get('status', 'unknown')}")
-        lines.append(f"- **Started**: {self.state.get('started', 'N/A')}")
-        lines.append(f"- **Finished**: {self.state.get('finished', 'N/A')}")
-        lines.append(f"- **Steps completed**: {len(completed)}/{len(self.steps)}")
-        lines.append("")
-
-        # Findings summary with risk score
-        lines.append("## 1. Executive Summary")
-        lines.append("")
-        if findings:
-            _ext = _get_findings_extractor()
-            counts = _ext.summarize(findings)
-            risk = _ext.compute_risk_score(findings)
-            worst = _ext.worst_severity(findings)
-            lines.append(f"**Risk Score: {risk['score']}/100 (Grade: {risk['grade']})**")
-            lines.append("")
-            lines.append(f"The assessment identified **{len(findings)} finding(s)** "
-                         f"across the target, with the highest severity being "
-                         f"**{worst.upper()}**.")
-            lines.append("")
-            lines.append("| Severity | Count |")
-            lines.append("|----------|-------|")
-            for sev in ["critical", "high", "medium", "low", "info"]:
-                c = counts.get(sev, 0)
-                if c > 0:
-                    lines.append(f"| {sev.upper()} | {c} |")
-        else:
-            lines.append("No automated findings were extracted during this run.")
-        lines.append("")
-
-        # Steps executed
-        lines.append("## 2. Methodology / Steps Executed")
-        lines.append("")
-        for i, s in enumerate(completed, 1):
-            status = s.get("status", "?")
-            tool = s.get("tool", "?")
-            alt = ""
-            if s.get("llm_alt"):
-                alt = f" *(LLM alternative: {s['llm_alt'].get('tool', '')})*"
-            lines.append(f"{i}. **{s.get('step', 'step')}** — `{tool}` "
-                         f"[{status}]{alt}")
-        lines.append("")
-
-        # Phase 7: Correlated attack paths + summary
+        # Phase 7: Correlated attack paths + summary (data, not formatting)
         paths = self._correlator.correlate(findings)
-        if paths:
-            lines.append("## 3. Correlated Attack Paths")
-            lines.append("")
-            lines.append(self._correlator.paths_to_markdown(paths))
-            lines.append("")
-            # Correlation summary (stats, kill chain coverage, ATT&CK coverage)
-            lines.append(self._correlator.summary_to_markdown(paths, findings))
-
-        # Findings detail (with context, remediation, severity sections)
-        findings_heading = "## 4. Findings" if paths else "## 3. Findings"
-        lines.append(findings_heading)
-        lines.append("")
-        if findings:
-            # _ext already instantiated above for the summary — reuse it
-            lines.append(_ext.to_report_section(findings))
-        else:
-            lines.append("No findings recorded.")
-            lines.append("")
-
-        # Chain values (extracted credentials/artifacts)
-        if self._chain_values:
-            chain_heading = "## 5. Extracted Chain Values" if paths else "## 4. Extracted Chain Values"
-            lines.append(chain_heading)
-            lines.append("")
-            lines.append("```")
-            for k, v in self._chain_values.items():
-                lines.append(f"{k} = {v}")
-            lines.append("```")
-            lines.append("")
-
-        # Warnings
-        if warnings:
-            warn_heading = "## 6. Warnings & Failed Steps" if paths else "## 5. Warnings & Failed Steps"
-            lines.append(warn_heading)
-            lines.append("")
-            for w in warnings:
-                lines.append(f"- **{w.get('step', '?')}**: {w.get('reason', '')}")
-            lines.append("")
-
-        lines.append("---")
-        lines.append("*Generated automatically by RedTeam Harness. "
-                     "Review all evidence before acting on findings.*")
+        paths_md = self._correlator.paths_to_markdown(paths) if paths else ""
+        summary_md = self._correlator.summary_to_markdown(paths, findings) if paths else ""
 
         # ── Phase 2: LLM-powered narrative summary & conclusions ──
         narrative = ""
@@ -954,24 +867,26 @@ class WorkflowStateMachine:
                 except Exception as e:
                     logger.warning(f"LLM deep dive generation failed (non-fatal): {e}")
 
-        # Insert narrative + deep dive after the title line
-        _NARRATIVE_MARKER = "__NARRATIVE_INSERT__"
-        _DEEPDIVE_MARKER = "__DEEPDIVE_INSERT__"
-        if lines and lines[0].startswith("# "):
-            lines.insert(1, _NARRATIVE_MARKER)
-            lines.insert(2, _DEEPDIVE_MARKER)
-        else:
-            lines.insert(0, _NARRATIVE_MARKER)
-            lines.insert(1, _DEEPDIVE_MARKER)
-        report = "\n".join(lines)
-        if narrative:
-            report = report.replace(_NARRATIVE_MARKER, narrative + "\n")
-        else:
-            report = report.replace(_NARRATIVE_MARKER, "")
-        if deep_dive:
-            report = report.replace(_DEEPDIVE_MARKER, "## Technical Deep Dive\n\n" + deep_dive + "\n")
-        else:
-            report = report.replace(_DEEPDIVE_MARKER, "")
+        report = workflow_report(
+            workflow=self.template.get("name", "Unknown workflow"),
+            category=self.template.get("category", "general"),
+            attack_vector=self.template.get("attack_vector", "N/A"),
+            task_id=self.sandbox.task_id,
+            status=self.state.get("status", "unknown"),
+            started=self.state.get("started", "N/A"),
+            finished=self.state.get("finished", "N/A"),
+            steps_completed=len(completed),
+            total_steps=len(self.steps),
+            findings=findings,
+            completed=completed,
+            warnings=warnings,
+            chain_values=self._chain_values,
+            paths=paths,
+            paths_markdown=paths_md,
+            summary_markdown=summary_md,
+            narrative=narrative,
+            deep_dive=deep_dive,
+        )
 
         # Save to sandbox + state
         try:

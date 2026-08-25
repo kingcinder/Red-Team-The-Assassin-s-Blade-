@@ -392,8 +392,9 @@ def test_compare_errors():
 # ═══════════════════════════════════════════════════════════════
 def test_compare_route_wiring():
     print("\n── comparison REST route wiring ──")
+    # v5.7: campaign REST routes live in the campaigns blueprint.
     srv_src = open(os.path.join(os.path.dirname(__file__), "..",
-                                "dashboard", "server.py")).read()
+                                "dashboard", "blueprints", "campaigns.py")).read()
     # Route exists and is registered before the dynamic <campaign_id> route.
     # Match the DECORATOR lines (the server comment also mentions the dynamic
     # route text, so a bare .index() would hit the comment instead).

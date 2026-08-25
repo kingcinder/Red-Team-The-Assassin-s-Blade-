@@ -264,10 +264,13 @@ def test_wiring():
     print("\n── orchestrator + dashboard wiring ──")
     orch_src = open(os.path.join(os.path.dirname(__file__), "..",
                                  "core", "orchestrator.py")).read()
+    # v5.7: prioritize REST route lives in the campaigns blueprint.
     srv_src = open(os.path.join(os.path.dirname(__file__), "..",
-                                "dashboard", "server.py")).read()
+                                "dashboard", "blueprints", "campaigns.py")).read()
     sched_src = open(os.path.join(os.path.dirname(__file__), "..",
                                   "core", "task_scheduler.py")).read()
+    report_src = open(os.path.join(os.path.dirname(__file__), "..",
+                                   "core", "report.py")).read()
     wf_src = open(os.path.join(os.path.dirname(__file__), "..",
                                "core", "workflow_engine.py")).read()
     cfg_src = open(os.path.join(os.path.dirname(__file__), "..",
@@ -281,7 +284,9 @@ def test_wiring():
     # Scheduler accepts + applies the plan
     assert "priority_plan: Optional[List[Dict[str, Any]]] = None" in sched_src
     assert "retry_multiplier=retry_multiplier" in sched_src
-    assert '"priority_plan"' in sched_src and "## 0. Target Priority Plan" in sched_src
+    assert '"priority_plan"' in sched_src
+    # Priority-plan header lives in the unified report writer (candidate #4)
+    assert "## 0. Target Priority Plan" in report_src
     # Workflow engine scales retries
     assert "retry_multiplier: float = 1.0" in wf_src
     assert "base_retries * self.retry_multiplier" in wf_src

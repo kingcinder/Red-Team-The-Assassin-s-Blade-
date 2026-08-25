@@ -270,8 +270,9 @@ def test_tactics_memory():
 # ═══════════════════════════════════════════════════════════════
 def test_dashboard_wiring():
     print("\n── dashboard wiring ──")
+    # v5.7: campaign REST routes live in the campaigns blueprint.
     srv = open(os.path.join(os.path.dirname(__file__), "..",
-                            "dashboard", "server.py")).read()
+                            "dashboard", "blueprints", "campaigns.py")).read()
     for route in ['"/api/campaigns/history"', '"/api/campaigns/<campaign_id>/save"',
                   '"/api/campaigns/<campaign_id>/load"',
                   '"/api/campaigns/<campaign_id>/snapshot"',

@@ -145,7 +145,8 @@ def main():
     check("status includes knowledge_base", '"knowledge_base": self.kb.get_stats()' in src)
 
     import dashboard.server as srv_mod
-    srv = open("dashboard/server.py").read()
+    # v5.7: KB routes live in the memory_kb blueprint, not server.py.
+    srv = open("dashboard/blueprints/memory_kb.py").read()
     for route in ["/api/kb/stats", "/api/kb/search", "/api/kb/cve/<cve_id>",
                   "/api/kb/technique/<tech_id>", "/api/kb/ground"]:
         check(f"route {route} registered", route in srv)

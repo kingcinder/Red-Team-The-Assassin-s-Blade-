@@ -280,10 +280,14 @@ def test_injection_sanitized():
 
 def test_dashboard_wiring():
     print("\n── dashboard wiring ──")
+    # v5.7: chain REST route + socket handler live in the workflows blueprint;
+    # the on_chain_* event forwarders remain in server.py (wiring glue).
+    wf = open(os.path.join(os.path.dirname(__file__), "..",
+                           "dashboard", "blueprints", "workflows.py")).read()
     src = open(os.path.join(os.path.dirname(__file__), "..",
                             "dashboard", "server.py")).read()
-    assert "/api/workflows/chain" in src, "REST route missing"
-    assert "chain_workflow" in src, "WebSocket handler missing"
+    assert "/api/workflows/chain" in wf, "REST route missing"
+    assert "chain_workflow" in wf, "WebSocket handler missing"
     assert "on_chain_start" in src and "on_chain_complete" in src, "event forwarding missing"
     print("  dashboard wiring: OK")
 

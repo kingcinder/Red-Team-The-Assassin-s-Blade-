@@ -4,7 +4,6 @@ Creates per-workflow subfolder trees to isolate data by task.
 Each workflow run gets its own timestamped directory with strict boundaries.
 """
 import os
-import json
 import shutil
 import secrets
 import logging
@@ -96,20 +95,18 @@ class TaskSandbox:
             f.write(f"[{datetime.now().isoformat()}] {content}\n")
 
     def save_state(self, state: dict):
-        """Checkpoint the workflow state to state.json."""
+        """Checkpoint the workflow state to state.json (atomic, via StateStore)."""
+        from core.state_store import atomic_write_json
         state["last_updated"] = datetime.now().isoformat()
         state["total_output_bytes"] = self._total_bytes
         path = os.path.join(self.root, "state.json")
-        with open(path, "w") as f:
-            json.dump(state, f, indent=2)
+        atomic_write_json(path, state)
 
     def load_state(self) -> dict:
-        """Load the current state from state.json."""
+        """Load the current state from state.json (corruption-tolerant)."""
+        from core.state_store import read_json
         path = os.path.join(self.root, "state.json")
-        if os.path.exists(path):
-            with open(path) as f:
-                return json.load(f)
-        return {}
+        return read_json(path, {}) or {}
 
     def get_output_path(self, step_name: str) -> str:
         """Get the path where a step's stdout would be stored."""
@@ -144,13 +141,8 @@ class TaskSandbox:
             path = os.path.join(wf_dir, ts)
             if os.path.isdir(path):
                 state_path = os.path.join(path, "state.json")
-                state = {}
-                if os.path.exists(state_path):
-                    with open(state_path) as f:
-                        try:
-                            state = json.load(f)
-                        except json.JSONDecodeError:
-                            pass
+                from core.state_store import read_json
+                state = read_json(state_path, {}, quiet=True) or {}
                 # task_id is workflow_<timestamp>
                 tasks.append({
                     "task_id": f"{self.workflow_name}_{ts}",
@@ -177,16 +169,13 @@ class TaskSandbox:
             reverse=True,
         )
         for ts in timestamps:
+            from core.state_store import read_json
             state_path = os.path.join(wf_dir, ts, "state.json")
-            if os.path.exists(state_path):
-                try:
-                    with open(state_path) as f:
-                        state = json.load(f)
-                    state["_root"] = os.path.join(wf_dir, ts)
-                    state["_task_id"] = f"{workflow_name}_{ts}"
-                    return state
-                except json.JSONDecodeError:
-                    continue
+            state = read_json(state_path, quiet=True)
+            if state is not None:
+                state["_root"] = os.path.join(wf_dir, ts)
+                state["_task_id"] = f"{workflow_name}_{ts}"
+                return state
         return None
 
     def _check_total_size(self):

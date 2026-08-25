@@ -11,7 +11,6 @@ Scoring dimensions:
 
 Output: ordered list of (target, score, breakdown, suggested_workflow).
 """
-import re
 import logging
 from typing import Dict, List, Any
 

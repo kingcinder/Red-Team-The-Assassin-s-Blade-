@@ -35,6 +35,8 @@ from core.vector_memory import VectorMemory
 from core.knowledge_base import KnowledgeBase
 from core.injection_defense import sanitize_for_llm, sanitize_tool_output
 from core.autonomous import AutonomousAgent
+from core.prompt_builder import PromptBuilder
+from core.tool_interceptor import ToolInterceptor, INTERCEPTED_TOOLS as PB_INTERCEPTED_TOOLS
 
 logger = logging.getLogger("redteam.orchestrator")
 
@@ -43,14 +45,6 @@ DEFAULT_MAX_ITERATIONS = 10
 AUTONOMOUS_MAX_ITERATIONS = 200
 MAX_CONSECUTIVE_SAME_TOOL = 3   # stuck-detection threshold
 MAX_SELF_CORRECTIONS = 2        # re-prompts for malformed output
-
-# ── Engagement phases ──
-PHASE_TOOLS = {
-    "recon": ["recon", "osint", "sniffing"],
-    "vuln":   ["vuln", "web"],
-    "exploit": ["exploit", "password", "wireless", "social"],
-    "postex":  ["postex", "forensics", "reversing", "hardware"],
-}
 
 # ── Workflow chaining (v4.3) ──
 MAX_CHAIN_LINKS_HARD_CAP = 10
@@ -110,7 +104,13 @@ class Orchestrator:
             "on_chain_link": [],
             "on_chain_complete": [],
         }
-        self._system_prompt_base = self._build_base_system_prompt()
+        scorer_dir = config.get("harness", {}).get("session_dir", "./sessions")
+        self.scorer = ToolScorer(scorer_dir)
+        self.memory = VectorMemory(scorer_dir)
+        self.installer = ToolInstaller(self.tools)
+        self.prompts = PromptBuilder(self.tools, self.scorer, self.memory)
+        self.interceptor = ToolInterceptor(self.tools, self.installer, config,
+                                            llm=self.llm)
         wf_cfg = config.get("workflow", {})
         self.campaign_mgr = None  # set externally by dashboard if needed
         self.scheduler = MultiTargetScheduler(
@@ -126,10 +126,6 @@ class Orchestrator:
             templates_dir=wf_cfg.get("templates_dir", "workflows/templates"),
         )
         self.correlator = FindingCorrelator()
-        self.installer = ToolInstaller(self.tools)
-        scorer_dir = config.get("harness", {}).get("session_dir", "./sessions")
-        self.scorer = ToolScorer(scorer_dir)
-        self.memory = VectorMemory(scorer_dir)
         # v5.5: tactical engine can now ground suggestions in prior sessions
         self.tactics.set_memory(self.memory)
         # v5.6: offline knowledge base — CVE / ATT&CK / exploit signatures /
@@ -138,159 +134,8 @@ class Orchestrator:
         self.autonomous_agent = None  # Created on demand
 
     # ═══════════════════════════════════════════════════════════════
-    # SYSTEM PROMPT — Dynamic, phase-aware, installed tools only
-    # ═══════════════════════════════════════════════════════════════
-
-    # Tools that must execute sequentially (modify shared state / have side effects)
-    INTERCEPTED_TOOLS = frozenset({
-        "msf_auto_exploit", "install_tool", "list_missing_tools",
-        "install_all_missing", "check_tool_status",
-    })
-
-    def _build_base_system_prompt(self) -> str:
-        """Build the static portion of the system prompt (cache-friendly)."""
-        return """You are an expert penetration tester and red-team operator.
-You have access to a comprehensive set of security tools through the RedTeam Harness.
-
-## Response Format
-When you want to use ONE tool, respond with:
-{"tool_call": {"tool": "<tool_name>", "args": {"param": "value", ...}}}
-
-When you want to run MULTIPLE independent tools in parallel, respond with:
-{"tool_calls": [{"tool": "<tool_name_1>", "args": {...}}, {"tool": "<tool_name_2>", "args": {...}}, ...]}
-
-IMPORTANT: Use tool_calls (plural) whenever you need multiple tools that don't depend on each other's output.
-For example, scanning a target with nmap, nikto, and gobuster simultaneously:
-{"tool_calls": [{"tool": "nmap_scan", "args": {"target": "192.168.1.10"}}, {"tool": "nikto_scan", "args": {"target": "192.168.1.10"}}, {"tool": "gobuster_dir", "args": {"url": "http://192.168.1.10", "wordlist": "/usr/share/wordlists/dirb/common.txt"}}]}
-
-When providing a plan, respond with:
-{"plan": [{"step": 1, "tool": "nmap_scan", "description": "...", "target": "..."}]}
-
-When analyzing results, respond in plain text.
-When finished, state clearly that the engagement is complete.
-
-## Methodology
-1. ALWAYS plan before executing tools — generate a plan first
-2. Start with reconnaissance, then vulnerability assessment, then exploitation
-3. Enumerate thoroughly before attacking
-4. Document every finding with severity
-5. Chain discovered information into next steps
-6. If a tool fails, try alternative approaches
-7. NEVER repeat the exact same tool+args more than twice
-8. When you find vulnerabilities, assess and report
-9. Run independent tools in parallel to save time — use tool_calls array
-
-## Safety
-- Only attack targets within the authorized scope
-- Never scan public DNS (8.8.8.8, 1.1.1.1, etc.)
-- If uncertain about authorization, STOP
-
-## Output Format for Findings
-### Finding: [Title]
-- **Severity**: Critical/High/Medium/Low/Info
-- **Target**: [IP/URL]
-- **Description**: [What was found]
-- **Evidence**: [Proof/output]
-- **Remediation**: [How to fix]
-"""
-
-    def _build_dynamic_system_prompt(self, phase: str = "recon") -> str:
-        """
-        Build the dynamic portion: only inject installed tools relevant to the current phase.
-        Stable format (no timestamps) for KV-cache reuse.
-        """
-        prompt = self._system_prompt_base
-        prompt += f"\n## Current Engagement Phase: {phase.upper()}\n"
-
-        # Get installed tools filtered by phase
-        phase_cats = PHASE_TOOLS.get(phase, ["recon"])
-        installed = self.tools.get_installed_tools()
-        phase_tools = [t for t in installed if t.category in phase_cats]
-
-        if phase_tools:
-            prompt += "\n## Available Tools\n"
-            for tool in phase_tools:
-                prompt += f"- **{tool.name}** [{tool.category}]: {tool.description}\n"
-                if tool.parameters:
-                    params = []
-                    for pname, pinfo in tool.parameters.items():
-                        req = " (required)" if pinfo.get("required") else ""
-                        params.append(f"  `{pname}`: {pinfo.get('description', '')}{req}")
-                    prompt += "\n".join(params) + "\n"
-
-        # Also add "currently unavailable" note if useful
-        all_tools = self.tools.get_all_tools()
-        missing = [n for n, t in all_tools.items() if not t.installed and t.category in phase_cats]
-        if missing:
-            prompt += f"\n*Note: {len(missing)} tools in this category are not installed: {', '.join(missing[:10])}...*\n"
-
-        # Inject tool reliability hints (learned from previous runs)
-        reliability_hint = self.scorer.get_reliability_hint()
-        if reliability_hint:
-            prompt += reliability_hint
-
-        return prompt
-
-    def _build_memory_context(self, user_prompt: str) -> str:
-        """Query vector memory for relevant prior findings and return a context block."""
-        # Extract target IPs/domains from the user prompt
-        targets = set()
-        for ip in re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', user_prompt):
-            if not ip.startswith(('0.', '255.')):
-                targets.add(ip)
-        for domain in re.findall(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b', user_prompt):
-            if not any(x in domain for x in ['example.com', 'localhost']):
-                targets.add(domain)
-        if not targets:
-            return ""
-        # Query each target and merge
-        all_context = []
-        for t in sorted(targets)[:3]:  # Cap at 3 targets
-            block = self.memory.get_context_block(t)
-            if block:
-                all_context.append(block)
-        return "\n".join(all_context)
-
-    def _ingest_findings_to_memory(self, step_data: dict, session_id: str) -> None:
-        """Auto-ingest extracted findings into vector memory after each step."""
-        from core.findings import extract_findings  # noqa: local import to avoid circular
-        for r in step_data.get("results", []):
-            stdout = r.get("stdout", "")
-            if not stdout or len(stdout) < 20:
-                continue
-            tool_name = r.get("tool", "unknown")
-            tool_findings = extract_findings(tool_name, tool_name, stdout)
-            for f in tool_findings:
-                f["source_tool"] = tool_name
-                self.memory.ingest(f, session_id=session_id)
-        mem_stats = self.memory.get_stats()
-        if mem_stats["total_findings"] > 0:
-            logger.debug(f"Vector memory: {mem_stats['total_findings']} total findings stored")
-
-    # ═══════════════════════════════════════════════════════════════
-    # FEW-SHOT EXAMPLES (hardcoded successful engagement demos)
-    # ═══════════════════════════════════════════════════════════════
-
-    def _get_few_shot_messages(self, phase: str) -> List[Dict[str, str]]:
-        """Return 2-3 example messages demonstrating successful tool usage for this phase."""
-        examples = {
-            "recon": [
-                {"role": "user", "content": "Scan 192.168.1.0/24 for web servers"},
-                {"role": "assistant", "content": '{"tool_call": {"tool": "nmap_scan", "args": {"target": "192.168.1.0/24", "ports": "80,443,8080,8443", "scan_type": "-sS"}}}'},
-                {"role": "tool_result", "content": "[TOOL: nmap_scan] Exit code: 0\nStdout: Nmap scan report for 192.168.1.10\n80/tcp open http Apache httpd 2.4.41\n443/tcp open ssl/https\nNmap scan report for 192.168.1.20\n80/tcp open http nginx 1.18.0"},
-                {"role": "assistant", "content": "Found 2 hosts with web services:\n- 192.168.1.10: Apache 2.4.41 (port 80), HTTPS (443)\n- 192.168.1.20: nginx 1.18.0 (port 80)\n\nNext I'll run service version detection on these hosts."},
-            ],
-            "web": [
-                {"role": "user", "content": "Test http://192.168.1.10 for web vulnerabilities"},
-                {"role": "assistant", "content": '{"tool_call": {"tool": "nikto_scan", "args": {"target": "http://192.168.1.10", "port": "80"}}}'},
-                {"role": "tool_result", "content": "[TOOL: nikto_scan] Exit code: 0\nStdout: + /phpinfo.php: PHP info page\n+ /admin/: Admin login page\n+ Server: Apache/2.4.41 (Ubuntu)"},
-                {"role": "assistant", "content": "Nikto found:\n- INFO: PHP info page at /phpinfo.php\n- MEDIUM: Admin login at /admin/\n- INFO: Server header leaks Apache version\n\nNext I'll enumerate directories with gobuster."},
-            ],
-        }
-        return examples.get(phase, examples["recon"])
-
-    # ═══════════════════════════════════════════════════════════════
-    # EVENT SYSTEM
+    # PROMPT BUILDING
+    # Delegate to core.prompt_builder (candidate #2).
     # ═══════════════════════════════════════════════════════════════
 
     def on(self, event: str, callback: Callable):
@@ -316,11 +161,11 @@ When finished, state clearly that the engagement is complete.
         self._current_session = session_id
 
         # Start with recon phase and dynamic prompt
-        system_prompt = self._build_dynamic_system_prompt("recon")
+        system_prompt = self.prompts.dynamic("recon")
         self.sessions.add_message(session_id, "system", system_prompt)
 
         # Inject few-shot examples
-        for msg in self._get_few_shot_messages("recon"):
+        for msg in self.prompts.few_shot_messages("recon"):
             self.sessions.add_message(session_id, msg["role"], msg["content"])
 
         logger.info(f"New session created: {session_id}")
@@ -404,7 +249,7 @@ When finished, state clearly that the engagement is complete.
         self.sessions.add_message(sid, "user", user_prompt)
 
         # ── Vector Memory: inject prior findings for targets in prompt ──
-        memory_context = self._build_memory_context(user_prompt)
+        memory_context = self.prompts.memory_context(user_prompt)
         if memory_context:
             self.sessions.add_message(sid, "system", memory_context)
 
@@ -526,7 +371,7 @@ When finished, state clearly that the engagement is complete.
                 "and target. Only include tools that are available. Be specific and actionable."
             )
             messages = [
-                {"role": "system", "content": self._build_dynamic_system_prompt("recon")},
+                {"role": "system", "content": self.prompts.dynamic("recon")},
                 {"role": "user", "content": plan_prompt},
             ]
 
@@ -660,7 +505,7 @@ When finished, state clearly that the engagement is complete.
 
                 self._emit("on_tool_start", {"session_id": session_id, "tool": tool_name, "args": tool_args})
 
-                if tool_name in self.INTERCEPTED_TOOLS:
+                if tool_name in PB_INTERCEPTED_TOOLS:
                     intercepted_tcs.append((tc, tool_name, tool_args, i))
                 else:
                     parallel_tcs.append((tc, tool_name, tool_args, i))
@@ -675,18 +520,7 @@ When finished, state clearly that the engagement is complete.
             intercepted_results = []  # [(tc, result, elapsed, orig_idx)]
             for tc, tool_name, tool_args, orig_idx in intercepted_tcs:
                 start_time = time.time()
-                if tool_name == "msf_auto_exploit":
-                    result = self._intercept_msf_auto_exploit(tool_args)
-                elif tool_name == "install_tool":
-                    result = self._intercept_install_tool(tool_args)
-                elif tool_name == "list_missing_tools":
-                    result = self._intercept_list_missing()
-                elif tool_name == "install_all_missing":
-                    result = self._intercept_install_all(tool_args)
-                elif tool_name == "check_tool_status":
-                    result = self._intercept_check_status(tool_args)
-                else:
-                    result = self.tools.execute(tool_name, tool_args)
+                result = self.interceptor.dispatch(tool_name, tool_args)
                 elapsed = time.time() - start_time
                 if "command" not in result:
                     result["command"] = tool_name
@@ -751,7 +585,7 @@ When finished, state clearly that the engagement is complete.
                 self._emit("on_tool_complete", {"session_id": session_id, "result": tool_result})
 
                 # ── Auto-ingest findings into vector memory ──
-                self._ingest_findings_to_memory({"results": [tool_result]}, session_id)
+                self.prompts.ingest_findings({"results": [tool_result]}, session_id)
 
                 # ── Record outcome for tool scoring ──
                 self.scorer.record(
@@ -875,7 +709,7 @@ When finished, state clearly that the engagement is complete.
             )
             # Phase 3: Trim context before reflection LLM call
             reflection_messages = [
-                {"role": "system", "content": self._build_dynamic_system_prompt("postex")},
+                {"role": "system", "content": self.prompts.dynamic("postex")},
                 {"role": "user", "content": reflection_prompt},
             ]
             trimmed = self.context.trim(reflection_messages)
@@ -905,14 +739,14 @@ When finished, state clearly that the engagement is complete.
                 break
 
         if "exploit" in tools_run and "## Current Engagement Phase: EXPLOIT" not in current_system:
-            new_prompt = self._build_dynamic_system_prompt("exploit")
+            new_prompt = self.prompts.dynamic("exploit")
             self.sessions.add_message(session_id, "system", new_prompt)
             logger.info("Phase transition: → EXPLOIT")
 
         if any(t in tools_run for t in ["crackmapexec_exec", "impacket_tools", "mimikatz_dump",
                                          "bloodhound_analyze", "evil_winrm"]):
             if "## Current Engagement Phase: POSTEX" not in current_system:
-                new_prompt = self._build_dynamic_system_prompt("postex")
+                new_prompt = self.prompts.dynamic("postex")
                 self.sessions.add_message(session_id, "system", new_prompt)
                 logger.info("Phase transition: → POSTEX")
 
@@ -1013,18 +847,9 @@ When finished, state clearly that the engagement is complete.
             if not findings and not tool_log:
                 return ""
 
-            # Build findings summary
-            findings_text = ""
-            for f in findings[-20:]:  # Last 20 findings
-                findings_text += f"- [{f.get('severity', 'Info')}] {f.get('title', '')}: {f.get('description', '')}\n"
-
-            report_prompt = (
-                f"You conducted a penetration test. Generate a structured markdown report.\n\n"
-                f"## Tools Executed\n{', '.join(set(t['tool'] for t in tool_log[-50:]))}\n\n"
-                f"## Findings\n{sanitize_tool_output(findings_text or 'No findings recorded.', max_len=4000)}\n\n"
-                f"Draft a professional penetration test report with sections: "
-                f"Executive Summary, Methodology, Findings, Remediation, Conclusion."
-            )
+            # Build findings summary — prompt built by core.report (single writer)
+            from core.report import report_prompt as build_report_prompt
+            report_prompt = build_report_prompt(findings, tool_log)
             self._emit("on_llm_thinking", {"session_id": session_id, "step": "report"})
             report = self.llm.chat([{"role": "user", "content": report_prompt}],
                                    max_tokens=2048, temperature=0.3)
@@ -1416,61 +1241,24 @@ When finished, state clearly that the engagement is complete.
             return None
 
     def _build_chain_report(self, chain: Dict[str, Any]) -> str:
-        """Build a combined markdown report for a completed workflow chain."""
-        lines = [
-            f"# Chained Workflow Report — {chain['chain_id']}",
-            "",
-            f"- **Status**: {chain['status']}",
-            f"- **Links executed**: {chain.get('links_count', len(chain.get('links', [])))}",
-            f"- **Total findings**: {chain.get('findings_count', len(chain.get('findings', [])))}",
-            "",
-            "## Chain Objectives",
-            "",
-        ]
-        for i, link in enumerate(chain.get("links", []), 1):
-            ex = link.get("execution") or {}
-            lines.append(f"{i}. **{link.get('objective', '?')}** → "
-                         f"`{ex.get('workflow', '?')}` "
-                         f"[{ex.get('status', link.get('status', '?'))}] "
-                         f"({ex.get('completed_steps', 0)}/{ex.get('total_steps', 0)} steps)")
-            if link.get("template_improvement"):
-                ti = link["template_improvement"]
-                if not ti.get("error") and ti.get("applied"):
-                    lines.append(f"    ↳ template improved: {len(ti.get('applied_changes', {}).get('removed', []))} removed, "
-                                 f"{len(ti.get('applied_changes', {}).get('modified', []))} modified, "
-                                 f"{len(ti.get('applied_changes', {}).get('added', []))} added")
-        if chain.get("loop_guard"):
-            lines.append(f"\n*Chain stopped by loop guard: '{chain['loop_guard']}' "
-                         f"was already executed.*")
+        """Build a combined markdown report for a completed workflow chain.
+        Formatting delegated to core.report (single report writer)."""
+        from core.report import chain_report
 
-        findings = chain.get("findings", [])
-        if findings:
-            counts = {}
-            for f in findings:
-                sev = str(f.get("severity", "info")).lower()
-                counts[sev] = counts.get(sev, 0) + 1
-            lines.append("")
-            lines.append("## Findings Summary")
-            lines.append("")
-            for sev in ("critical", "high", "medium", "low", "info"):
-                if counts.get(sev):
-                    lines.append(f"- **{sev.upper()}**: {counts[sev]}")
-            lines.append("")
-            lines.append("## Findings")
-            lines.append("")
-            for f in findings:
-                lines.append(f"- [{str(f.get('severity', 'info')).upper()}] "
-                             f"{f.get('title', '?')} — {f.get('description', '')}")
-        if chain.get("correlation") and chain["correlation"].get("paths"):
-            lines.append("")
-            lines.append("## Correlated Attack Paths")
-            lines.append("")
-            lines.append(self.correlator.paths_to_markdown(
-                chain["correlation"]["paths"]))
-        lines.append("")
-        lines.append("---")
-        lines.append("*Generated automatically by RedTeam Harness.*")
-        return "\n".join(lines)
+        corr = chain.get("correlation") or {}
+        corr_paths = corr.get("paths", [])
+        paths_md = self.correlator.paths_to_markdown(corr_paths) if corr_paths else ""
+        return chain_report(
+            chain_id=chain["chain_id"],
+            status=chain["status"],
+            links=chain.get("links", []),
+            links_count=chain.get("links_count"),
+            findings=chain.get("findings", []),
+            findings_count=chain.get("findings_count"),
+            loop_guard=chain.get("loop_guard", ""),
+            correlation_paths=corr_paths,
+            paths_markdown=paths_md,
+        )
 
     # ═══════════════════════════════════════════════════════════════
     # PHASE 6: CONCURRENT MULTI-TARGET EXECUTION
@@ -1868,110 +1656,9 @@ When finished, state clearly that the engagement is complete.
 
     # ═══════════════════════════════════════════════════════════════
     # DIRECT TOOL EXECUTION
+    # Intercepted Python-level tools (installer + msf) are handled by
+    # core.tool_interceptor.ToolInterceptor (candidate #2).
     # ═══════════════════════════════════════════════════════════════
-
-    def _intercept_install_tool(self, args: dict) -> Dict[str, Any]:
-        """Intercept install_tool calls — route to the ToolInstaller."""
-        tool_name = args.get("tool_name", "")
-        if not tool_name:
-            return {"stdout": "", "stderr": "No tool_name specified", "exit_code": 1, "duration": 0, "command": "install_tool(?)"}
-        result = self.installer.install_tool(tool_name)
-        status = result.get("status", "error")
-        msg = result.get("message", "")
-        method = result.get("method", "")
-        path = result.get("path", "")
-        stdout = f"Status: {status}\nMethod: {method}\nMessage: {msg}"
-        if path:
-            stdout += f"\nPath: {path}"
-        # Re-detect so the registry picks up the new tool
-        self.tools._detect_installed()
-        ret = {"stdout": stdout, "stderr": "", "exit_code": 0 if status in ("installed", "already_installed") else 1, "duration": 0, "command": f"install_tool({tool_name})"}
-        return ret
-
-    def _intercept_list_missing(self) -> Dict[str, Any]:
-        """Intercept list_missing_tools — return all tools not yet installed."""
-        missing = self.installer.list_missing_tools()
-        installable = [m for m in missing if m["installable"]]
-        lines = [f"Missing tools: {len(missing)} total, {len(installable)} installable\n"]
-        for m in missing[:30]:
-            flag = "✓" if m["installable"] else "✗"
-            lines.append(f"  {flag} {m['binary']} [{m['category']}] — {m['install_method']}")
-        if len(missing) > 30:
-            lines.append(f"  ... and {len(missing) - 30} more")
-        return {"stdout": "\n".join(lines), "stderr": "", "exit_code": 0, "duration": 0, "command": "list_missing_tools()"}
-
-    def _intercept_install_all(self, args: dict) -> Dict[str, Any]:
-        """Intercept install_all_missing — batch install up to N tools (capped at 50)."""
-        max_tools = min(int(args.get("max_tools", 20)), 50)
-        result = self.installer.install_all_missing(max_tools=max_tools)
-        lines = [
-            f"Batch install complete (max {max_tools}):",
-            f"  Installed: {result['total_installed']}",
-            f"  Failed: {result['total_failed']}",
-            f"  Skipped: {result['total_skipped']}",
-        ]
-        for item in result["details"]["installed"]:
-            lines.append(f"  ✓ {item['tool']} ({item.get('method', '?')})")
-        for item in result["details"]["failed"][:10]:
-            lines.append(f"  ✗ {item['tool']}: {item.get('error', '')[:80]}")
-        self.tools._detect_installed()
-        return {"stdout": "\n".join(lines), "stderr": "", "exit_code": 0, "duration": 0, "command": f"install_all_missing(max={max_tools})"}
-
-    def _intercept_check_status(self, args: dict) -> Dict[str, Any]:
-        """Intercept check_tool_status — return install status for a tool."""
-        tool_name = args.get("tool_name", "")
-        if not tool_name:
-            return {"stdout": "", "stderr": "No tool_name specified", "exit_code": 1, "duration": 0, "command": "check_tool_status(?)"}
-        status = self.installer.check_tool_status(tool_name)
-        lines = [
-            f"Tool: {status['tool_name']}",
-            f"Binary: {status['binary']}",
-            f"Installed: {status['installed']}",
-            f"Path: {status['path'] or 'N/A'}",
-            f"Installable: {status['installable']}",
-            f"Install method: {status['install_method'] or 'N/A'}",
-            f"Category: {status['category']}",
-            f"Description: {status['description']}",
-        ]
-        return {"stdout": "\n".join(lines), "stderr": "", "exit_code": 0, "duration": 0, "command": f"check_tool_status({tool_name})"}
-
-    def _intercept_msf_auto_exploit(self, args: dict) -> Dict[str, Any]:
-        """Run the full MSF auto-exploit pipeline (Python-level, not shell).
-        Returns a normalized tool result dict compatible with the orchestrator loop."""
-        from core.msf_generator import MetasploitScriptGenerator
-        msf = MetasploitScriptGenerator(llm=self.llm, tools=self.tools, config=self.config)
-        result = msf.auto_exploit(
-            nmap_output=args.get("nmap_output", ""),
-            lhost=args.get("lhost", "0.0.0.0"),
-            lport=int(args.get("lport", 4444)),
-            payload=args.get("payload", ""),
-            objective=args.get("objective", ""),
-            execute=bool(args.get("execute", False)),
-        )
-        # Normalize to orchestrator tool-result format
-        stdout_lines = []
-        if result.get("services"):
-            stdout_lines.append(f"Parsed {len(result['services'])} services")
-        if result.get("exploits_found"):
-            stdout_lines.append(f"Found {result['exploits_found']} matching exploits")
-        if result.get("validation"):
-            v = result["validation"]
-            stdout_lines.append(f"Validation: {'PASS' if v.get('valid') else 'WARN'} — {v.get('warnings', [])}")
-        if result.get("rc_path"):
-            stdout_lines.append(f"RC script saved: {result['rc_path']}")
-        if result.get("execution"):
-            ex = result["execution"]
-            stdout_lines.append(f"Execution: exit_code={ex.get('exit_code')}, duration={ex.get('duration')}s")
-            if ex.get("stdout"):
-                stdout_lines.append(f"MSF Output (first 2000 chars):\n{ex['stdout'][:2000]}")
-        if result.get("error"):
-            return {"stdout": "", "stderr": result["error"], "exit_code": -1, "duration": 0}
-        return {
-            "stdout": "\n".join(stdout_lines) + (f"\n\nRC Content:\n{result.get('rc_content', '')[:3000]}" if result.get('rc_content') else ""),
-            "stderr": "",
-            "exit_code": 0,
-            "duration": 0,
-        }
 
     def execute_direct(self, tool_name: str, args: dict, session_id: Optional[str] = None) -> Dict[str, Any]:
         """Execute a tool directly without LLM reasoning."""
@@ -1981,8 +1668,11 @@ When finished, state clearly that the engagement is complete.
             return {"status": "blocked", "reason": reason}
 
         # Intercept Python-level tools that bypass the shell command builder
-        if tool_name == "msf_auto_exploit":
-            return self._intercept_msf_auto_exploit(args)
+        if tool_name in PB_INTERCEPTED_TOOLS:
+            result = self.interceptor.dispatch(tool_name, args)
+            if sid:
+                self.sessions.log_command(sid, tool_name, args, result)
+            return result
 
         result = self.tools.execute(tool_name, args)
         if sid:

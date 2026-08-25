@@ -88,8 +88,9 @@ def test_graph_structure():
 # ═══════════════════════════════════════════════════════════════
 def test_endpoint_wiring():
     print("\n── endpoint wiring ──")
+    # v5.7: correlation graph + tasks/all REST routes live in the campaigns blueprint.
     srv = open(os.path.join(os.path.dirname(__file__), "..",
-                            "dashboard", "server.py")).read()
+                            "dashboard", "blueprints", "campaigns.py")).read()
     orch = open(os.path.join(os.path.dirname(__file__), "..",
                              "core", "orchestrator.py")).read()
     # Route exists

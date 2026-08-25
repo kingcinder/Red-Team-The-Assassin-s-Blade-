@@ -21,8 +21,6 @@ Usage:
     status = agent.get_status()
 """
 import os
-import re
-import json
 import time
 import logging
 import threading
@@ -631,8 +629,9 @@ class AutonomousAgent:
         new_phase = tp.advance_phase()
         if not new_phase:
             return
-        # Inject phase-transition system message
-        phase_prompt = self.orch._build_dynamic_system_prompt(new_phase)
+        # Inject phase-transition system message (candidate #2: orchestrator
+        # delegates prompt building to core.prompt_builder.PromptBuilder)
+        phase_prompt = self.orch.prompts.dynamic(new_phase)
         self.orch.sessions.add_message(
             tp.session_id, "system",
             f"[AUTONOMOUS] Phase transition → {new_phase.upper()}\n\n{phase_prompt}"
@@ -988,8 +987,8 @@ class AutonomousAgent:
                 "targets": targets,
             }
             path = os.path.join(replay_dir, f"{campaign_id}.json")
-            with open(path, "w") as f:
-                json.dump(bundle, f, indent=2, default=str)
+            from core.state_store import atomic_write_json
+            atomic_write_json(path, bundle)
             self._replay_path = path
             logger.info(f"Campaign replay bundle saved: {path}")
             self._emit("on_replay_saved", {"path": path, "campaign_id": campaign_id})
@@ -1026,31 +1025,15 @@ class AutonomousAgent:
                     ", ".join(f"{p}={c}" for p, c in phase_summary.items() if c > 0)
                 )
 
-            findings_text = ""
-            for f in all_findings[:50]:  # Cap at 50 findings for report
-                sev = f.get("severity", "info").upper()
-                tool = f.get("tool", "unknown")
-                target = f.get("target", "unknown")
-                summary = f.get("summary", "")[:120]
-                findings_text += f"- [{sev}] {target}: {tool} — {summary}\n"
-
-            # Generate via LLM
-            report_prompt = (
-                f"Generate a comprehensive penetration test report for an autonomous engagement.\n\n"
-                f"## Objective\n{self._objective}\n\n"
-                f"## Duration\n{self._start_time} → {datetime.now().isoformat()}\n\n"
-                f"## Targets ({len(self._targets)})\n" +
-                "\n".join(target_summaries) + "\n\n"
-                f"## Total Steps: {self._total_steps}\n"
-                f"## Total Findings: {len(all_findings)}\n\n"
-                f"## Key Findings\n{findings_text}\n\n"
-                f"Write a professional penetration test report with:\n"
-                f"1. Executive Summary\n"
-                f"2. Methodology\n"
-                f"3. Findings by Target\n"
-                f"4. Kill Chain Coverage\n"
-                f"5. Remediation Recommendations\n"
-                f"6. Conclusion"
+            # Generate via LLM — prompt built by core.report (single writer)
+            from core.report import autonomous_report_prompt
+            report_prompt = autonomous_report_prompt(
+                objective=self._objective,
+                duration=f"{self._start_time} → {datetime.now().isoformat()}",
+                targets=self._targets,
+                target_summaries=target_summaries,
+                total_steps=self._total_steps,
+                findings=all_findings,
             )
 
             try:
@@ -1105,71 +1088,25 @@ class AutonomousAgent:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         report_path = os.path.join(report_dir, f"autonomous_report_{timestamp}.md")
 
-        # Count by severity
-        severity_counts = {"critical": 0, "high": 0, "medium": 0, "info": 0}
-        for f in all_findings:
-            sev = f.get("severity", "info").lower()
-            severity_counts[sev] = severity_counts.get(sev, 0) + 1
-
-        # Build markdown report
-        lines = [
-            f"# Autonomous Engagement Report",
-            f"",
-            f"**Generated**: {datetime.now().isoformat()}",
-            f"**Objective**: {self._objective}",
-            f"**Duration**: {self._start_time} → {datetime.now().isoformat()}",
-            f"**State**: {self.state.value}",
-            f"",
-            f"## Summary",
-            f"",
-            f"| Metric | Value |",
-            f"|--------|-------|",
-            f"| Targets | {len(self._targets)} |",
-            f"| Total Steps | {self._total_steps} |",
-            f"| Total Findings | {len(all_findings)} |",
-            f"| Critical | {severity_counts.get('critical', 0)} |",
-            f"| High | {severity_counts.get('high', 0)} |",
-            f"| Medium | {severity_counts.get('medium', 0)} |",
-            f"| Info | {severity_counts.get('info', 0)} |",
-            f"",
-            f"## Targets",
-            f"",
-        ] + [s for s in target_summaries] + [
-            f"",
-            f"## Findings",
-            f"",
-        ]
-
-        # Group findings by target
-        by_target = {}
-        for f in all_findings:
-            t = f.get("target", "unknown")
-            if t not in by_target:
-                by_target[t] = []
-            by_target[t].append(f)
-
-        for target, findings in by_target.items():
-            lines.append(f"### {target}")
-            lines.append("")
-            for f in findings:
-                sev = f.get("severity", "info").upper()
-                tool = f.get("tool", "unknown")
-                phase = f.get("phase", "unknown")
-                summary = f.get("summary", "No summary")[:200]
-                lines.append(f"- **[{sev}]** `{tool}` ({phase}): {summary}")
-            lines.append("")
-
-        lines.extend([
-            f"## Kill Chain Coverage",
-            f"",
-        ])
+        # Build markdown report — formatting delegated to core.report
+        from core.report import autonomous_report
+        kill_chain_counts = {}
         for target, tp in self._target_phases.items():
-            for phase in KILL_CHAIN:
-                count = len(tp.phase_findings.get(phase, []))
-                if count > 0:
-                    lines.append(f"- **{target}** → {phase.upper()}: {count} findings")
-
-        report = "\n".join(lines)
+            kill_chain_counts[target] = {
+                phase: len(tp.phase_findings.get(phase, []))
+                for phase in KILL_CHAIN
+            }
+        report = autonomous_report(
+            objective=self._objective,
+            generated_at=datetime.now().isoformat(),
+            duration=f"{self._start_time} → {datetime.now().isoformat()}",
+            state=self.state.value,
+            targets_count=len(self._targets),
+            total_steps=self._total_steps,
+            findings=all_findings,
+            target_summaries=target_summaries,
+            kill_chain_counts=kill_chain_counts,
+        )
         with open(report_path, "w") as f:
             f.write(report)
         self._report_path = report_path

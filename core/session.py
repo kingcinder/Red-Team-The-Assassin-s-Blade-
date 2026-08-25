@@ -3,11 +3,12 @@ RedTeam Harness — Session Manager
 Manages engagement sessions, conversation history, and state.
 """
 import os
-import json
 import uuid
 import logging
 from datetime import datetime
 from typing import Optional, Dict, List
+
+from core.state_store import JsonFileStore
 
 logger = logging.getLogger("redteam.session")
 
@@ -17,7 +18,7 @@ class SessionManager:
 
     def __init__(self, session_dir: str = "./sessions"):
         self.session_dir = session_dir
-        os.makedirs(session_dir, exist_ok=True)
+        self._store = JsonFileStore(session_dir)  # atomic, crash-safe persistence
         self._sessions: Dict[str, Dict] = {}
 
     def create(self, name: Optional[str] = None) -> str:
@@ -89,33 +90,27 @@ class SessionManager:
         }
 
     def list_sessions(self) -> List[dict]:
-        """List all sessions."""
+        """List all sessions (delegates key scan to StateStore)."""
         sessions = []
-        for filename in os.listdir(self.session_dir):
-            if filename.endswith(".json"):
-                sid = filename.replace(".json", "")
-                try:
-                    summary = self.get_summary(sid)
-                    sessions.append(summary)
-                except Exception:
-                    continue
+        for sid in self._store.list_keys():
+            try:
+                sessions.append(self.get_summary(sid))
+            except Exception:
+                continue
         return sorted(sessions, key=lambda s: s["created"], reverse=True)
 
     def _save(self, session_id: str):
-        """Save session to disk."""
-        path = os.path.join(self.session_dir, f"{session_id}.json")
-        with open(path, "w") as f:
-            json.dump(self._sessions.get(session_id, {}), f, indent=2)
+        """Save session to disk (atomic, via StateStore)."""
+        self._store.save(session_id, self._sessions.get(session_id, {}))
 
     def _load(self, session_id: str) -> dict:
-        """Load session from disk or memory."""
+        """Load session from disk or memory (corruption-tolerant)."""
         if session_id in self._sessions:
             return self._sessions[session_id]
 
-        path = os.path.join(self.session_dir, f"{session_id}.json")
-        if os.path.exists(path):
-            with open(path) as f:
-                self._sessions[session_id] = json.load(f)
+        data = self._store.load(session_id)
+        if data is not None:
+            self._sessions[session_id] = data
             return self._sessions[session_id]
 
         return {"id": session_id, "messages": [], "tool_log": [], "findings": [], "state": "unknown"}

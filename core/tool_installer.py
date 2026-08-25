@@ -16,7 +16,6 @@ import tempfile
 import urllib.request
 import urllib.error
 from typing import Dict, Any, List
-from datetime import datetime
 
 logger = logging.getLogger("redteam.installer")
 

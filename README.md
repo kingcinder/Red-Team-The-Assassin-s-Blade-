@@ -212,6 +212,19 @@ Both support: streaming (SSE chunks), JSON schema enforcement (GBNF grammar), an
 
 ---
 
+## 📚 Documentation
+
+| Doc | What it covers |
+|-----|----------------|
+| [SECURITY.md](SECURITY.md) | Disclosure policy, threat model, hardening inventory, safe-usage scope |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, test conventions, code standards, PR process |
+| [RELEASING.md](RELEASING.md) | Signed-release checklist: GPG signing, SHA256SUMS, tags, verification |
+| [docs/AIRGAP.md](docs/AIRGAP.md) | Full air-gap story: wheels bundle, tool installer caches, embedded KB |
+| [API.md](API.md) | All REST endpoints + WebSocket handlers |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Complete development timeline & architecture decisions |
+
+---
+
 ## 📜 License
 
 For authorized security testing only. Users are responsible for compliance with all applicable laws.
