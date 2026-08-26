@@ -1,0 +1,2127 @@
+{
+  "_meta": {
+    "description": "RedTeam Harness air-gapped provisioning manifest",
+    "version": "1.0.0",
+    "generated_by": "scripts/generate_manifest.py",
+    "purpose": "Single source of truth for all Python dependencies and Kali tools"
+  },
+  "python_dependencies": {
+    "summary": {
+      "requirements_txt_packages": 9,
+      "wheels_bundle_packages": 28,
+      "third_party_imports": 6,
+      "wheel_coverage_ok": 6,
+      "wheel_coverage_missing": 3,
+      "all_wheels_present": false
+    },
+    "packages": [
+      {
+        "package": "flask",
+        "requirement": "flask>=3.0",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": true,
+        "wheel_version": "3.1.3",
+        "wheel_filename": "flask-3.1.3-py3-none-any.whl",
+        "imported_in_code": true,
+        "status": "ok"
+      },
+      {
+        "package": "flask-socketio",
+        "requirement": "flask-socketio>=5.3",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": false,
+        "wheel_version": null,
+        "wheel_filename": null,
+        "imported_in_code": true,
+        "status": "MISSING_FROM_WHEELS"
+      },
+      {
+        "package": "gevent",
+        "requirement": "gevent>=23.9",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": true,
+        "wheel_version": "26.8.0",
+        "wheel_filename": "gevent-26.8.0-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "imported_in_code": false,
+        "status": "ok"
+      },
+      {
+        "package": "gevent-websocket",
+        "requirement": "gevent-websocket>=0.10",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": false,
+        "wheel_version": null,
+        "wheel_filename": null,
+        "imported_in_code": false,
+        "status": "MISSING_FROM_WHEELS"
+      },
+      {
+        "package": "jinja2",
+        "requirement": "jinja2>=3.1",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": true,
+        "wheel_version": "3.1.6",
+        "wheel_filename": "jinja2-3.1.6-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "ok"
+      },
+      {
+        "package": "psutil",
+        "requirement": "psutil>=5.9",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": true,
+        "wheel_version": "7.2.2",
+        "wheel_filename": "psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl",
+        "imported_in_code": false,
+        "status": "ok"
+      },
+      {
+        "package": "python-dateutil",
+        "requirement": "python-dateutil>=2.8",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": false,
+        "wheel_version": null,
+        "wheel_filename": null,
+        "imported_in_code": false,
+        "status": "MISSING_FROM_WHEELS"
+      },
+      {
+        "package": "pyyaml",
+        "requirement": "pyyaml>=6.0",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": true,
+        "wheel_version": "6.0.3",
+        "wheel_filename": "pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "imported_in_code": false,
+        "status": "ok"
+      },
+      {
+        "package": "requests",
+        "requirement": "requests>=2.31",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": true,
+        "wheel_version": "2.34.2",
+        "wheel_filename": "requests-2.34.2-py3-none-any.whl",
+        "imported_in_code": true,
+        "status": "ok"
+      },
+      {
+        "package": "bidict",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "0.24.0",
+        "wheel_filename": "bidict-0.24.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "blinker",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "1.9.0",
+        "wheel_filename": "blinker-1.9.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "certifi",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "2026.7.22",
+        "wheel_filename": "certifi-2026.7.22-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "charset_normalizer",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "3.5.1",
+        "wheel_filename": "charset_normalizer-3.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "click",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "8.4.2",
+        "wheel_filename": "click-8.4.2-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "flask_socketio",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "5.6.1",
+        "wheel_filename": "flask_socketio-5.6.1-py3-none-any.whl",
+        "imported_in_code": true,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "gevent_websocket",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "0.10.1",
+        "wheel_filename": "gevent_websocket-0.10.1-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "greenlet",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "3.5.5",
+        "wheel_filename": "greenlet-3.5.5-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "h11",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "0.16.0",
+        "wheel_filename": "h11-0.16.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "idna",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "3.19",
+        "wheel_filename": "idna-3.19-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "itsdangerous",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "2.2.0",
+        "wheel_filename": "itsdangerous-2.2.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "markupsafe",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "3.0.3",
+        "wheel_filename": "markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "python_dateutil",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "2.9.0.post0",
+        "wheel_filename": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "python_engineio",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "4.13.5",
+        "wheel_filename": "python_engineio-4.13.5-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "python_socketio",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "5.16.4",
+        "wheel_filename": "python_socketio-5.16.4-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "simple_websocket",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "1.1.0",
+        "wheel_filename": "simple_websocket-1.1.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "six",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "1.17.0",
+        "wheel_filename": "six-1.17.0-py2.py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "urllib3",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "2.7.0",
+        "wheel_filename": "urllib3-2.7.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "werkzeug",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "3.1.8",
+        "wheel_filename": "werkzeug-3.1.8-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "wsproto",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "1.3.2",
+        "wheel_filename": "wsproto-1.3.2-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "zope_event",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "6.2",
+        "wheel_filename": "zope_event-6.2-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "zope_interface",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "8.6",
+        "wheel_filename": "zope_interface-8.6-cp312-cp312-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      }
+    ]
+  },
+  "kali_tools": {
+    "summary": {
+      "total_tracked": 129,
+      "installed_on_host": 96,
+      "missing_from_host": 33,
+      "auto_installable": 16,
+      "manual_install_required": 17
+    },
+    "tools": [
+      {
+        "binary": "ab",
+        "tool_name": "ab_bench",
+        "category": "stress",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "aircrack-ng",
+        "tool_name": "aircrack_crack",
+        "category": "wireless",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "aircrack-ng",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "aireplay-ng",
+        "tool_name": "aireplay_attack",
+        "category": "wireless",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "airodump-ng",
+        "tool_name": "airodump_capture",
+        "category": "wireless",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "amass",
+        "tool_name": "amass_enum",
+        "category": "recon",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "owasp-amass/amass/v4",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "apktool",
+        "tool_name": "apktool_decompile",
+        "category": "reversing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "apktool",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "nmap",
+        "tool_name": "banner_grab",
+        "category": "recon",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "beef-xss",
+        "tool_name": "beef_hook",
+        "category": "social",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "bettercap",
+        "tool_name": "bettercap_mitm",
+        "category": "wireless",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "github_release",
+        "install_package": "bettercap/bettercap",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "binwalk",
+        "tool_name": "binwalk_analyze",
+        "category": "forensics",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "binwalk",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "bloodhound",
+        "tool_name": "bloodhound_analyze",
+        "category": "postex",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "bulk_extractor",
+        "tool_name": "bulk_extractor",
+        "category": "forensics",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "bulk-extractor",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "burpsuite",
+        "tool_name": "burpsuite_proxy",
+        "category": "web",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "certipy",
+        "tool_name": "certipy_ad",
+        "category": "postex",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "certipy-ad",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "cewl",
+        "tool_name": "cewl_gen",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "cewl",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "check_tool_status",
+        "tool_name": "check_tool_status",
+        "category": "utility",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "chisel",
+        "tool_name": "chisel_tunnel",
+        "category": "exploit",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "jpillora/chisel",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "chntpw",
+        "tool_name": "chntpw_dump",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "chntpw",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "crackmapexec",
+        "tool_name": "crackmapexec_exec",
+        "category": "exploit",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "crackmapexec",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "crunch",
+        "tool_name": "crunch_gen",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "crunch",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "curl",
+        "tool_name": "curl_request",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "dcfldd",
+        "tool_name": "dcfldd_image",
+        "category": "forensics",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "dcfldd",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "ddrescue",
+        "tool_name": "ddrescue_image",
+        "category": "forensics",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "dex2jar",
+        "tool_name": "dex2jar_convert",
+        "category": "reversing",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "dig",
+        "tool_name": "dig_dns",
+        "category": "osint",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "dirb",
+        "tool_name": "dirb_scan",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "dirb",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "dnsenum",
+        "tool_name": "dns_enum",
+        "category": "osint",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "dnswalk",
+        "tool_name": "dnswalk_enum",
+        "category": "recon",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "dnswalk",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "dnsx",
+        "tool_name": "dnsx_probe",
+        "category": "recon",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "projectdiscovery/dnsx/cmd/dnsx",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "dsniff",
+        "tool_name": "dsniff_suite",
+        "category": "sniffing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "dsniff",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "enum4linux",
+        "tool_name": "enum4linux_enum",
+        "category": "recon",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "enum4linux",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "ettercap",
+        "tool_name": "ettercap_mitm",
+        "category": "sniffing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "ettercap-text-only",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "evil-winrm",
+        "tool_name": "evil_winrm",
+        "category": "exploit",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "evil-winrm",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "exiftool",
+        "tool_name": "exiftool_osint",
+        "category": "osint",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "libimage-exiftool-perl",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "fcrackzip",
+        "tool_name": "fcrackzip_crack",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "fcrackzip",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "feroxbuster",
+        "tool_name": "feroxbuster_scan",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "github_release",
+        "install_package": "epi052/feroxbuster",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "ffuf",
+        "tool_name": "ffuf_fuzz",
+        "category": "web",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "ffuf/ffuf/v2",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "flashrom",
+        "tool_name": "flashrom_flash",
+        "category": "hardware",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "foremost",
+        "tool_name": "foremost_carve",
+        "category": "forensics",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "foremost",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "gau",
+        "tool_name": "gau_fetch",
+        "category": "web",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "lc/gau/v2/cmd/gau",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "gdb",
+        "tool_name": "gdb_debug",
+        "category": "reversing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "gdb",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "analyzeHeadless",
+        "tool_name": "ghidra_headless",
+        "category": "reversing",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "gobuster",
+        "tool_name": "gobuster_dir",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "gobuster",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "gophish",
+        "tool_name": "gophish_setup",
+        "category": "social",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "gospider",
+        "tool_name": "gospider_crawl",
+        "category": "web",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "jaeles-project/gospider",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "grype",
+        "tool_name": "grype_scan",
+        "category": "vuln",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "shell_script",
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "hakrawler",
+        "tool_name": "hakrawler_crawl",
+        "category": "web",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "hakluke/hakrawler",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "hashcat",
+        "tool_name": "hashcat_crack",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "hashcat",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "hashid",
+        "tool_name": "hashid_identify",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "hashid",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "hexeditor",
+        "tool_name": "hexeditor_edit",
+        "category": "utility",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "holehe",
+        "tool_name": "holehe_check",
+        "category": "osint",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "holehe",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "hping3",
+        "tool_name": "hping3_test",
+        "category": "stress",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "hping3",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "httpx",
+        "tool_name": "httpx_probe",
+        "category": "recon",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "projectdiscovery/httpx/cmd/httpx",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "hydra",
+        "tool_name": "hydra_brute",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "hydra",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "impacket",
+        "tool_name": "impacket_tools",
+        "category": "exploit",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "impacket",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "install_all_missing",
+        "tool_name": "install_all_missing",
+        "category": "utility",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "install_tool",
+        "tool_name": "install_tool",
+        "category": "utility",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "jadx",
+        "tool_name": "jadx_decompile",
+        "category": "reversing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "github_release",
+        "install_package": "skylot/jadx",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "john",
+        "tool_name": "john_crack",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "john",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "katana",
+        "tool_name": "katana_crawl",
+        "category": "web",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "projectdiscovery/katana/cmd/katana",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "kismet",
+        "tool_name": "kismet_scan",
+        "category": "wireless",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "ldd",
+        "tool_name": "ldd_analyze",
+        "category": "utility",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "ligolo",
+        "tool_name": "ligolo_tunnel",
+        "category": "postex",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "linpeas",
+        "tool_name": "linpeas_run",
+        "category": "vuln",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "script",
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "linux-exploit-suggester",
+        "tool_name": "linux_exploit_suggester",
+        "category": "vuln",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "script",
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "lse",
+        "tool_name": "linux_smart_enum",
+        "category": "vuln",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "script",
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "list_missing_tools",
+        "tool_name": "list_missing_tools",
+        "category": "utility",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "ltrace",
+        "tool_name": "ltrace_trace",
+        "category": "reversing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "ltrace",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "lynis",
+        "tool_name": "lynis_audit",
+        "category": "vuln",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "lynis",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "masscan",
+        "tool_name": "masscan_scan",
+        "category": "recon",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "masscan",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "mimikatz",
+        "tool_name": "mimikatz_dump",
+        "category": "postex",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "minicom",
+        "tool_name": "minicom_serial",
+        "category": "hardware",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "mitm6",
+        "tool_name": "mitm6_attack",
+        "category": "sniffing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "mitm6",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "msfconsole",
+        "tool_name": "msf_auto_exploit",
+        "category": "exploit",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "msfvenom",
+        "tool_name": "msfvenom_payload",
+        "category": "exploit",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "naabu",
+        "tool_name": "naabu_scan",
+        "category": "recon",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "projectdiscovery/naabu/v2/cmd/naabu",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "nbtscan",
+        "tool_name": "nbtscan_scan",
+        "category": "recon",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "nbtscan",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "nc",
+        "tool_name": "netcat_connect",
+        "category": "postex",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "netexec",
+        "tool_name": "netexec_exec",
+        "category": "exploit",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "netexec",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "nikto",
+        "tool_name": "nikto_scan",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "nikto",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "nuclei",
+        "tool_name": "nuclei_scan",
+        "category": "vuln",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "projectdiscovery/nuclei/v3/cmd/nuclei",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "objdump",
+        "tool_name": "objdump_disasm",
+        "category": "reversing",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "onesixtyone",
+        "tool_name": "onesixtyone_scan",
+        "category": "vuln",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "onesixtyone",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "ophcrack",
+        "tool_name": "ophcrack_crack",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "pdfcrack",
+        "tool_name": "pdfcrack_crack",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "pdfcrack",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "photorec",
+        "tool_name": "photorec_recover",
+        "category": "forensics",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "proxychains",
+        "tool_name": "proxychains_tunnel",
+        "category": "postex",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "radare2",
+        "tool_name": "radare2_analyze",
+        "category": "reversing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "radare2",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "readelf",
+        "tool_name": "readelf_analyze",
+        "category": "reversing",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "reaver",
+        "tool_name": "reaver_attack",
+        "category": "wireless",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "reaver",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "recon-ng",
+        "tool_name": "recon_ng_gather",
+        "category": "osint",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "responder",
+        "tool_name": "responder_poison",
+        "category": "sniffing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "git",
+        "install_package": "SpiderLabs/Responder",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "rsmangler",
+        "tool_name": "rsmangler_mangle",
+        "category": "password",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "screen",
+        "tool_name": "screen_serial",
+        "category": "hardware",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "searchsploit",
+        "tool_name": "searchsploit_exploit",
+        "category": "exploit",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "exploitdb",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "setoolkit",
+        "tool_name": "setoolkit_attack",
+        "category": "social",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "git",
+        "install_package": "trustedsec/social-engineer-toolkit",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "sherlock",
+        "tool_name": "sherlock_search",
+        "category": "osint",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "sherlock-project",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "siege",
+        "tool_name": "siege_bench",
+        "category": "stress",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "siege",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "slowhttptest",
+        "tool_name": "slowhttptest_test",
+        "category": "stress",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "slowhttptest",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "smbmap",
+        "tool_name": "smbmap_enum",
+        "category": "recon",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "smbmap",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "snmpwalk",
+        "tool_name": "snmpwalk_enum",
+        "category": "vuln",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "snmp",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "socat",
+        "tool_name": "socat_relay",
+        "category": "postex",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "sqlmap",
+        "tool_name": "sqlmap_scan",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "ssh",
+        "tool_name": "ssh_brute_local",
+        "category": "postex",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "sshuttle",
+        "tool_name": "sshuttle_pivot",
+        "category": "exploit",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "sshuttle",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "steghide",
+        "tool_name": "steghide_extract",
+        "category": "forensics",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "steghide",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "stegseek",
+        "tool_name": "stegseek_crack",
+        "category": "forensics",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "github_release",
+        "install_package": "RoliXor/Stegseek",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "strace",
+        "tool_name": "strace_trace",
+        "category": "reversing",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "strings",
+        "tool_name": "strings_extract",
+        "category": "forensics",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "subfinder",
+        "tool_name": "subfinder_enum",
+        "category": "recon",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "projectdiscovery/subfinder/v2/cmd/subfinder",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "tcpdump",
+        "tool_name": "tcpdump_capture",
+        "category": "sniffing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "tcpdump",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "testdisk",
+        "tool_name": "testdisk_recover",
+        "category": "forensics",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "theHarvester",
+        "tool_name": "theharvester_gather",
+        "category": "osint",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "theHarvester",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "torify",
+        "tool_name": "torify_tunnel",
+        "category": "postex",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "trivy",
+        "tool_name": "trivy_scan",
+        "category": "vuln",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "shell_script",
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "tshark",
+        "tool_name": "tshark_capture",
+        "category": "sniffing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "tshark",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "volatility",
+        "tool_name": "volatility_analyze",
+        "category": "forensics",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "wafw00f",
+        "tool_name": "waf_detect",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "pip",
+        "install_package": "wafw00f",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "waybackurls",
+        "tool_name": "waybackurls_fetch",
+        "category": "web",
+        "installed_on_host": false,
+        "has_installer_recipe": true,
+        "install_method": "go",
+        "install_package": "tomnomnom/waybackurls",
+        "in_config_yaml": true,
+        "status": "installable"
+      },
+      {
+        "binary": "wfuzz",
+        "tool_name": "wfuzz_fuzz",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "wfuzz",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "wget",
+        "tool_name": "wget_download",
+        "category": "osint",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "whatweb",
+        "tool_name": "whatweb_scan",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "whatweb",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "whois",
+        "tool_name": "whois_lookup",
+        "category": "osint",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "wifite",
+        "tool_name": "wifite_auto",
+        "category": "wireless",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "wireshark",
+        "tool_name": "wireshark_gui",
+        "category": "utility",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "wpscan",
+        "tool_name": "wpscan_enum",
+        "category": "vuln",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "manual_install_required"
+      },
+      {
+        "binary": "yara",
+        "tool_name": "yara_scan",
+        "category": "reversing",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "yara",
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "zaproxy",
+        "tool_name": "zap_scan",
+        "category": "web",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "zmap",
+        "tool_name": "zmap_scan",
+        "category": "recon",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "zmap",
+        "in_config_yaml": true,
+        "status": "installed"
+      }
+    ]
+  },
+  "installer_recipes": {
+    "summary": {
+      "total_recipes": 80,
+      "apt_recipes": 45,
+      "pip_recipes": 11,
+      "go_recipes": 13,
+      "github_release_recipes": 4,
+      "script_recipes": 5,
+      "git_recipes": 2
+    },
+    "recipes": {
+      "aircrack-ng": {
+        "method": "apt",
+        "package": "aircrack-ng"
+      },
+      "amass": {
+        "method": "go",
+        "repo": "owasp-amass/amass/v4",
+        "cmd": "amass"
+      },
+      "apktool": {
+        "method": "apt",
+        "package": "apktool"
+      },
+      "bettercap": {
+        "method": "github_release",
+        "repo": "bettercap/bettercap",
+        "asset_pattern": "bettercap",
+        "ext": "zip"
+      },
+      "binwalk": {
+        "method": "apt",
+        "package": "binwalk"
+      },
+      "bulk_extractor": {
+        "method": "apt",
+        "package": "bulk-extractor"
+      },
+      "certipy": {
+        "method": "pip",
+        "package": "certipy-ad"
+      },
+      "cewl": {
+        "method": "apt",
+        "package": "cewl"
+      },
+      "chisel": {
+        "method": "go",
+        "repo": "jpillora/chisel",
+        "cmd": "chisel"
+      },
+      "chntpw": {
+        "method": "apt",
+        "package": "chntpw"
+      },
+      "crackmapexec": {
+        "method": "pip",
+        "package": "crackmapexec"
+      },
+      "crunch": {
+        "method": "apt",
+        "package": "crunch"
+      },
+      "dcfldd": {
+        "method": "apt",
+        "package": "dcfldd"
+      },
+      "dirb": {
+        "method": "apt",
+        "package": "dirb"
+      },
+      "dnswalk": {
+        "method": "apt",
+        "package": "dnswalk"
+      },
+      "dnsx": {
+        "method": "go",
+        "repo": "projectdiscovery/dnsx/cmd/dnsx",
+        "cmd": "dnsx"
+      },
+      "dsniff": {
+        "method": "apt",
+        "package": "dsniff"
+      },
+      "enum4linux": {
+        "method": "apt",
+        "package": "enum4linux"
+      },
+      "ettercap": {
+        "method": "apt",
+        "package": "ettercap-text-only"
+      },
+      "evil-winrm": {
+        "method": "pip",
+        "package": "evil-winrm"
+      },
+      "exiftool": {
+        "method": "apt",
+        "package": "libimage-exiftool-perl"
+      },
+      "fcrackzip": {
+        "method": "apt",
+        "package": "fcrackzip"
+      },
+      "feroxbuster": {
+        "method": "github_release",
+        "repo": "epi052/feroxbuster",
+        "asset_pattern": "feroxbuster",
+        "ext": "tar.gz"
+      },
+      "ffuf": {
+        "method": "go",
+        "repo": "ffuf/ffuf/v2",
+        "cmd": "ffuf"
+      },
+      "foremost": {
+        "method": "apt",
+        "package": "foremost"
+      },
+      "gau": {
+        "method": "go",
+        "repo": "lc/gau/v2/cmd/gau",
+        "cmd": "gau"
+      },
+      "gdb": {
+        "method": "apt",
+        "package": "gdb"
+      },
+      "gobuster": {
+        "method": "apt",
+        "package": "gobuster"
+      },
+      "gospider": {
+        "method": "go",
+        "repo": "jaeles-project/gospider",
+        "cmd": "gospider"
+      },
+      "grype": {
+        "method": "shell_script",
+        "url": "https://raw.githubusercontent.com/anchore/grype/main/install.sh",
+        "args": "-b {bindir}"
+      },
+      "hakrawler": {
+        "method": "go",
+        "repo": "hakluke/hakrawler",
+        "cmd": "hakrawler"
+      },
+      "hashcat": {
+        "method": "apt",
+        "package": "hashcat"
+      },
+      "hashid": {
+        "method": "pip",
+        "package": "hashid"
+      },
+      "holehe": {
+        "method": "pip",
+        "package": "holehe"
+      },
+      "hping3": {
+        "method": "apt",
+        "package": "hping3"
+      },
+      "httpx": {
+        "method": "go",
+        "repo": "projectdiscovery/httpx/cmd/httpx",
+        "cmd": "httpx"
+      },
+      "hydra": {
+        "method": "apt",
+        "package": "hydra"
+      },
+      "impacket": {
+        "method": "pip",
+        "package": "impacket"
+      },
+      "jadx": {
+        "method": "github_release",
+        "repo": "skylot/jadx",
+        "asset_pattern": "jadx",
+        "ext": "zip"
+      },
+      "john": {
+        "method": "apt",
+        "package": "john"
+      },
+      "katana": {
+        "method": "go",
+        "repo": "projectdiscovery/katana/cmd/katana",
+        "cmd": "katana"
+      },
+      "linpeas": {
+        "method": "script",
+        "url": "https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh",
+        "name": "linpeas"
+      },
+      "linux-exploit-suggester": {
+        "method": "script",
+        "url": "https://github.com/The-Z-Labs/linux-exploit-suggester/raw/master/linux-exploit-suggester.sh",
+        "name": "linux-exploit-suggester"
+      },
+      "lse": {
+        "method": "script",
+        "url": "https://github.com/diego-treitos/linux-smart-enumeration/raw/master/lse.sh",
+        "name": "lse"
+      },
+      "ltrace": {
+        "method": "apt",
+        "package": "ltrace"
+      },
+      "lynis": {
+        "method": "apt",
+        "package": "lynis"
+      },
+      "masscan": {
+        "method": "apt",
+        "package": "masscan"
+      },
+      "mitm6": {
+        "method": "pip",
+        "package": "mitm6"
+      },
+      "naabu": {
+        "method": "go",
+        "repo": "projectdiscovery/naabu/v2/cmd/naabu",
+        "cmd": "naabu"
+      },
+      "nbtscan": {
+        "method": "apt",
+        "package": "nbtscan"
+      },
+      "netexec": {
+        "method": "pip",
+        "package": "netexec"
+      },
+      "nikto": {
+        "method": "apt",
+        "package": "nikto"
+      },
+      "nuclei": {
+        "method": "go",
+        "repo": "projectdiscovery/nuclei/v3/cmd/nuclei",
+        "cmd": "nuclei"
+      },
+      "onesixtyone": {
+        "method": "apt",
+        "package": "onesixtyone"
+      },
+      "pdfcrack": {
+        "method": "apt",
+        "package": "pdfcrack"
+      },
+      "proxychains4": {
+        "method": "apt",
+        "package": "proxychains4"
+      },
+      "radare2": {
+        "method": "apt",
+        "package": "radare2"
+      },
+      "reaver": {
+        "method": "apt",
+        "package": "reaver"
+      },
+      "responder": {
+        "method": "git",
+        "repo": "SpiderLabs/Responder",
+        "name": "responder"
+      },
+      "searchsploit": {
+        "method": "apt",
+        "package": "exploitdb"
+      },
+      "setoolkit": {
+        "method": "git",
+        "repo": "trustedsec/social-engineer-toolkit",
+        "name": "setoolkit"
+      },
+      "sherlock": {
+        "method": "pip",
+        "package": "sherlock-project"
+      },
+      "siege": {
+        "method": "apt",
+        "package": "siege"
+      },
+      "slowhttptest": {
+        "method": "apt",
+        "package": "slowhttptest"
+      },
+      "smbmap": {
+        "method": "apt",
+        "package": "smbmap"
+      },
+      "snmpwalk": {
+        "method": "apt",
+        "package": "snmp"
+      },
+      "sshuttle": {
+        "method": "apt",
+        "package": "sshuttle"
+      },
+      "steghide": {
+        "method": "apt",
+        "package": "steghide"
+      },
+      "stegseek": {
+        "method": "github_release",
+        "repo": "RoliXor/Stegseek",
+        "asset_pattern": "stegseek",
+        "ext": "zip"
+      },
+      "subfinder": {
+        "method": "go",
+        "repo": "projectdiscovery/subfinder/v2/cmd/subfinder",
+        "cmd": "subfinder"
+      },
+      "tcpdump": {
+        "method": "apt",
+        "package": "tcpdump"
+      },
+      "theHarvester": {
+        "method": "pip",
+        "package": "theHarvester"
+      },
+      "trivy": {
+        "method": "shell_script",
+        "url": "https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh",
+        "args": "-b {bindir}"
+      },
+      "tshark": {
+        "method": "apt",
+        "package": "tshark"
+      },
+      "wafw00f": {
+        "method": "pip",
+        "package": "wafw00f"
+      },
+      "waybackurls": {
+        "method": "go",
+        "repo": "tomnomnom/waybackurls",
+        "cmd": "waybackurls"
+      },
+      "wfuzz": {
+        "method": "apt",
+        "package": "wfuzz"
+      },
+      "whatweb": {
+        "method": "apt",
+        "package": "whatweb"
+      },
+      "yara": {
+        "method": "apt",
+        "package": "yara"
+      },
+      "zmap": {
+        "method": "apt",
+        "package": "zmap"
+      }
+    }
+  },
+  "offline_bundle": {
+    "wheels_dir": "wheels/",
+    "wheel_count": 28,
+    "total_wheel_size_mb": 5.6,
+    "install_command": "pip install --no-index --find-links=wheels/ -r requirements.txt"
+  }
+}
