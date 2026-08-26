@@ -20,7 +20,7 @@ class ToolDefinition:
     def __init__(self, name: str, category: str, description: str, binary: str,
                  parameters: dict = None, subcommand: str = None,
                  destructive: bool = False, timeout: int = 300,
-                 prereq_tools: List[str] = None):
+                 prereq_tools: List[str] = None, target_param: str = None):
         self.name = name
         self.category = category
         self.description = description
@@ -30,6 +30,7 @@ class ToolDefinition:
         self.destructive = destructive
         self.timeout = timeout
         self.prereq_tools = prereq_tools or []
+        self.target_param = target_param
         self.installed = False
         self.path = None
 

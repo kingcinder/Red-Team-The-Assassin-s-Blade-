@@ -514,9 +514,11 @@ class ToolInstaller:
                 script_path = f.name
 
             os.chmod(script_path, 0o755)
+            # SECURITY (#8 fix): never use shell=True. Run the script as a
+            # list-mode subprocess so install_args cannot inject shell commands.
             install_args = args.format(bindir=LOCAL_BIN) if "{bindir}" in args else args
-            cmd = f"sh {script_path} {install_args}"
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+            cmd = ["sh", script_path] + (install_args.split() if install_args else [])
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             os.unlink(script_path)
 
             if result.returncode == 0 and shutil.which(binary):

@@ -313,3 +313,30 @@ def register(ctx):
             emit("autonomous_status", status)
         except Exception as e:
             emit("error", {"message": str(e)})
+
+    # ═══════════════════════════════════════════════════
+    # Safety: Tool Confirmation (audit item #7)
+    # ═══════════════════════════════════════════════════
+    @app.route("/api/safety/confirm", methods=["POST"])
+    def api_safety_confirm():
+        """Approve a tool that requires human confirmation.
+        The approval is single-use and cannot be forged by the LLM because it
+        originates from this HTTP API, not from tool_args the model controls.
+        """
+        data = request.get_json()
+        tool_name = data.get("tool")
+        args = data.get("args", {})
+        if not tool_name:
+            return jsonify({"error": "No tool specified"}), 400
+        orchestrator.safety.approve_tool(tool_name, args)
+        return jsonify({"confirmed": True, "tool": tool_name})
+
+    @app.route("/api/safety/policy")
+    def api_safety_policy():
+        """Get the current safety policy (scope, blocked, confirmations)."""
+        return jsonify(orchestrator.safety.get_policy_summary())
+
+    @app.route("/api/safety/audit")
+    def api_safety_audit():
+        """Get the full audit trail from the HardenedToolRunner."""
+        return jsonify({"entries": orchestrator.runner.get_audit_log()})

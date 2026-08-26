@@ -48,7 +48,8 @@ def create_app(config=None):
         template_folder=os.path.join(os.path.dirname(__file__), "templates"),
         static_folder=os.path.join(os.path.dirname(__file__), "static"),
     )
-    app.config["SECRET_KEY"] = "redteam-harness-secret"
+    from dashboard.auth import get_secret_key
+    app.config["SECRET_KEY"] = get_secret_key()
 
     socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
     orchestrator = Orchestrator(config)

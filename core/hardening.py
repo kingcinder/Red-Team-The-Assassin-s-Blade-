@@ -10,6 +10,7 @@ Enforces security boundaries around every tool execution:
 """
 import os
 import re
+import json
 import time
 import logging
 import subprocess
@@ -27,10 +28,20 @@ MAX_CONCURRENT_EXECUTIONS = 3
 GRACE_PERIOD_SECONDS = 5   # SIGTERM → SIGKILL gap
 
 # ── Injection patterns to reject in string args ──
-# Commands run via subprocess with a LIST and shell=False, so bare
-# metacharacters (&, ;, $, |, ( ) in URLs, POST data, headers, passwords)
-# are NEVER shell-interpreted and must be allowed. We only reject actual
-# command-injection constructs.
+#
+# THREAT MODEL (audit item #10):
+# All tool execution uses subprocess with a LIST and shell=False, so bare
+# shell metacharacters (&, ;, $, |, ( ) in URLs, POST data, headers,
+# passwords) are NEVER interpreted by a shell. These patterns are therefore
+# defense-in-depth against a DIFFERENT threat: tools that re-interpret their
+# own arguments (e.g., tools that shell out internally, write attacker-
+# controlled text into a config file they later source, or parse strings
+# with their own shell-like DSL). Against pure shell injection, shell=False
+# alone is the primary mitigation.
+#
+# Audit: only tools that themselves re-interpret args are at risk. Known
+# offenders: anything building a resource file, config, or script from a
+# string arg (msf_resource, searchsploit_exploit, curl headers).
 INJECTION_PATTERNS = [
     r'\$\(',                     # $(...) command substitution
     r'\$\{',                     # ${...} parameter expansion (e.g. ${IFS})
@@ -56,12 +67,16 @@ class HardenedToolRunner:
     6. Logs full audit trail
     """
 
-    def __init__(self, registry: ToolRegistry):
+    def __init__(self, registry: ToolRegistry, audit_dir: str = None):
         self.registry = registry
         self._active_executions = 0
         self._lock = threading.Lock()
         self._audit_log: List[Dict] = []
         self.cache = ResultCache()
+        # Audit persistence (#14): write audit entries to a JSONL file so they
+        # survive process crashes/restarts. audit_dir defaults to ./output/.
+        self._audit_dir = audit_dir or os.path.abspath("./output")
+        os.makedirs(self._audit_dir, exist_ok=True)
 
     def execute(self, tool_name: str, args: dict,
                 timeout: int = 300,
@@ -183,6 +198,14 @@ class HardenedToolRunner:
         }
         self._audit_log.append(audit_entry)
 
+        # Persist audit entry to disk (#14 fix)
+        try:
+            audit_path = os.path.join(self._audit_dir, "audit_log.jsonl")
+            with open(audit_path, "a") as af:
+                af.write(json.dumps(audit_entry) + "\n")
+        except Exception:
+            pass  # best-effort; in-memory log is the fallback
+
         result = {
             "stdout": stdout,
             "stderr": stderr,
@@ -257,7 +280,10 @@ class HardenedToolRunner:
                 try:
                     safe[pname] = int(val_str)
                 except (ValueError, TypeError):
-                    safe[pname] = val_str  # Validation already ran; keep as-is
+                    # Type coercion failed — fail loud rather than silently
+                    # downgrading a declared int to a raw string (#9 fix).
+                    # Return dict keyed by param name for the caller to inspect.
+                    safe[pname] = f"INVALID:{val_str}"
             else:
                 safe[pname] = val_str
 

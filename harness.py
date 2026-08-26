@@ -449,7 +449,7 @@ def run_dashboard(config):
     from dashboard.server import create_app
     app = create_app(config)
     port = config.get("harness", {}).get("port", 9999)
-    host = config.get("harness", {}).get("host", "0.0.0.0")
+    host = config.get("harness", {}).get("host", "127.0.0.1")
     debug = config.get("harness", {}).get("debug", False)
 
     print(f"\n{'='*60}")

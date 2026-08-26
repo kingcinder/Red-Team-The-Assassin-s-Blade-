@@ -23,7 +23,7 @@ llm:
 
 # Harness Configuration
 harness:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 9999
   debug: false
   max_tool_retries: 3

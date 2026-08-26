@@ -529,10 +529,11 @@ class Orchestrator:
             # ── Phase B: Execute normal tools in parallel ──
             if parallel_tcs:
                 if len(parallel_tcs) == 1:
-                    # Single tool — skip thread overhead, run inline
+                    # Single tool — still route through HardenedToolRunner for
+                    # injection rejection, arg validation, and audit trail (#3 fix)
                     tc, tool_name, tool_args, orig_idx = parallel_tcs[0]
                     start_time = time.time()
-                    result = self.tools.execute(tool_name, tool_args)
+                    result = self.runner.execute(tool_name, tool_args)
                     elapsed = time.time() - start_time
                     if "command" not in result:
                         result["command"] = tool_name
@@ -876,10 +877,14 @@ class Orchestrator:
         tasks_dir = self.config.get("workflow", {}).get(
             "tasks_dir", "tasks")
 
-        # Resolve template path
+        # Resolve template path — prevent path traversal (#5 fix)
         if not workflow_name.endswith((".yaml", ".yml")):
             workflow_name += ".yaml"
         template_path = os.path.join(templates_dir, workflow_name)
+        real_tpl = os.path.realpath(template_path)
+        real_dir = os.path.realpath(templates_dir)
+        if not real_tpl.startswith(real_dir + os.sep) and real_tpl != real_dir:
+            return {"error": f"Path traversal blocked: {workflow_name}"}
         if not os.path.exists(template_path):
             # Maybe it's a full path or name without extension
             alt = os.path.join(templates_dir, workflow_name.replace(".yaml", "") + ".yml")
@@ -1674,7 +1679,7 @@ class Orchestrator:
                 self.sessions.log_command(sid, tool_name, args, result)
             return result
 
-        result = self.tools.execute(tool_name, args)
+        result = self.runner.execute(tool_name, args)
         if sid:
             self.sessions.log_command(sid, tool_name, args, result)
         return result
