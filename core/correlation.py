@@ -17,7 +17,6 @@ v5.0 enhancements over v4.0:
 """
 import re
 import logging
-from collections import defaultdict
 from typing import Dict, Any, List, Optional
 
 # MITRE ATT&CK catalogue (names, tactics, matrix order) is owned by the

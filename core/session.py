@@ -2,7 +2,6 @@
 RedTeam Harness — Session Manager
 Manages engagement sessions, conversation history, and state.
 """
-import os
 import uuid
 import logging
 from datetime import datetime

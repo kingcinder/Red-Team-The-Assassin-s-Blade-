@@ -188,7 +188,6 @@ class TacticalEngine:
         """
         out = []
         try:
-            from core.vector_memory import VectorMemory  # noqa: F401
             for finding in findings:
                 target = finding.get("target") or context.get("host")
                 text = self._finding_to_text(finding)
