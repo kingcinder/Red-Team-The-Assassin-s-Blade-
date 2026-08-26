@@ -118,6 +118,9 @@ function handleCampaignComplete(data) {
 function initSocket() {
     socket = io();
 
+    // Model swap WebSocket events
+    setupModelSwapSocket();
+
     socket.on('connect', () => {
         console.log('Connected to RedTeam Harness v2');
         detectLLM();
@@ -2284,6 +2287,10 @@ function showResultsTab(tab) {
     if (tab === 'attackmatrix') {
         loadAttackMatrixSources();
     }
+    // Load Model Manager when Models tab is selected
+    if (tab === 'models') {
+        loadModelsPanel();
+    }
 }
 
 function appendLiveOutput(data) {
@@ -3556,3 +3563,130 @@ function renderMissionTimeline(timeline, targets) {
             </div>`;
     }).join('');
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Model Manager (v6.1) — list GGUFs, hot-swap, update model chip
+// ═══════════════════════════════════════════════════════════════
+
+let _modelsLoaded = false;
+
+async function loadModelsPanel() {
+    const currentEl = document.getElementById('models-current');
+    const gridEl = document.getElementById('models-grid');
+    if (!currentEl || !gridEl) return;
+
+    // Fetch current model + list in parallel
+    try {
+        const [statusRes, listRes] = await Promise.all([
+            fetch('/api/models/current'),
+            fetch('/api/models'),
+        ]);
+        const status = await statusRes.json();
+        const list = await listRes.json();
+
+        // Render current model card
+        currentEl.innerHTML = `
+            <div class="model-current-card">
+                <div class="model-current-header">
+                    <span class="model-current-icon">${status.connected ? '🟢' : '🔴'}</span>
+                    <div>
+                        <span class="model-current-name">${escapeHtml(status.loaded_model || 'Unknown')}</span>
+                        <span class="model-current-meta">${escapeHtml(status.backend)} · ${escapeHtml(status.base_url)}</span>
+                    </div>
+                    <span class="model-current-status">${status.connected ? 'Connected' : 'Disconnected'}</span>
+                </div>
+            </div>`;
+
+        // Render model grid
+        const models = list.models || [];
+        const current = list.current || '';
+
+        if (models.length === 0) {
+            gridEl.innerHTML = '<p class="muted">No GGUF models found in AI_MODELS/. Add .gguf files to the directory.</p>';
+            return;
+        }
+
+        gridEl.innerHTML = models.map(m => {
+            const isCurrent = current.includes(m.name) || m.name.includes(current);
+            return `
+            <div class="model-card ${isCurrent ? 'model-active' : ''}">
+                <div class="model-card-header">
+                    <span class="model-card-name">${escapeHtml(m.family)}</span>
+                    ${isCurrent ? '<span class="model-active-badge">ACTIVE</span>' : ''}
+                </div>
+                <div class="model-card-meta">
+                    <span class="model-card-file">${escapeHtml(m.name)}</span>
+                    <div class="model-card-details">
+                        <span class="model-card-size">${escapeHtml(m.size_human)}</span>
+                        ${m.quantization ? `<span class="model-card-quant">${escapeHtml(m.quantization)}</span>` : ''}
+                    </div>
+                </div>
+                <div class="model-card-actions">
+                    ${isCurrent
+                        ? '<button class="btn-primary" disabled>Currently Loaded</button>'
+                        : `<button class="btn-primary" data-model-path="${escapeHtml(m.path)}" data-model-name="${escapeHtml(m.name)}" onclick="swapToModel(this.dataset.modelPath, this.dataset.modelName)">🔄 Load Model</button>`
+                    }
+                </div>
+            </div>`;
+        }).join('');
+
+        _modelsLoaded = true;
+    } catch (e) {
+        console.error('Failed to load models:', e);
+        gridEl.innerHTML = '<p class="muted">Failed to load models. Is the dashboard server running?</p>';
+    }
+}
+
+async function swapToModel(path, name) {
+    const statusEl = document.getElementById('models-swap-status');
+    const msgEl = document.getElementById('models-swap-message');
+    if (!statusEl || !msgEl) return;
+
+    statusEl.classList.remove('hidden');
+    msgEl.textContent = `Swapping to ${name}...`;
+
+    try {
+        const res = await fetch('/api/models/swap', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_path: path }),
+        });
+        const data = await res.json();
+        if (data.status === 'swapping') {
+            msgEl.textContent = `Swapping to ${name}... llama-server is restarting`;
+        } else if (data.error) {
+            msgEl.textContent = `Error: ${data.error}`;
+            setTimeout(() => statusEl.classList.add('hidden'), 5000);
+        }
+    } catch (e) {
+        msgEl.textContent = `Swap request failed: ${e.message}`;
+        setTimeout(() => statusEl.classList.add('hidden'), 5000);
+    }
+}
+
+// WebSocket listener for model swap progress
+function setupModelSwapSocket() {
+    if (typeof socket === 'undefined') return;
+    socket.on('model_swap_progress', function(data) {
+        const msgEl = document.getElementById('models-swap-message');
+        if (msgEl) msgEl.textContent = data.message || `${data.status}...`;
+    });
+    socket.on('model_swap_result', function(data) {
+        const statusEl = document.getElementById('models-swap-status');
+        const msgEl = document.getElementById('models-swap-message');
+        if (data.success) {
+            if (msgEl) msgEl.textContent = `✅ ${data.message}`;
+            // Update model chip in topbar
+            setModelChip(data.loaded_model || data.model);
+            // Refresh the models panel
+            setTimeout(() => { loadModelsPanel(); }, 500);
+            setTimeout(() => { if (statusEl) statusEl.classList.add('hidden'); }, 3000);
+            addSystemMessage(`🤖 Model swapped to ${escapeHtml(data.loaded_model || data.model)}`);
+        } else {
+            if (msgEl) msgEl.textContent = `❌ ${data.error}`;
+            setTimeout(() => { if (statusEl) statusEl.classList.add('hidden'); }, 5000);
+        }
+    });
+}
+
+// Moved into initSocket() — socket listeners must register after socket = io()

@@ -140,6 +140,7 @@
                     <button class="tab" onclick="showResultsTab('memory')">🧠 Memory</button>
                     <button class="tab" onclick="showResultsTab('kb')">📚 KB</button>
                     <button class="tab" onclick="showResultsTab('mission')">🛰️ Mission</button>
+                    <button class="tab" onclick="showResultsTab('models')">🤖 Models</button>
                     </div>
                 </div>
                 <div class="results-content" id="results-live">
@@ -277,6 +278,28 @@
                         </div>
                         <div class="memory-stats" id="kb-stats"><p class="muted">Loading offline database...</p></div>
                         <div class="kb-results" id="kb-results"></div>
+                    </div>
+                </div>
+                <div class="results-content hidden" id="results-models">
+                    <div class="models-panel">
+                        <div class="models-header">
+                            <h3>🤖 Model Manager</h3>
+                            <div class="models-actions">
+                                <button class="btn-primary" onclick="loadModelsList()">🔄 Refresh</button>
+                            </div>
+                        </div>
+                        <div class="models-current" id="models-current">
+                            <p class="muted">Loading current model info...</p>
+                        </div>
+                        <div class="models-grid" id="models-grid">
+                            <p class="muted">Scanning for GGUF models...</p>
+                        </div>
+                        <div class="models-swap-status hidden" id="models-swap-status">
+                            <div class="swap-progress">
+                                <span class="swap-spinner"></span>
+                                <span id="models-swap-message">Swapping model...</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="results-content hidden" id="results-campaign">

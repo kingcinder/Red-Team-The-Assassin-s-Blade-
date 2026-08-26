@@ -340,3 +340,40 @@ def register(ctx):
     def api_safety_audit():
         """Get the full audit trail from the HardenedToolRunner."""
         return jsonify({"entries": orchestrator.runner.get_audit_log()})
+
+    # ═══════════════════════════════════════════════════
+    # Model Manager Routes (v6.1)
+    # ═══════════════════════════════════════════════════
+    @app.route("/api/models")
+    def api_models_list():
+        """List all GGUF models found in AI_MODELS/."""
+        from core.model_manager import scan_models
+        models = scan_models()
+        current = orchestrator.llm.get_loaded_model() if hasattr(orchestrator.llm, 'get_loaded_model') else 'unknown'
+        return jsonify({"models": models, "current": current})
+
+    @app.route("/api/models/current")
+    def api_models_current():
+        """Get info about the currently loaded model."""
+        from core.model_manager import get_current_model_info
+        return jsonify(get_current_model_info(orchestrator.llm))
+
+    @app.route("/api/models/swap", methods=["POST"])
+    def api_models_swap():
+        """Hot-swap the loaded model. Requires model_path in body."""
+        data = request.get_json()
+        model_path = data.get("model_path")
+        if not model_path:
+            return jsonify({"error": "No model_path provided"}), 400
+        # Run swap in a background thread so the HTTP response isn't blocked
+        import threading
+        from core.model_manager import swap_model
+        def do_swap():
+            result = swap_model(
+                model_path, orchestrator.llm, config,
+                emit_fn=lambda evt, d: socketio.emit(evt, d),
+            )
+            socketio.emit("model_swap_result", result)
+        t = threading.Thread(target=do_swap, daemon=True)
+        t.start()
+        return jsonify({"status": "swapping", "model_path": model_path})
