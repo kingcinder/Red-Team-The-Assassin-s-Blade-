@@ -39,6 +39,15 @@ document.addEventListener('DOMContentLoaded', () => {
     loadCampaignSelectOptions();
     loadCompareSelects();
     initCtrlTooltips();
+    // Auto-place the loaded LLM into the cockpit on startup, surfacing a
+    // clear error if the backend (e.g. llama-server) isn't up yet.
+    detectLLM();
+    setInterval(() => {
+        // If we haven't detected a backend yet, keep polling so the banner
+        // clears automatically the moment llama-server comes up.
+        const connected = document.getElementById('llm-banner')?.classList.contains('hidden');
+        if (!connected) detectLLM();
+    }, 8000);
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -111,7 +120,7 @@ function initSocket() {
 
     socket.on('connect', () => {
         console.log('Connected to RedTeam Harness v2');
-        updateLLMStatus(true);
+        detectLLM();
         // v5.5: replay anything buffered while we were disconnected
         if (socketDisconnectedAt) {
             replayBufferedEvents();
@@ -120,7 +129,12 @@ function initSocket() {
     });
 
     socket.on('disconnect', () => {
-        updateLLMStatus(false);
+        // Note: a WebSocket blip to the dashboard does NOT mean llama-server is
+        // down — only mark the dot offline here; never raise the backend banner.
+        const dot = document.getElementById('llm-status');
+        const label = document.getElementById('llm-label');
+        if (dot) dot.className = 'status-dot';
+        if (label) label.textContent = 'LLM: Unknown';
         socketDisconnectedAt = Date.now();
     });
 
@@ -128,6 +142,9 @@ function initSocket() {
         updateStatusIndicators(data);
         updateTokenUsage(data.token_usage);
     });
+
+    // Auto-place the loaded LLM the moment the socket connects; also verified
+    // via /api/llm/status on startup and on every status push above.
 
     // ── Tool events ──
     socket.on('tool_start', (data) => {
@@ -302,22 +319,83 @@ function updateStatusIndicators(data) {
     const toolsDot = document.getElementById('tools-status');
     const toolsLabel = document.getElementById('tools-label');
 
-    if (data.llm_connected) {
+    const connected = !!data.llm_connected;
+    if (connected) {
         llmDot.className = 'status-dot green';
+        const model = data.llm_model || 'Connected';
         llmLabel.textContent = 'LLM: Connected';
+        setModelChip(model);
+        hideLLMBanner();
     } else {
         llmDot.className = 'status-dot';
         llmLabel.textContent = 'LLM: Disconnected';
+        clearModelChip();
+        showLLMBanner('llama-server does not appear to be running at the configured LLM address. Start it first (e.g. launch-gguf.sh / llama-server), then press Re-check.');
     }
 
     toolsLabel.textContent = `Tools: ${data.tools_available}/${data.tools_total}`;
 }
 
-function updateLLMStatus(connected) {
+function updateLLMStatus(connected, model) {
     const dot = document.getElementById('llm-status');
     const label = document.getElementById('llm-label');
     dot.className = connected ? 'status-dot green' : 'status-dot';
     label.textContent = connected ? 'LLM: Connected' : 'LLM: Disconnected';
+    if (connected) { setModelChip(model); hideLLMBanner(); }
+    else { clearModelChip(); showLLMBanner(); }
+}
+
+// ── LLM auto-detection: place whatever model is loaded into the cockpit ──
+function setModelChip(model) {
+    const chip = document.getElementById('llm-model-chip');
+    const nameEl = document.getElementById('llm-model-name');
+    if (!chip || !nameEl) return;
+    if (!model) model = 'Unknown';
+    nameEl.textContent = model;
+    chip.classList.remove('hidden');
+    chip.title = `Model currently loaded: ${model}`;
+}
+
+function clearModelChip() {
+    const chip = document.getElementById('llm-model-chip');
+    if (chip) chip.classList.add('hidden');
+}
+
+function showLLMBanner(detail) {
+    const banner = document.getElementById('llm-banner');
+    if (!banner) return;
+    if (detail) {
+        const d = banner.querySelector('#llm-banner-detail');
+        if (d) d.textContent = detail;
+    }
+    banner.classList.remove('hidden');
+}
+
+function hideLLMBanner() {
+    const banner = document.getElementById('llm-banner');
+    if (banner) banner.classList.add('hidden');
+}
+
+async function detectLLM() {
+    // Auto-place the currently-loaded LLM into the cockpit on startup.
+    try {
+        const res = await fetch('/api/llm/status');
+        const data = await res.json();
+        if (data.connected) {
+            updateLLMStatus(true, data.loaded_model || data.model);
+        } else {
+            updateLLMStatus(false);
+        }
+        return data.connected;
+    } catch (e) {
+        console.error('LLM detect failed:', e);
+        updateLLMStatus(false);
+        return false;
+    }
+}
+
+function recheckLLM() {
+    detectLLM();
 }
 
 function updateTokenUsage(usage) {

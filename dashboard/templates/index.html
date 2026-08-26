@@ -31,6 +31,7 @@
             <div class="status-indicators">
                 <span class="status-dot" id="llm-status" title="LLM Status">●</span>
                 <span class="status-label" id="llm-label">LLM: Checking...</span>
+                <span class="model-chip hidden" id="llm-model-chip" title="Model currently loaded in the backend">🤖 <span id="llm-model-name">…</span></span>
             </div>
             <div class="status-indicators">
                 <span class="status-dot green" id="tools-status" title="Tools Status">●</span>
@@ -39,6 +40,17 @@
             <div class="session-info"><span id="session-id">No Session</span></div>
         </div>
     </header>
+
+    <!-- LLM connectivity banner: shown with a clear error when the configured
+         LLM backend (e.g. llama-server) isn't reachable at harness startup. -->
+    <div class="llm-banner hidden" id="llm-banner" role="alert">
+        <span class="llm-banner-icon">🚫</span>
+        <div class="llm-banner-text">
+            <strong>No LLM backend detected.</strong>
+            <span id="llm-banner-detail">llama-server does not appear to be running. Start it (e.g. via launch-gguf.sh / llama-server) BEFORE using the AI-driven cockpit, then this banner clears automatically.</span>
+        </div>
+        <button class="btn-primary btn-sm" onclick="recheckLLM()">🔄 Re-check</button>
+    </div>
 
     <div class="main-layout">
         <aside class="panel tool-palette" id="tool-palette">

@@ -2446,3 +2446,49 @@ body {
     font-size: 0.8rem;
     line-height: 1.5;
 }
+
+/* ── LLM connectivity banner (startup auto-detect) ── */
+.llm-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: linear-gradient(90deg, #3b0d12, #7f1d1d);
+    border-bottom: 1px solid #ef4444;
+    color: #fecaca;
+    padding: 8px 20px;
+    font-size: 0.82rem;
+}
+.llm-banner.hidden { display: none; }
+.llm-banner-icon { font-size: 1.1rem; }
+.llm-banner-text strong { color: #fecaca; }
+.llm-banner-text span { color: #fda4a4; margin-left: 6px; }
+.llm-banner .btn-primary { 
+    background: #7f1d1d; 
+    border: 1px solid #fca5a5; 
+    color: #fee2e2; 
+    padding: 4px 12px; 
+    font-size: 0.75rem; 
+    cursor: pointer; 
+    border-radius: 4px; 
+}
+.llm-banner .btn-primary:hover { background: #991b1b; }
+
+/* ── Loaded-model chip (auto-placed into the cockpit) ── */
+.model-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #0f766e;
+    color: #ccfbf1;
+    border: 1px solid #14b8a6;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    margin-left: 6px;
+    max-width: 260px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.model-chip.hidden { display: none; }

@@ -12,7 +12,7 @@ v2.0 Improvements:
 import json
 import logging
 import time
-from typing import Dict, Any, List, Generator
+from typing import Dict, Any, List, Generator, Optional
 
 import requests
 
@@ -48,6 +48,7 @@ class LLMBackend:
         self.temperature = config.get(self.backend, {}).get("temperature", 0.3)
         self.timeout = config.get(self.backend, {}).get("timeout", 120)
         self._connected = False
+        self._loaded_model: Optional[str] = None
         self._token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         # JSON Schema for tool_call enforcement via GBNF grammar
@@ -76,6 +77,10 @@ class LLMBackend:
             if self.backend == "llama-server":
                 r = requests.get(f"{self.base_url}/v1/models", timeout=5)
                 self._connected = r.status_code == 200
+                # Cache the actually-loaded model on success so the cockpit can
+                # show it without an extra round-trip.
+                if self._connected:
+                    self._detect_loaded_model(r)
             elif self.backend == "ollama":
                 r = requests.get(f"{self.base_url}/api/tags", timeout=5)
                 self._connected = r.status_code == 200
@@ -83,6 +88,27 @@ class LLMBackend:
         except Exception:
             self._connected = False
             return False
+
+    def _detect_loaded_model(self, response: Any = None) -> None:
+        """
+        Resolve the model that is actually loaded in llama-server.
+
+        Prefers the model advertised by /v1/models (the real loaded snapshot), then
+        falls back to the configured model name, then to a generic label. This lets
+        the cockpit auto-place "whatever LLM is loaded in llama-server" on startup.
+        """
+        advertised = None
+        try:
+            if response is not None and hasattr(response, "json"):
+                data = response.json()
+            else:
+                data = requests.get(f"{self.base_url}/v1/models", timeout=5).json()
+            ids = (data.get("data") or [])
+            if ids:
+                advertised = ids[0].get("id") or ids[0].get("model") or None
+        except Exception:
+            advertised = None
+        self._loaded_model = advertised or (self.model or "llama-server")
 
     def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
         """Send a chat completion request. Returns the full response as a string."""
@@ -162,14 +188,23 @@ class LLMBackend:
         """Get cumulative token usage."""
         return dict(self._token_usage)
 
+    def get_loaded_model(self) -> str:
+        """Return the model currently loaded in the backend (resolving on demand)."""
+        if not getattr(self, "_loaded_model", None):
+            self.is_connected()
+        return getattr(self, "_loaded_model", self.model or self.backend)
+
     def get_status(self) -> Dict[str, Any]:
-        """Get backend status info."""
+        """Get backend status info, including the model actually loaded."""
+        connected = self.is_connected()
         return {
             "backend": self.backend,
             "host": self.host,
             "port": self.port,
-            "connected": self.is_connected(),
+            "connected": connected,
             "model": self.model,
+            "loaded_model": getattr(self, "_loaded_model", None),
+            "machine_url": self.base_url,
             "token_usage": dict(self._token_usage),
         }
 
