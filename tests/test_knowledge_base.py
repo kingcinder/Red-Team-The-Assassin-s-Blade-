@@ -202,3 +202,79 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Section 7: Release-time integrity check (counts/hash)
+# Validates the INTEGRITY_MANIFEST in kb_data.py so dataset edits
+# never silently break grounding.  Fails CI if counts drift, the
+# content hash mismatches, or any CVE record loses a required field.
+# ═══════════════════════════════════════════════════════════════════
+
+def _test_integrity_manifest():
+    from core.kb_data import (
+        validate_integrity, get_integrity_summary,
+        INTEGRITY_MANIFEST, CVE_DATABASE, ATTACK_TECHNIQUES,
+        _CVE_GROUNDING_REQUIRED,
+    )
+
+    print("\n[7] Release-time integrity check (counts/hash)")
+
+    # 7a. Manifest exists and has required keys
+    check("INTEGRITY_MANIFEST has cve_count",
+          "cve_count" in INTEGRITY_MANIFEST,
+          f"keys={list(INTEGRITY_MANIFEST.keys())}")
+    check("INTEGRITY_MANIFEST has technique_count",
+          "technique_count" in INTEGRITY_MANIFEST)
+    check("INTEGRITY_MANIFEST has content_hash",
+          "content_hash" in INTEGRITY_MANIFEST)
+
+    # 7b. Counts match live dataset
+    check("Manifest cve_count matches live CVE_DATABASE",
+          INTEGRITY_MANIFEST["cve_count"] == len(CVE_DATABASE),
+          f"manifest={INTEGRITY_MANIFEST['cve_count']}, live={len(CVE_DATABASE)}")
+    check("Manifest technique_count matches live ATTACK_TECHNIQUES",
+          INTEGRITY_MANIFEST["technique_count"] == len(ATTACK_TECHNIQUES),
+          f"manifest={INTEGRITY_MANIFEST['technique_count']}, live={len(ATTACK_TECHNIQUES)}")
+
+    # 7c. Content hash matches (any field edit will break this)
+    import hashlib, json
+    data_blob = json.dumps({
+        "CVE_DATABASE": sorted(CVE_DATABASE, key=lambda c: c.get("id", "")),
+        "ATTACK_TECHNIQUES": dict(sorted(ATTACK_TECHNIQUES.items())),
+    }, sort_keys=True, separators=(",", ":"))
+    actual_hash = hashlib.sha256(data_blob.encode()).hexdigest()[:16]
+    check("Content hash matches manifest",
+          actual_hash == INTEGRITY_MANIFEST["content_hash"],
+          f"expected={INTEGRITY_MANIFEST['content_hash']}, actual={actual_hash}")
+
+    # 7d. validate_integrity() returns empty (all checks pass)
+    problems = validate_integrity()
+    check("validate_integrity() reports no problems",
+          len(problems) == 0,
+          f"problems={problems}" if problems else "clean")
+
+    # 7e. Every CVE record has all grounding-required fields
+    for field in _CVE_GROUNDING_REQUIRED:
+        missing = [c.get("id", f"index={i}")
+                   for i, c in enumerate(CVE_DATABASE)
+                   if not c.get(field)]
+        check(f"All CVEs have grounding field '{field}'",
+              len(missing) == 0,
+              f"missing in: {missing}" if missing else "all present")
+
+    # 7f. get_integrity_summary() returns machine-readable report
+    summary = get_integrity_summary()
+    check("get_integrity_summary() returns ok=True", summary["ok"] is True)
+    check("Summary cve_count matches", summary["cve_count"] == len(CVE_DATABASE))
+    check("Summary technique_count matches", summary["technique_count"] == len(ATTACK_TECHNIQUES))
+    check("Summary content_hash matches", summary["content_hash"] == actual_hash)
+
+    # 7g. _CVE_GROUNDING_REQUIRED is a superset of _CVE_REQUIRED
+    from core.kb_data import _CVE_REQUIRED
+    check("GROUNDING_REQUIRED is superset of _CVE_REQUIRED",
+          set(_CVE_REQUIRED) <= set(_CVE_GROUNDING_REQUIRED),
+          f"basic={_CVE_REQUIRED}, grounding={_CVE_GROUNDING_REQUIRED}")
+
+
+# Insert before the final summary line

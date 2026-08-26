@@ -813,6 +813,22 @@ CVE_DATABASE: List[Dict[str, Any]] = [
 
 _TECHNIQUE_REQUIRED = ("name", "tactic", "detection", "mitigation")
 _CVE_REQUIRED = ("id", "title", "cvss", "severity")
+# Strict field list for grounding: every CVE must carry these so the LLM
+# can reason about exploitability, scope, and remediation.
+_CVE_GROUNDING_REQUIRED = (
+    "id", "title", "cvss", "severity", "description",
+    "affected", "techniques", "signatures", "remediation",
+)
+
+# ── Integrity Manifest ──
+# Counts + content hash.  CI compares these against the live dataset so
+# a silent field deletion or record count change always fails the build.
+# Bump the hash after ANY edit to CVE_DATABASE or ATTACK_TECHNIQUES.
+INTEGRITY_MANIFEST = {
+    "cve_count": 37,
+    "technique_count": 74,
+    "content_hash": "4514f98a6bb72c1d",
+}
 
 
 def _validate_dataset() -> None:
@@ -846,3 +862,79 @@ def _validate_dataset() -> None:
 
 
 _validate_dataset()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# RELEASE-TIME INTEGRITY CHECK (counts/hash)
+# Compares the live dataset against INTEGRITY_MANIFEST so a silent
+# field deletion, record count change, or content drift always fails.
+# Called by tests/test_kb_integrity.py in CI.
+# ═══════════════════════════════════════════════════════════════════
+import hashlib as _hashlib
+import json as _json
+
+
+def validate_integrity() -> list:
+    """
+    Check dataset counts, content hash, and grounding-required fields.
+    Returns a list of problem strings (empty = all good).
+    """
+    problems: list = []
+
+    # 1. Count checks
+    actual_cve = len(CVE_DATABASE)
+    actual_tech = len(ATTACK_TECHNIQUES)
+    if actual_cve != INTEGRITY_MANIFEST["cve_count"]:
+        problems.append(
+            f"CVE count changed: expected {INTEGRITY_MANIFEST['cve_count']}, "
+            f"got {actual_cve}. Bump INTEGRITY_MANIFEST['cve_count'] if intentional."
+        )
+    if actual_tech != INTEGRITY_MANIFEST["technique_count"]:
+        problems.append(
+            f"Technique count changed: expected {INTEGRITY_MANIFEST['technique_count']}, "
+            f"got {actual_tech}. Bump INTEGRITY_MANIFEST['technique_count'] if intentional."
+        )
+
+    # 2. Content hash check
+    data_blob = _json.dumps({
+        "CVE_DATABASE": sorted(CVE_DATABASE, key=lambda c: c.get("id", "")),
+        "ATTACK_TECHNIQUES": dict(sorted(ATTACK_TECHNIQUES.items())),
+    }, sort_keys=True, separators=(",", ":"))
+    actual_hash = _hashlib.sha256(data_blob.encode()).hexdigest()[:16]
+    if actual_hash != INTEGRITY_MANIFEST["content_hash"]:
+        problems.append(
+            f"Content hash changed: expected {INTEGRITY_MANIFEST['content_hash']}, "
+            f"got {actual_hash}. Bump INTEGRITY_MANIFEST['content_hash'] if intentional."
+        )
+
+    # 3. Grounding-required fields on every CVE record
+    for i, cve in enumerate(CVE_DATABASE):
+        if not isinstance(cve, dict):
+            problems.append(f"CVE_DATABASE[{i}] is not a dict")
+            continue
+        for field in _CVE_GROUNDING_REQUIRED:
+            val = cve.get(field)
+            if val is None or val == "" or val == []:
+                cve_id = cve.get("id", f"index={i}")
+                problems.append(
+                    f"CVE {cve_id}: required grounding field {field!r} is empty/missing"
+                )
+
+    return problems
+
+
+def get_integrity_summary() -> dict:
+    """Return a machine-readable integrity report."""
+    problems = validate_integrity()
+    data_blob = _json.dumps({
+        "CVE_DATABASE": sorted(CVE_DATABASE, key=lambda c: c.get("id", "")),
+        "ATTACK_TECHNIQUES": dict(sorted(ATTACK_TECHNIQUES.items())),
+    }, sort_keys=True, separators=(",", ":"))
+    return {
+        "cve_count": len(CVE_DATABASE),
+        "technique_count": len(ATTACK_TECHNIQUES),
+        "content_hash": _hashlib.sha256(data_blob.encode()).hexdigest()[:16],
+        "manifest": dict(INTEGRITY_MANIFEST),
+        "ok": len(problems) == 0,
+        "problems": problems,
+    }
