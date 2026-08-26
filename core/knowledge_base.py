@@ -39,13 +39,25 @@ from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger("redteam.knowledge")
 
-# ── Optional scikit-learn (already used by VectorMemory) for TF-IDF search ──
-try:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-    _HAS_SKLEARN = True
-except Exception:  # pragma: no cover - graceful degradation
-    _HAS_SKLEARN = False
+# ── Optional scikit-learn for TF-IDF search (lazy — 900ms+ import cost) ──
+_HAS_SKLEARN: Optional[bool] = None  # None = not checked yet
+_TfidfVectorizer = None
+cosine_similarity = None
+
+
+def _ensure_sklearn():
+    """Lazy-import sklearn on first use (~900ms cost deferred from module load)."""
+    global _HAS_SKLEARN, _TfidfVectorizer, cosine_similarity
+    if _HAS_SKLEARN is not None:
+        return
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer as _TV
+        from sklearn.metrics.pairwise import cosine_similarity as _CS
+        _TfidfVectorizer = _TV
+        cosine_similarity = _CS
+        _HAS_SKLEARN = True
+    except Exception:
+        _HAS_SKLEARN = False
 
 from core.injection_defense import sanitize_for_llm
 # Embedded dataset (architecture re-review R1) lives in core/kb_data.py so the
@@ -62,27 +74,23 @@ CONTEXT_MAX_ENTRIES = 8
 # EMBEDDED DATASET — sourced from core/kb_data.py (architecture re-review R1)
 # ATTACK_TECHNIQUES + CVE_DATABASE live there as plain data, imported above.
 # ═══════════════════════════════════════════════════════════════════
-# ── Derived single-source exports (consumed by core/correlation.py) ──
-# correlation.py previously owned copies of these tables; the delete-test
-# passes (deleting its copies concentrates complexity here), and name/tactic
-# drift is impossible by construction. T1046 is MITRE-correct "Discovery"
-# here — NOT "Reconnaissance" as the old correlation table claimed.
-TECHNIQUE_NAMES: Dict[str, str] = {
-    tid: meta["name"] for tid, meta in ATTACK_TECHNIQUES.items()}
-ATTACK_TACTICS: Dict[str, str] = {
-    tid: meta["tactic"] for tid, meta in ATTACK_TECHNIQUES.items()}
-ATTACK_TACTIC_ORDER: List[str] = [
+# ═══════════════════════════════════════════════════════════════════
+# LAZY DERIVED EXPORTS — deferred to first access for fast import
+# correlation.py imports TECHNIQUE_NAMES/ATTACK_TACTICS/ATTACK_TACTIC_ORDER
+# at module level; building them eagerly added ~1s to every import chain.
+# ═══════════════════════════════════════════════════════════════════
+_TECHNIQUE_NAMES: Optional[Dict[str, str]] = None
+_ATTACK_TACTICS: Optional[Dict[str, str]] = None
+_ATTACK_TACTIC_ORDER: List[str] = [
     "Reconnaissance", "Resource Development", "Initial Access", "Execution",
     "Persistence", "Privilege Escalation", "Defense Evasion",
     "Credential Access", "Discovery", "Lateral Movement", "Collection",
     "Command and Control", "Exfiltration", "Impact",
 ]
+_SIGNATURE_INDEX: Optional[Dict[str, List[str]]] = None
+_SIGNATURE_PATTERNS: Optional[List[Tuple[re.Pattern, List[str]]]] = None
 
 
-# ═══════════════════════════════════════════════════════════════════
-# EXPLOIT SIGNATURE INDEX — compiled once at import
-# (regex -> list of CVE ids that reference it)
-# ═══════════════════════════════════════════════════════════════════
 def _build_signature_index() -> Dict[str, List[str]]:
     index: Dict[str, List[str]] = {}
     for cve in CVE_DATABASE:
@@ -96,10 +104,45 @@ def _build_signature_index() -> Dict[str, List[str]]:
     return index
 
 
-SIGNATURE_INDEX: Dict[str, List[str]] = _build_signature_index()
-SIGNATURE_PATTERNS: List[Tuple[re.Pattern, List[str]]] = [
-    (re.compile(sig, re.IGNORECASE), ids) for sig, ids in SIGNATURE_INDEX.items()
-]
+def _ensure_derived():
+    """Build TECHNIQUE_NAMES, ATTACK_TACTICS, SIGNATURE_INDEX lazily on first use.
+    Caches results on the module dict so __getattr__ is bypassed on subsequent lookups.
+    """
+    global _TECHNIQUE_NAMES, _ATTACK_TACTICS, _SIGNATURE_INDEX, _SIGNATURE_PATTERNS
+    if _TECHNIQUE_NAMES is None:
+        _TECHNIQUE_NAMES = {tid: meta["name"] for tid, meta in ATTACK_TECHNIQUES.items()}
+    if _ATTACK_TACTICS is None:
+        _ATTACK_TACTICS = {tid: meta["tactic"] for tid, meta in ATTACK_TECHNIQUES.items()}
+    if _SIGNATURE_INDEX is None:
+        _SIGNATURE_INDEX = _build_signature_index()
+    if _SIGNATURE_PATTERNS is None:
+        _SIGNATURE_PATTERNS = [
+            (re.compile(sig, re.IGNORECASE), ids)
+            for sig, ids in _SIGNATURE_INDEX.items()
+        ]
+    # Cache on module dict so __getattr__ is bypassed on subsequent lookups
+    g = globals()
+    g["TECHNIQUE_NAMES"] = _TECHNIQUE_NAMES
+    g["ATTACK_TACTICS"] = _ATTACK_TACTICS
+    g["ATTACK_TACTIC_ORDER"] = _ATTACK_TACTIC_ORDER
+    g["SIGNATURE_INDEX"] = _SIGNATURE_INDEX
+    g["SIGNATURE_PATTERNS"] = _SIGNATURE_PATTERNS
+
+
+# Module-level __getattr__ enables lazy access: TECHNIQUE_NAMES, ATTACK_TACTICS,
+# SIGNATURE_INDEX, SIGNATURE_PATTERNS are computed on first attribute lookup.
+def __getattr__(name: str):
+    if name in ("TECHNIQUE_NAMES", "ATTACK_TACTICS", "ATTACK_TACTIC_ORDER",
+                "SIGNATURE_INDEX", "SIGNATURE_PATTERNS"):
+        _ensure_derived()
+        return {
+            "TECHNIQUE_NAMES": _TECHNIQUE_NAMES,
+            "ATTACK_TACTICS": _ATTACK_TACTICS,
+            "ATTACK_TACTIC_ORDER": _ATTACK_TACTIC_ORDER,
+            "SIGNATURE_INDEX": _SIGNATURE_INDEX,
+            "SIGNATURE_PATTERNS": _SIGNATURE_PATTERNS,
+        }[name]
+    raise AttributeError(f"module 'core.knowledge_base' has no attribute {name!r}")
 
 
 class KnowledgeBase:
@@ -191,9 +234,10 @@ class KnowledgeBase:
                 texts.append(text)
                 self._corpus_keys.append(key)
                 self._corpus_meta[key] = {"type": "technique", "id": tid}
+            _ensure_sklearn()
             if _HAS_SKLEARN and texts:
                 try:
-                    self._vectorizer = TfidfVectorizer(
+                    self._vectorizer = _TfidfVectorizer(
                         lowercase=True, stop_words="english", max_features=5000,
                         ngram_range=(1, 2))
                     self._vectors = self._vectorizer.fit_transform(texts)
@@ -261,6 +305,7 @@ class KnowledgeBase:
                 entry["score"] = 1.0
                 exact_seen.add(entry["id"])
                 results.append(entry)
+        _ensure_sklearn()
         if _HAS_SKLEARN and self._vectorizer is not None and self._vectors is not None:
             try:
                 qvec = self._vectorizer.transform([query])
@@ -469,10 +514,11 @@ class KnowledgeBase:
     # ── Stats ──
     def get_stats(self) -> Dict[str, Any]:
         """Knowledge base statistics for the dashboard / status endpoint."""
+        _ensure_derived()
         return {
             "cves": len(self._cves),
             "techniques": len(self._techniques),
-            "signatures": len(SIGNATURE_INDEX),
+            "signatures": len(_SIGNATURE_INDEX),
             "index_ready": self._vectorizer is not None,
             "corpus_entries": len(self._corpus_keys),
             "severity_counts": self._severity_counts(),
