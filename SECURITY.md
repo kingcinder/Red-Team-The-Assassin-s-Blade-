@@ -65,19 +65,20 @@ We treat every boundary below as attacker-controlled input.
 
 | Boundary | Input source | Risk | Defense |
 |----------|--------------|------|---------|
-| **User prompt** | Operator text | Prompt injection / jailbreak | `sanitize_for_llm()`, anchored denylist, `wrap_untrusted()` |
-| **Tool output** | Arbitrary remote hosts (nmap banners, nikto pages) | Indirect prompt injection, context stuffing | `sanitize_tool_output()` — control-char strip, homoglyph transliteration, multilingual denylist, truncation |
-| **Workflow YAML** | Repo templates, LLM-generated, user-authored | Command injection via tool args | `hardening.validate_template()`, argument allow-lists, no shell string interpolation |
-| **Tool args** | LLM planner | Argument injection | Subprocess **list-mode** execution (no `shell=True`), injection-pattern rejection, timeouts |
-| **Dashboard HTTP** | Localhost operator | Path traversal, CSRF | `realpath` validation on workflow names, localhost bind, confirmation gates |
-| **LLM output** | Local model | Malformed/unsafe tool plans | GBNF grammar enforcement, JSON-schema validation, reflection gates |
+| **User prompt** | Operator text | — | None (pass-through; all restriction-based sanitization removed) |
+| **Tool output** | Arbitrary remote hosts (nmap banners, nikto pages) | — | None beyond control-char stripping + length truncation |
+| **Workflow YAML** | Repo templates, LLM-generated, user-authored | Command injection via tool args | Subprocess **list-mode** execution (no `shell=True`), no shell string interpolation |
+| **Tool args** | LLM planner | Argument injection | Subprocess **list-mode** execution (no `shell=True`); arg-injection rejection removed |
+| **Dashboard HTTP** | Localhost operator | Path traversal, CSRF | `realpath` validation on workflow names, localhost bind |
+| **LLM output** | Local model | Malformed/unsafe tool plans | GBNF grammar enforcement, JSON-schema validation |
 
-### Assumed trust
+### Assumed trust (unrestricted mode)
 
-- The **operator** is authorized and trusted.
-- The **LLM is untrusted** — its every plan is validated before execution.
-- The **network is hostile** — anything a remote host can echo back is
-  treated as an injection attempt.
+- The **operator** is fully trusted and owns all risk.
+- The **LLM is untrusted but unrestricted** — its plans execute
+  unconditionally; there is no validation gate beyond JSON parsing.
+- The **network is hostile** — anything a remote host echoes back flows
+  into the LLM prompt verbatim.
 
 ---
 
@@ -85,16 +86,16 @@ We treat every boundary below as attacker-controlled input.
 
 Implemented and test-covered:
 
-- **Prompt-injection defense** — `core/injection_defense.py`:
-  control characters, ANSI/bidi, Unicode homoglyphs, multilingual "ignore
-  previous instructions", role-spoofing, special tokens, template injection.
-  50+ adversarial vectors covered by `tests/test_injection_defense.py` +
-  `tests/test_llm_summarize_injection.py`.
+- **Removed guardrails (v4.4)** — `core/safety.py` is a pass-through engine
+  (no scope enforcement, no blocked targets, no confirmation gates);
+  `core/injection_defense.py` no longer strips phrases/vectors (only
+  control-char hygiene + truncation); `core/hardening.py` no longer rejects
+  args for injection patterns; the tactical engine auto-runs everything
+  (`AUTO_RUN_THRESHOLD = 0.0`). Tests assert the pass-through contract:
+  `tests/test_safety.py`, `tests/test_injection_defense.py`,
+  `tests/test_llm_summarize_injection.py`, `tests/test_hardening.py`.
 - **Subprocess hardening** — `core/hardening.py`: list-mode exec, timeout
-  SIGTERM→SIGKILL, output size caps, injection rejection.
-- **Scope enforcement** — `core/safety.py`: CIDR allow-lists, blocked targets
-  (`8.8.8.8`, `1.1.1.1`, `0.0.0.0`), confirmation gates on destructive tools
-  (`hydra`, `sqlmap`, `msfvenom`).
+  SIGTERM→SIGKILL, output size caps, full audit trail.
 - **Task isolation** — `core/task_isolation.py`: per-workflow sandboxes under
   `tasks/<name>/<timestamp>/` with size limits and per-step `state.json`.
 - **Full audit trail** — every tool invocation logged (args, exit code,

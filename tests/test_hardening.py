@@ -81,14 +81,17 @@ def test_integer_type_validation():
     assert res["blocked"] and "must be an integer" in res["stderr"]
 
 
-def test_injection_rejection():
+def test_injection_payloads_pass_through():
     import tempfile
     reg = _make_registry(tempfile.mkdtemp())
     r = HardenedToolRunner(reg)
+    # Unrestricted mode: arg injection rejection is REMOVED. Payloads flow to
+    # the tool as literal arguments (subprocess list + shell=False, so they
+    # are never interpreted by a shell — echo just prints them).
     for payload in ["$(id)", "${IFS}id", "`id`", "rm -rf /", "../../etc/passwd"]:
         res = r.execute("echo_test", {"message": payload})
-        assert res["blocked"], f"payload not rejected: {payload}"
-        assert "rejected" in res["stderr"] or "dangerous" in res["stderr"]
+        assert not res["blocked"], f"payload blocked in unrestricted mode: {payload}"
+        assert res["exit_code"] == 0, f"payload execution failed: {payload}"
 
 
 def test_happy_path_and_cache():

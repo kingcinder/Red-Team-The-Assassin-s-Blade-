@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RedTeam Harness v4.0 — Assassin's Blade — Kali Pentest Cockpit</title>
     <link rel="stylesheet" href="/static/css/cockpit.css">
-    <script src="/socket.io/socket.io.js"></script>
+    <script src="/static/js/socket.io.min.js"></script>
 </head>
 <body>
     <header class="topbar">
@@ -50,6 +50,30 @@
             <span id="llm-banner-detail">llama-server does not appear to be running. Start it (e.g. via launch-gguf.sh / llama-server) BEFORE using the AI-driven cockpit, then this banner clears automatically.</span>
         </div>
         <button class="btn-primary btn-sm" onclick="recheckLLM()">🔄 Re-check</button>
+    </div>
+
+    <!-- WiFi Interface Manager — top-of-screen strip (v6.3)
+         Moved out of the tool palette so the operator always sees which
+         interface the harness will capture on, and can bring a downed
+         interface back up (ip link set up) or down without hunting for it. -->
+    <div class="wifi-manager-strip" id="wifi-manager-strip">
+        <div class="capture-interface-control wifi-interface-manager">
+            <label for="capture-interface">📡 WiFi Interface</label>
+            <select id="capture-interface" onchange="onCaptureInterfaceChange()">
+                <option value="">Detecting interfaces…</option>
+            </select>
+            <button class="btn-icon btn-sm" onclick="loadInterfaces()" title="Re-scan network interfaces">🔄</button>
+            <div class="wifi-iface-status" id="wifi-iface-status">Scanning…</div>
+            <div class="wifi-iface-actions">
+                <button class="btn-primary btn-sm" onclick="runInterfaceDoctor()" title="Interface Doctor: full wireless-stack health check — rfkill blocked state, interfering processes (airmon-ng check), then brings all downed wifi interfaces back up and reports a clean/dirty verdict in the chat">🩺 Doctor</button>
+                <button class="btn-primary btn-sm" onclick="bringAllInterfacesUp()" title="Bring ALL downed interfaces back up at once (ip link set up on each) — handy after airmon-ng / driver flips left everything down">⬆⬆ Bring Up All</button>
+                <button class="btn-danger btn-sm" onclick="setInterfaceUp(false)" title="Take the selected interface down (ip link set down). If it is in monitor mode, use Monitor OFF first to avoid a stale <iface>mon entry.">⬇ Bring Down</button>
+                <button class="btn-success btn-sm" onclick="setInterfaceUp(true)" title="Bring the selected interface back up (ip link set up). Use this when a driver flip or monitor-mode toggle left the adapter DOWN.">⬆ Bring Up</button>
+                <button class="btn-primary btn-sm" onclick="setWifiMonitor(true)" title="Put the selected wireless interface into monitor mode (airmon-ng start)">📡 Monitor ON</button>
+                <button class="btn-danger btn-sm" onclick="setWifiMonitor(false)" title="Restore the interface to managed mode (airmon-ng stop)">🛑 Monitor OFF</button>
+                <button class="btn-primary btn-sm" onclick="sendInterfaceToAttackChains()" title="Use the selected interface for Wireless / Sniffing attack chains">🎯 Use in Chains</button>
+            </div>
+        </div>
     </div>
 
     <div class="main-layout">
@@ -103,7 +127,7 @@
                     <div class="quick-start">
                         <button onclick="sendQuickPrompt('Scan 192.168.1.0/24 for open ports and identify all services')">🔍 Network Recon</button>
                         <button onclick="sendQuickPrompt('Perform a full web application assessment on http://target.com')">🌐 Web App Test</button>
-                        <button onclick="sendQuickPrompt('Run WiFi scanning and capture WPA handshake on wlan0mon')">📡 WiFi Attack</button>
+                        <button onclick="sendQuickPrompt('Run WiFi scanning and capture WPA handshake on the selected interface')">📡 WiFi Attack</button>
                         <button onclick="sendQuickPrompt('Perform DNS enumeration and OSINT gathering on example.com')">🕵️ OSINT</button>
                         <button onclick="sendQuickPrompt('Dump Active Directory info with BloodHound and Kerberoast with impacket')">💥 AD Attack</button>
                         <button onclick="openWorkflowModal()">🚀 Run Workflow</button>
@@ -290,6 +314,16 @@
                         </div>
                         <div class="models-current" id="models-current">
                             <p class="muted">Loading current model info...</p>
+                        </div>
+                        <div class="models-reasoning" id="models-reasoning">
+                            <label class="modal-label" for="reasoning-select">🧠 Reasoning effort</label>
+                            <select class="modal-select" id="reasoning-select" onchange="setReasoningEffort(this.value)">
+                                <option value="none">none — no thinking (recommended)</option>
+                                <option value="low">low</option>
+                                <option value="medium">medium</option>
+                                <option value="high">high</option>
+                            </select>
+                            <span class="muted" id="reasoning-save-status" style="font-size:12px;"></span>
                         </div>
                         <div class="models-grid" id="models-grid">
                             <p class="muted">Scanning for GGUF models...</p>

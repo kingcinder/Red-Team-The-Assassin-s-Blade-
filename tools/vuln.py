@@ -55,6 +55,8 @@ class VulnTools(BaseTool):
         return [
             {"name": "Vulnerability Assessment Pipeline",
              "description": "Nuclei → searchsploit → privesc enumeration",
+             "best_for": "Broad, fast vulnerability triage across many targets where coverage beats depth",
+             "tradeoffs": "Template false-positives; loud network traffic; privesc enum needs a local foothold",
              "steps": [
                  {"tool": "nuclei_scan", "args": {"target": "TARGET"}, "description": "Fast vulnerability scan"},
                  {"tool": "searchsploit_search", "args": {"query": "TARGET"}, "description": "Find known exploits"},
@@ -62,6 +64,8 @@ class VulnTools(BaseTool):
              ]},
             {"name": "Container Security Pipeline",
              "description": "Trivy → Grype → system audit",
+             "best_for": "Supply-chain/container audits when you have an image to inspect before deployment",
+             "tradeoffs": "Needs image pull/registry access; vulnerability feeds can be stale offline; slow on large images",
              "steps": [
                  {"tool": "trivy_scan", "args": {"image": "TARGET"}, "description": "Comprehensive vuln scan"},
                  {"tool": "grype_scan", "args": {"image": "TARGET"}, "description": "Cross-check with Grype"},

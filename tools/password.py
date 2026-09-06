@@ -60,6 +60,8 @@ class PasswordTools(BaseTool):
         return [
             {"name": "Credential Attack Pipeline",
              "description": "Identify hash → select mode → GPU crack → report",
+             "best_for": "Cracking a known hash when you already have it — identify type, then GPU/CPU attack",
+             "tradeoffs": "Needs a GPU for speed; weak wordlists waste hours; mode autodetect can misidentify rare formats",
              "steps": [
                  {"tool": "hashid_identify", "args": {"hash": "TARGET_HASH"}, "description": "Identify hash type"},
                  {"tool": "hashcat_crack", "args": {"hash_file": "hashes.txt", "wordlist": "/usr/share/wordlists/rockyou.txt", "mode": 0}, "description": "GPU wordlist attack"},
@@ -67,6 +69,8 @@ class PasswordTools(BaseTool):
              ]},
             {"name": "Wordlist Generation Pipeline",
              "description": "CeWL target → mangle → crunch extend → crack",
+             "best_for": "Targeted password guessing when generic wordlists fail — build org-specific lists from the target",
+             "tradeoffs": "Slow to build and crack; needs the target site reachable for CeWL; coverage is narrow",
              "steps": [
                  {"tool": "cewl_gen", "args": {"url": "TARGET_URL", "depth": 2}, "description": "Scrape website for keywords"},
                  {"tool": "rsmangler_mangle", "args": {"wordlist": "cewl_output.txt"}, "description": "Apply permutations"},

@@ -1,5 +1,61 @@
-name: wf_b
+name: "Service & Vulnerability Enumeration"
+description: "Post-scan service hardening audit: deep service enumeration, vulnerability triage with NSE scripts, and public-exploit lookup to score attack surface."
+category: vuln
+attack_vector: "Service enumeration → vulnerability identification → exploit feasibility assessment"
+variables:
+  target:
+    required: true
+    description: "Target host IP"
+  ports:
+    required: false
+    default: "-"
+    description: "Port range to enumerate (default: all)"
+cutting_edge: false
+references: ["nmap -sC -sV", "searchsploit", "CVE databases"]
+
 steps:
-  - name: ping
-    tool: nmap_scan
-    args: {target: '{{target}}'}
+  - name: service_enum_full
+    tool: service_enum
+    description: "Deep service/version detection with default scripts on all ports"
+    args:
+      target: "{{target}}"
+      ports: "{{ports}}"
+    expected_output: "tcp.*open|running|version"
+    timeout: 900
+    gate: true
+    retries: 2
+
+  - name: nmap_vuln_scan
+    tool: nmap_vuln_scan
+    description: "Run NSE vuln scripts to identify known CVEs"
+    args:
+      target: "{{target}}"
+      script: "vuln"
+    expected_output: "VULNERABLE|CVE-|vuln|error"
+    timeout: 900
+    gate: false
+    retries: 1
+    extracts:
+      - var: cve_hits
+        regex: "(CVE-\\d{4}-\\d+)"
+
+  - name: snmp_enum
+    tool: snmpwalk_enum
+    description: "Attempt SNMP enumeration if UDP 161 is open"
+    args:
+      target: "{{target}}"
+      community: "public"
+    expected_output: "iso|enterprise|STRING|No Response|Timeout"
+    timeout: 120
+    gate: false
+    retries: 1
+
+  - name: exploit_lookup
+    tool: searchsploit_exploit
+    description: "Look up public exploits matching identified services and CVEs"
+    args:
+      query: "{{cve_hits}}"
+    expected_output: "Exploit Title|Path|CVE-|\\d+"
+    timeout: 60
+    gate: false
+    retries: 1

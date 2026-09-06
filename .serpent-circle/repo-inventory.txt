@@ -1,0 +1,35 @@
+# Serpent Circle — repo inventory
+generated_at: 2026-08-28T02:12:59Z
+
+## Git state
+branch:            main
+remote:            git@github.com:kingcinder/Red-Team-The-Assassin-s-Blade-.git
+uncommitted files: 44
+HEAD:              f59da8d feat: air-gapped provisioning manifest — single source of truth for deps and tools
+
+## Languages
+   104  python
+    50  json
+    40  other
+    32  yaml
+     9  markdown
+     3  shell
+     2  javascript
+     1  css
+     1  html
+
+## Bloat / dead-code candidates
+--- dead/legacy dirs ---
+--- backup / junk files ---
+workflows/templates/__pycache__/__init__.cpython-312.pyc
+dashboard/blueprints/__pycache__/msf.cpython-312.pyc
+dashboard/blueprints/__pycache__/core.cpython-312.pyc
+dashboard/blueprints/__pycache__/replay.cpython-312.pyc
+dashboard/blueprints/__pycache__/workflows.cpython-312.pyc
+dashboard/blueprints/__pycache__/campaigns.cpython-312.pyc
+dashboard/blueprints/__pycache__/__init__.cpython-312.pyc
+dashboard/blueprints/__pycache__/memory_kb.cpython-312.pyc
+--- empty files ---
+--- duplicate-name copies ---
+--- oversized files (>1MB) ---
+wheels/gevent-26.8.0-cp312-cp312-manylinux_2_28_x86_64.whl

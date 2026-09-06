@@ -45,6 +45,8 @@ class OSINTTools(BaseTool):
         return [
             {"name": "Domain Intelligence Pipeline",
              "description": "WHOIS → DNS → theHarvester → Sherlock → metadata",
+             "best_for": "Passive external recon of a domain — infra, mail, subdomains, and personnel in one pass",
+             "tradeoffs": "Relies on third-party sources (needs connectivity); slow rate-limits; data can be stale",
              "steps": [
                  {"tool": "whois_lookup", "args": {"target": "TARGET"}, "description": "Registration info"},
                  {"tool": "dig_dns", "args": {"domain": "TARGET", "record_type": "A"}, "description": "A records"},
@@ -55,6 +57,8 @@ class OSINTTools(BaseTool):
              ]},
             {"name": "Person OSINT Pipeline",
              "description": "Sherlock → Holehe → theHarvester → metadata",
+             "best_for": "Targeting a specific person — username and email footprinting for social engineering",
+             "tradeoffs": "External lookups need connectivity; results are noisy; coverage varies by platform",
              "steps": [
                  {"tool": "sherlock_search", "args": {"username": "TARGET_USERNAME"}, "description": "Social media hunting"},
                  {"tool": "holehe_check", "args": {"email": "TARGET_EMAIL"}, "description": "Registration check"},

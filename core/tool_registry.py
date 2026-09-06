@@ -7,6 +7,7 @@ import os
 import shutil
 import logging
 import subprocess
+import json
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from core.command_builder import _build_command as _build_command_impl
@@ -35,10 +36,29 @@ class ToolDefinition:
         self.path = None
 
     def detect(self):
-        """Check if the tool is installed on the system."""
-        if self.binary:
-            self.path = shutil.which(self.binary)
-            self.installed = self.path is not None
+        """Check if the tool is installed on the system.
+        Searches PATH plus ~/go/bin/ (where Go-based security tools land)
+        and ~/.local/bin/ (where pip --user installs land).
+        Tools with no binary (internal harness functions) are always installed.
+        """
+        if not self.binary:
+            # Internal harness functions (install_tool, list_missing_tools, etc.)
+            self.installed = True
+            return True
+        self.path = shutil.which(self.binary)
+        if not self.path:
+            # Fallback: check common security-tool directories
+            home = os.path.expanduser("~")
+            for extra_dir in [
+                os.path.join(home, "go", "bin"),
+                os.path.join(home, ".local", "bin"),
+                "/usr/local/bin",
+            ]:
+                candidate = os.path.join(extra_dir, self.binary)
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    self.path = candidate
+                    break
+        self.installed = self.path is not None
         return self.installed
 
     def to_dict(self) -> dict:
@@ -47,6 +67,7 @@ class ToolDefinition:
             "description": self.description, "binary": self.binary,
             "installed": self.installed, "path": self.path,
             "destructive": self.destructive, "parameters": self.parameters,
+            "timeout": self.timeout, "prereq_tools": self.prereq_tools,
         }
 
     def to_llm_definition(self) -> dict:
@@ -101,6 +122,7 @@ class ToolRegistry:
         self._register_stress()
         self._register_hardware()
         self._register_utility()
+        self._register_system()
 
     # ──────────────── RECONNAISSANCE ────────────────
     def _register_recon(self):
@@ -109,7 +131,7 @@ class ToolRegistry:
             "Port scanner — discovers hosts, ports, services, OS on a target network.",
             "nmap", {"target": {"type":"string","description":"Target IP, CIDR, or hostname","required":True},
             "ports":{"type":"string","description":"Port range (e.g. '1-1000','80,443','-')"},
-            "scan_type":{"type":"string","description":"Scan flags: -sS (SYN), -sT (TCP), -sU (UDP), -sV (version), -sC (scripts)"},
+            "scan_type":{"type":"string","description":"Scan flags: -sT (TCP connect, works unprivileged) or -sS (SYN, requires root), -sU (UDP), -sV (version), -sC (scripts)"},
             "flags":{"type":"string","description":"Additional nmap flags"}}, timeout=600))
         self._register(ToolDefinition("nmap_vuln_scan", cat,
             "Nmap NSE vulnerability scripts against target.","nmap",
@@ -353,7 +375,9 @@ class ToolRegistry:
         self._register(ToolDefinition("airodump_capture", cat,
             "Airodump-ng — capture raw 802.11 frames.","airodump-ng",
             {"interface":{"type":"string","description":"Monitor-mode interface","required":True},
-            "channel":{"type":"string","description":"Channel(s)"}}, timeout=300))
+            "channel":{"type":"string","description":"Channel(s)"},
+            "bssid":{"type":"string","description":"Target AP BSSID to filter capture to"},
+            "capture_file":{"type":"string","description":"-w output prefix for the .cap capture file (chained to aircrack/hashcat)"}}, timeout=300))
         self._register(ToolDefinition("aireplay_attack", cat,
             "Aireplay-ng — inject frames for deauth, fake auth, replay.","aireplay-ng",
             {"interface":{"type":"string","description":"Monitor-mode interface","required":True},
@@ -365,7 +389,22 @@ class ToolRegistry:
             "bssid":{"type":"string","description":"Target AP BSSID","required":True}}, timeout=3600, destructive=True))
         self._register(ToolDefinition("wifite_auto", cat,
             "Automated wireless attack tool — scans, attacks, cracks.","wifite",
-            {"interface":{"type":"string","description":"Wireless interface"}}, timeout=3600, destructive=True))
+            {"interface":{"type":"string","description":"Wireless interface"},
+             "wordlist":{"type":"string","description":"Wordlist to crack with (wifite --dict)"}}, timeout=3600, destructive=True))
+        self._register(ToolDefinition("hcxdumptool_capture", cat,
+            "hcxdumptool — passive PMKID/EAPOL capture. Captures PMKID hashes from a target AP without deauth, feeding a .pcapng that hcxpcapngtool converts to hashcat-ready .hc22000.",
+            "hcxdumptool",
+            {"interface":{"type":"string","description":"Monitor-mode interface","required":True},
+            "output_file":{"type":"string","description":"Output .pcapng file path","required":True},
+            "channel":{"type":"string","description":"Channel to capture on"},
+            "bssid":{"type":"string","description":"Target AP BSSID filter"},
+            "filter_threshold":{"type":"integer","description":"--filter_threshold packets before stop (0 = keep running)"},
+            "capture_duration":{"type":"integer","description":"Cap capture at N seconds (harness kills after timeout; this adds --status)"}}, timeout=600, destructive=True))
+        self._register(ToolDefinition("hcxpcapngtool_convert", cat,
+            "hcxpcapngtool — convert a .pcapng/.cap 802.11 capture into hashcat-ready .hc22000 PMKID hash files.",
+            "hcxpcapngtool",
+            {"input":{"type":"string","description":"Input capture file (.pcapng/.cap)","required":True},
+            "output_file":{"type":"string","description":"Output .hc22000 hash file path","required":True}}, timeout=600))
         self._register(ToolDefinition("kismet_scan", cat,
             "Wireless network detector, sniffer, and IDS.","kismet",
             {"interface":{"type":"string","description":"Wireless interface"}, "time":{"type":"integer","description":"Capture duration seconds"}}, timeout=600))
@@ -373,6 +412,19 @@ class ToolRegistry:
             "Swiss-Army knife for WiFi, BLE, and Ethernet attacks.","bettercap",
             {"target":{"type":"string","description":"Target IP/range"},
             "module":{"type":"string","description":"Module (net.probe,wifi,…)"}}, timeout=300, destructive=True))
+        self._register(ToolDefinition("monitor_mode_enable", cat,
+            "Put a wireless interface into monitor mode (requires root via airmon-ng).","airmon-ng",
+            {"interface":{"type":"string","description":"Wireless interface to enable monitor mode on","required":True}}, timeout=30))
+        self._register(ToolDefinition("monitor_mode_disable", cat,
+            "Restore a wireless interface from monitor mode to managed mode.","airmon-ng",
+            {"interface":{"type":"string","description":"Monitor-mode interface to disable","required":True}}, timeout=30))
+        # ── Wireless-stack diagnostics (Interface Doctor) ──
+        self._register(ToolDefinition("rfkill_status", cat,
+            "Report rfkill state — whether any wireless adapters are soft/hard blocked.",
+            "rfkill", {}, timeout=15))
+        self._register(ToolDefinition("airmon_check", cat,
+            "Check for processes interfering with the wireless stack (airmon-ng check).",
+            "airmon-ng", {}, timeout=30))
 
     # ──────────────── SNIFFING & SPOOFING ────────────────
     def _register_sniffing(self):
@@ -390,7 +442,8 @@ class ToolRegistry:
             "duration":{"type":"integer","description":"Capture duration seconds"}}, timeout=300))
         self._register(ToolDefinition("ettercap_mitm", cat,
             "Man-in-the-middle attack suite for LAN.","ettercap",
-            {"target1":{"type":"string","description":"Target 1 IP"},
+            {"interface":{"type":"string","description":"Network interface"},
+            "target1":{"type":"string","description":"Target 1 IP"},
             "target2":{"type":"string","description":"Target 2 IP"},
             "method":{"type":"string","description":"arp, icmp, dhcp, port"}}, timeout=300, destructive=True))
         self._register(ToolDefinition("responder_poison", cat,
@@ -689,11 +742,14 @@ class ToolRegistry:
     # ──────────────── UTILITY ────────────────
     def _register_utility(self):
         cat = "utility"
+        self._register(ToolDefinition("interface_discovery", cat,
+            "Discover all network interfaces on the system (IP, MAC, state, type).",
+            "ip", {"show":{"type":"string","description":"Filter: links, addrs, routes"}}, timeout=10))
         self._register(ToolDefinition("wireshark_gui", cat,
             "Wireshark — graphical network protocol analyzer.","wireshark",
             {"file":{"type":"string","description":"PCAP file to open"}}, timeout=30))
         self._register(ToolDefinition("hexeditor_edit", cat,
-            "Hex editor for binary file analysis and patching.","hexeditor",
+            "Hex editor for binary file analysis and patching.","hexedit",
             {"file":{"type":"string","description":"File to edit","required":True}}, timeout=30))
         self._register(ToolDefinition("ldd_analyze", cat,
             "List dynamic library dependencies of a binary.","ldd",
@@ -715,6 +771,94 @@ class ToolRegistry:
         self._register(ToolDefinition("check_tool_status", cat,
             "Check if a specific tool is installed, where it lives, and if it can be auto-installed.","",
             {"tool_name":{"type":"string","description":"Tool name to check","required":True}}, timeout=10))
+
+    # ──────────────── SYSTEM / BACKEND MANIPULATION ────────────────
+    # Backend-control toolset that lets the autonomous LLM configure the
+    # host that runs the harness — services, processes, networking, kernel
+    # params, firewall, hostname, package manager and file ownership — so
+    # it can stand up listeners, pivots and infrastructure needed to drive
+    # workflows and attack-chains end-to-end.
+    def _register_system(self):
+        cat = "system"
+        # ── Process control ──
+        self._register(ToolDefinition("process_list", cat,
+            "List running processes (ps -ef full command lines, or -e with full=false). Read stdout and post-filter by name/pattern yourself.",
+            "ps",
+            {"full":{"type":"boolean","description":"Show full command lines (-ef instead of -e)"}}, timeout=15))
+        self._register(ToolDefinition("process_kill", cat,
+            "Kill a process by PID (default SIGTERM) or name (pkill). Requires root for other users' processes.",
+            "kill",
+            {"pid":{"type":"integer","description":"PID to kill"},
+             "name":{"type":"string","description":"Process name/pattern to pkill"},
+             "signal":{"type":"integer","description":"Signal number, default 15 (SIGTERM); 9 = SIGKILL"},
+             "force":{"type":"boolean","description":"Use -9 SIGKILL"}}, timeout=15, destructive=True))
+        # ── Service control (systemd) ──
+        self._register(ToolDefinition("service_control", cat,
+            "Manage a systemd service unit: start, stop, restart, enable, disable, status.",
+            "systemctl",
+            {"unit":{"type":"string","description":"Service unit name (e.g. ssh, nginx, docker)","required":True},
+             "action":{"type":"string","description":"start, stop, restart, reload, enable, disable, status","required":True}}, timeout=60, destructive=True))
+        # ── Network interface configuration ──
+        self._register(ToolDefinition("iface_up", cat,
+            "Bring a network interface up (ip link set up).",
+            "ip",
+            {"interface":{"type":"string","description":"Interface name (e.g. eth0, wlan0mon)","required":True}}, timeout=30, destructive=True))
+        self._register(ToolDefinition("iface_down", cat,
+            "Take a network interface down (ip link set down).",
+            "ip",
+            {"interface":{"type":"string","description":"Interface name","required":True}}, timeout=30, destructive=True))
+        self._register(ToolDefinition("iface_addr", cat,
+            "Add or delete an IP address on an interface (ip addr add/del).",
+            "ip",
+            {"interface":{"type":"string","description":"Interface name","required":True},
+             "address":{"type":"string","description":"IP/CIDR (e.g. 10.0.0.10/24)","required":True},
+             "action":{"type":"string","description":"add or del","required":True}}, timeout=30, destructive=True))
+        self._register(ToolDefinition("route_config", cat,
+            "Add or delete an IP route (ip route add/del).",
+            "ip",
+            {"network":{"type":"string","description":"Destination network (e.g. 192.168.0.0/24)","required":True},
+             "gateway":{"type":"string","description":"Gateway IP","required":True},
+             "action":{"type":"string","description":"add or del","required":True}}, timeout=30, destructive=True))
+        # ── Kernel parameters ──
+        self._register(ToolDefinition("kernel_sysctl", cat,
+            "Read or set a kernel parameter via sysctl. E.g. ip_forward, ipv6, swappiness.",
+            "sysctl",
+            {"key":{"type":"string","description":"Sysctl key (e.g. net.ipv4.ip_forward)","required":True},
+             "value":{"type":"string","description":"Value to set (omit to just read the current value)"}}, timeout=15, destructive=True))
+        # ── Firewall (iptables) ──
+        self._register(ToolDefinition("firewall_rule", cat,
+            "Add or delete an iptables rule (custom raw rule string). Crowds out MITM/redirect/pivot setups.",
+            "iptables",
+            {"chain":{"type":"string","description":"Chain: INPUT, FORWARD, OUTPUT, PREROUTING, POSTROUTING","required":True},
+             "spec":{"type":"string","description":"Full rule spec after the chain (e.g. -p tcp --dport 8080 -j REDIRECT --to-port 80)","required":True},
+             "action":{"type":"string","description":"add (-A) or delete (-D)","required":True}}, timeout=30, destructive=True))
+        # ── Hostname ──
+        self._register(ToolDefinition("hostname_set", cat,
+            "Set the system hostname via hostnamectl.",
+            "hostnamectl",
+            {"name":{"type":"string","description":"New hostname","required":True}}, timeout=30, destructive=True))
+        # ── File ownership / permissions ──
+        self._register(ToolDefinition("file_chmod", cat,
+            "Change file mode/permissions (chmod).",
+            "chmod",
+            {"mode":{"type":"string","description":"Mode (e.g. 755, 600, u+x)","required":True},
+             "path":{"type":"string","description":"File or directory","required":True}}, timeout=15, destructive=True))
+        self._register(ToolDefinition("file_chown", cat,
+            "Change file owner/group (chown). Requires root.",
+            "chown",
+            {"owner":{"type":"string","description":"Owner[:group] (e.g. cody:cody)","required":True},
+             "path":{"type":"string","description":"File or directory","required":True}}, timeout=15, destructive=True))
+        # ── Package manager ──
+        self._register(ToolDefinition("package_manager", cat,
+            "Manage packages via apt-get: update, install, remove, upgrade.",
+            "apt-get",
+            {"action":{"type":"string","description":"update, upgrade, install, remove, autoremove","required":True},
+             "packages":{"type":"string","description":"Space-separated package names (for install/remove)"},}, timeout=600, destructive=True))
+        # ── Host facts / OS info ──
+        self._register(ToolDefinition("system_info", cat,
+            "Collect OS/fact information: kernel, distribution, hostname, uptime, memory, disks.",
+            "uname",
+            {"section":{"type":"string","description":"kernel, distro, hostname, memory, disk, all (default all)"}}, timeout=20))
 
     # ═══════════════════════════════════════════════════════════════
     # REGISTRY MANAGEMENT
@@ -754,6 +898,46 @@ class ToolRegistry:
 
     def get_total_count(self) -> int:
         return len(self._tools)
+
+    def get_interface_inventory(self) -> List[Dict[str, Any]]:
+        """Return live network interfaces and their operational state."""
+        try:
+            result = subprocess.run(
+                ["ip", "-j", "link", "show"], capture_output=True, text=True,
+                timeout=5, check=False)
+            if result.returncode == 0:
+                interfaces = []
+                decoded = json.loads(result.stdout or "[]")
+                if not isinstance(decoded, list):
+                    raise ValueError("ip -j link returned a non-list payload")
+                for item in decoded:
+                    if not isinstance(item, dict):
+                        continue
+                    name = item.get("ifname")
+                    if not name or name == "lo":
+                        continue
+                    flags = item.get("flags", [])
+                    interfaces.append({
+                        "name": name,
+                        "kind": item.get("link_type", "unknown"),
+                        "up": "UP" in flags,
+                        "wireless": os.path.isdir(f"/sys/class/net/{name}/wireless"),
+                        # airmon-ng names monitor-mode interfaces <iface>mon
+                        "monitor": name.endswith("mon") and os.path.isdir(f"/sys/class/net/{name}/wireless"),
+                        "flags": flags,
+                    })
+                return interfaces
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+        try:
+            names = os.listdir("/sys/class/net")
+        except OSError:
+            names = []
+        return [{"name": n, "kind": "unknown", "up": True,
+                 "wireless": os.path.isdir(f"/sys/class/net/{n}/wireless"),
+                 "monitor": n.endswith("mon") and os.path.isdir(f"/sys/class/net/{n}/wireless"),
+                 "flags": []}
+                for n in names if n != "lo"]
 
     def get_tool_definitions_json(self) -> str:
         lines = []
@@ -799,9 +983,15 @@ class ToolRegistry:
             return {"stdout":"", "stderr":str(e), "exit_code":-1,
                     "duration": round(dur, 2), "command":" ".join(cmd)}
 
-    def _build_command(self, tool: ToolDefinition, args: dict) -> list:
-        """Delegate command construction to the dedicated command_builder module."""
-        return _build_command_impl(self._output_dir, tool, args)
+    def _build_command(self, tool: ToolDefinition, args: dict,
+                       output_dir: Optional[str] = None) -> list:
+        """Delegate command construction to the dedicated command_builder module.
+
+        ``output_dir`` may be overridden by the caller (e.g. HardenedToolRunner
+        passes the per-task sandbox root) so relative capture-file args are
+        anchored to the same absolute base the process actually runs from.
+        """
+        return _build_command_impl(output_dir or self._output_dir, tool, args)
 
     def get_status(self) -> dict:
         categories = {}

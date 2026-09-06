@@ -61,6 +61,39 @@ def register(ctx):
     def api_tools_installed():
         return jsonify([t.to_dict() for t in orchestrator.tools.get_installed_tools()])
 
+    @app.route("/api/interfaces")
+    def api_interfaces():
+        """Return live interfaces so capture tools never silently assume eth0."""
+        return jsonify({"interfaces": orchestrator.tools.get_interface_inventory()})
+
+    @app.route("/api/capture-interface", methods=["GET", "POST"])
+    def api_capture_interface():
+        """Get/set the last-used capture interface + scan hints on the server.
+
+        The cockpit persists its pick to localStorage *and* mirrors it here,
+        so API/CLI/autonomous calls that omit the interface still default to
+        the operator's adapter via orchestrator.execute_direct().
+        GET:  return last-used {interface, channel, bssid} (nulls when absent).
+        POST: body may carry {"interface"}, {"channel"}, {"bssid"}; an all-blank
+              body clears; each present field is stored independently.
+        """
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+            store = orchestrator.capture_state
+            iface = data.get("interface")
+            channel = data.get("channel")
+            bssid = data.get("bssid")
+            if not any([iface, channel, bssid]):
+                store.clear()
+            else:
+                if iface:
+                    store.set(iface)
+                if channel or bssid:
+                    store.set_scan(channel=channel or None, bssid=bssid or None)
+            return jsonify({"interface": store.get(), **store.get_scan()})
+        store = orchestrator.capture_state
+        return jsonify({"interface": store.get(), **store.get_scan()})
+
     @app.route("/api/tools/quick-commands")
     def api_quick_commands():
         commands = []
@@ -213,9 +246,13 @@ def register(ctx):
             return
 
         try:
+            logger.info("send_task: starting process_prompt")
             result = orchestrator.process_prompt(prompt, session_id, stream=True)
+            logger.info("send_task: process_prompt returned, emitting task_complete")
             emit("task_complete", result)
+            logger.info("send_task: task_complete emitted")
         except Exception as e:
+            logger.error(f"send_task: error: {e}")
             emit("error", {"message": str(e)})
 
     @socketio.on("execute_tool")
@@ -315,13 +352,12 @@ def register(ctx):
             emit("error", {"message": str(e)})
 
     # ═══════════════════════════════════════════════════
-    # Safety: Tool Confirmation (audit item #7)
+    # Safety: Tool Confirmation (unrestricted mode — no-op, API compat)
     # ═══════════════════════════════════════════════════
     @app.route("/api/safety/confirm", methods=["POST"])
     def api_safety_confirm():
-        """Approve a tool that requires human confirmation.
-        The approval is single-use and cannot be forged by the LLM because it
-        originates from this HTTP API, not from tool_args the model controls.
+        """Approve a tool. Unrestricted mode: nothing requires confirmation,
+        so this is a compatibility no-op that always succeeds.
         """
         data = request.get_json()
         tool_name = data.get("tool")
@@ -333,7 +369,7 @@ def register(ctx):
 
     @app.route("/api/safety/policy")
     def api_safety_policy():
-        """Get the current safety policy (scope, blocked, confirmations)."""
+        """Get the current safety policy (all enforcement disabled)."""
         return jsonify(orchestrator.safety.get_policy_summary())
 
     @app.route("/api/safety/audit")
@@ -357,6 +393,27 @@ def register(ctx):
         """Get info about the currently loaded model."""
         from core.model_manager import get_current_model_info
         return jsonify(get_current_model_info(orchestrator.llm))
+
+    @app.route("/api/models/reasoning", methods=["GET", "POST", "OPTIONS"])
+    def api_models_reasoning():
+        """
+        GET:  report the current reasoning_effort.
+        POST: set the reasoning_effort on the running backend + config.yaml
+              so it applies to the next request.
+        """
+        from core import model_manager
+        if request.method == "OPTIONS":
+            return ("", 204)
+        if request.method == "GET":
+            value = getattr(orchestrator.llm, "reasoning_effort", "none")
+            return jsonify({"reasoning_effort": value,
+                            "allowed": list(model_manager.REASONING_EFFORT_VALUES)})
+        data = request.get_json(silent=True) or {}
+        result = model_manager.set_reasoning_effort(
+            orchestrator.llm, config, data.get("reasoning_effort", "none"))
+        if not result.get("success"):
+            return jsonify(result), 400
+        return jsonify(result)
 
     @app.route("/api/models/swap", methods=["POST"])
     def api_models_swap():

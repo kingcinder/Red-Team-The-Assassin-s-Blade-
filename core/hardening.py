@@ -27,35 +27,6 @@ DEFAULT_MAX_OUTPUT_CHARS = 100_000
 MAX_CONCURRENT_EXECUTIONS = 3
 GRACE_PERIOD_SECONDS = 5   # SIGTERM → SIGKILL gap
 
-# ── Injection patterns to reject in string args ──
-#
-# THREAT MODEL (audit item #10):
-# All tool execution uses subprocess with a LIST and shell=False, so bare
-# shell metacharacters (&, ;, $, |, ( ) in URLs, POST data, headers,
-# passwords) are NEVER interpreted by a shell. These patterns are therefore
-# defense-in-depth against a DIFFERENT threat: tools that re-interpret their
-# own arguments (e.g., tools that shell out internally, write attacker-
-# controlled text into a config file they later source, or parse strings
-# with their own shell-like DSL). Against pure shell injection, shell=False
-# alone is the primary mitigation.
-#
-# Audit: only tools that themselves re-interpret args are at risk. Known
-# offenders: anything building a resource file, config, or script from a
-# string arg (msf_resource, searchsploit_exploit, curl headers).
-INJECTION_PATTERNS = [
-    r'\$\(',                     # $(...) command substitution
-    r'\$\{',                     # ${...} parameter expansion (e.g. ${IFS})
-    r'`[^`]*`',                  # backtick subshell
-    r'&&|\|\|',                  # && / ||
-    r';\s*(?:sh|bash|nc|ncat|python|perl|wget|curl|/bin/|/usr/)',  # ; + command
-    r'\|\s*(?:sh|bash|nc|ncat|python|perl|wget|curl|/bin/|/usr/)',  # | + command
-    r'\|\s*tee\s+/',            # | tee / (rootkit write)
-    r'\/etc\/(passwd|shadow)',   # Sensitive file reads
-    r'rm\s+-rf',                 # Destructive commands within args
-    r'\.\.[/\\]',              # Path traversal
-]
-
-
 class HardenedToolRunner:
     """
     Wraps ToolRegistry with security hardening:
@@ -122,7 +93,11 @@ class HardenedToolRunner:
 
         # ── 3. Build command (delegate to registry) ──
         try:
-            cmd = self.registry._build_command(tool, safe_args)
+            # Thread the sandbox root into command construction so relative
+            # capture-file args (airdump -w / aircrack cap_file) are anchored
+            # to the same absolute base the process runs from (cwd).
+            cmd = self.registry._build_command(
+                tool, safe_args, output_dir=sandbox_output_dir)
         except Exception as e:
             with self._lock:
                 self._active_executions -= 1
@@ -245,17 +220,6 @@ class HardenedToolRunner:
             elif ptype == "boolean":
                 if not isinstance(val, bool) and str(val).lower() not in ("true", "false", "1", "0"):
                     return False, f"Param '{pname}' must be boolean, got: {val}"
-
-            # Command injection rejection: string values must not contain
-            # shell metacharacters that could escape the arg boundary.
-            # We REJECT (never silently mutate) so the operator/LLM sees the
-            # refusal and the tool never runs against altered input.
-            if isinstance(val, str):
-                for pattern in INJECTION_PATTERNS:
-                    if re.search(pattern, val):
-                        return False, (f"Param '{pname}' rejected: contains dangerous "
-                                       f"characters (shell metachars/path traversal). "
-                                       f"Value: {val[:50]}")
 
         return True, "ok"
 

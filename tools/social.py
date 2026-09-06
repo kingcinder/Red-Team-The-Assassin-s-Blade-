@@ -31,10 +31,12 @@ class SocialTools(BaseTool):
         return [
             {"name": "Phishing Engagement Pipeline",
              "description": "SET → GoPhish → BeEF layered attack",
+             "best_for": "Full phishing lifecycle — GoPhish campaigns plus BeEF browser hooks for payload delivery",
+             "tradeoffs": "Mostly interactive GUI tools (less automatable); needs delivery infrastructure; high OPSEC risk",
              "steps": [
-                 {"note": "1. Use GoPhish to design and send phishing emails"},
-                 {"note": "2. Land target on BeEF-hooked page"},
-                 {"note": "3. Use BeEF to fingerprint, pivot, and exploit browser"},
-                 {"note": "4. Use SEToolkit for credential harvesting pages"},
+                 {"tool": "gophish_setup", "args": {"target": "TARGET"}, "description": "Set up GoPhish campaign to send phishing emails"},
+                 {"tool": "beef_hook", "args": {"target": "TARGET"}, "description": "Hook target browser via BeEF XSS framework"},
+                 {"tool": "setoolkit_attack", "args": {"attack": "1", "target": "TARGET"}, "description": "Fingerprint browser and pivot via BeEF"},
+                 {"tool": "setoolkit_attack", "args": {"attack": "2", "target": "TARGET"}, "description": "Credential harvesting page via SEToolkit"},
              ]},
         ]

@@ -34,6 +34,8 @@ class StressTools(BaseTool):
         return [
             {"name": "Web App Stress Test Pipeline",
              "description": "SYN flood → slow HTTP → load benchmark",
+             "best_for": "DoS-resilience testing of your own or authorized infrastructure — from network to app layer",
+             "tradeoffs": "Will take the target down if unmitigated; only run on authorized hosts; noisy",
              "steps": [
                  {"tool": "hping3_test", "args": {"target": "TARGET", "port": 80, "syn": True, "flood": True}, "description": "TCP SYN flood baseline"},
                  {"tool": "slowhttptest_test", "args": {"target": "TARGET", "mode": "B"}, "description": "Application-layer Slowloris"},

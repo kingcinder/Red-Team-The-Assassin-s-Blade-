@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Callable
 
 from core.dynamic_priority import DynamicPriorityEngine
+from core.prompt_builder import PHASE_TOOLS
 
 logger = logging.getLogger("redteam.autonomous")
 
@@ -200,6 +201,13 @@ class AutonomousAgent:
         # Check execute_direct availability
         self._has_execute_direct = hasattr(self.orch, 'execute_direct')
 
+        # v6.3.2: backend store mirroring the operator's capture interface +
+        # last airodump scan hints (populated by the cockpit). The autonomous
+        # LLM's tool-selection context is seeded from it so wireless/sniffing
+        # steps default to the adapter the operator picked — no per-step
+        # interface guessing in generated args.
+        self._capture_state = getattr(self.orch, 'capture_state', None)
+
         # Stats
         self._start_time = None
         self._total_steps = 0
@@ -209,6 +217,84 @@ class AutonomousAgent:
         # Mission Control history (v4.2)
         self._retry_history: List[Dict[str, Any]] = []
         self._timeline: List[Dict[str, Any]] = []  # phase-transition timeline
+
+    # ── v6.3.2: capture context for the LLM tool-selection prompt ─────
+    def _interface_inventory(self) -> List[str]:
+        """Return a one-line-per-interface description of live network devs.
+
+        Reads /sys/class/net (via orchestrator.tools.get_interface_inventory)
+        so the LLM sees the REAL post-airmon names (e.g. wlan0mon) instead of
+        guessing wlan0/eth0. Returns [] when the inventory is unavailable.
+        """
+        try:
+            inv = self.orch.tools.get_interface_inventory()
+        except Exception:
+            inv = []
+        if not inv:
+            return []
+        lines = []
+        for it in inv:
+            name = it.get("name")
+            if not name:
+                continue
+            tags = []
+            tags.append("UP" if it.get("up") else "DOWN")
+            tags.append("wireless" if it.get("wireless") else "wired")
+            if it.get("monitor"):
+                tags.append("MONITOR")
+            # single-quoted join for Python 3.11 portability / house style
+            lines.append(f"- {name}: {' '.join(tags)}")
+        return lines
+
+    def _capture_context(self) -> str:
+        """Build an interface/scan-hint context block for the autonomous LLM.
+
+        Echos the LIVE network interface list (from /sys/class/net) plus the
+        operator-selected capture interface and last airodump channel/bssid,
+        so the model plans around real post-airmon names (wlan0mon) instead of
+        guessing generic adapters in generated args. Returns empty string only
+        when there is no interface inventory AND no stored selection.
+        """
+        iface = None
+        scan = {}
+        if self._capture_state is not None:
+            try:
+                iface = self._capture_state.get()
+                scan = self._capture_state.get_scan() or {}
+            except Exception as exc:
+                logger.warning("autonomous: capture_context unavailable: %s", exc)
+                iface = None
+                scan = {}
+        lines = []
+        # 1. Live inventory first (may echo the monitor names airmon-ng created).
+        inv_lines = self._interface_inventory()
+        if inv_lines:
+            lines.append("Live network interfaces (from /sys/class/net):\n" + "\n".join(inv_lines))
+        # 2. Operator-selected capture interface (when known).
+        if iface:
+            lines.append(
+                f"The operator has selected capture interface \"{iface}\" for this "
+                f"engagement. Use it for ALL wireless and sniffing tools "
+                f"(airodump_capture, aireplay_attack, reaver_attack, wifite_auto, "
+                f"kismet_scan, hcxdumptool_capture, monitor_mode_enable/disable, "
+                f"tcpdump_capture, tshark_capture, ettercap_mitm, responder_poison). "
+                f"Never guess or hardcode an adapter — always set the interface "
+                f"param to \"{iface}\".")
+            if scan.get("channel"):
+                lines.append(
+                    f"Last airodump scan hints: channel {scan['channel']}"
+                    + (f", bssid {scan['bssid']}" if scan.get("bssid") else "")
+                    + ". Prefer this channel; only set bssid when you intend to target that specific AP.")
+        if not lines:
+            return ""
+        return "[CAPTURE CONTEXT] " + "\n".join(lines)
+
+    @staticmethod
+    def _phase_uses_wireless(phase: str) -> bool:
+        """True when a kill-chain phase involves wireless/sniffing tools."""
+        return bool(PHASE_TOOLS.get(phase)) and (
+            "wireless" in PHASE_TOOLS[phase] or "sniffing" in PHASE_TOOLS[phase])
+
 
     # ═══════════════════════════════════════════════════════════════
     # PUBLIC API
@@ -238,7 +324,9 @@ class AutonomousAgent:
                 logger.warning("Autonomous agent already running")
                 return {"status": "already_running"}
 
-            self._targets = list(targets)
+            self._targets = [str(t).strip() for t in (targets or []) if str(t).strip()]
+            if not self._targets:
+                return {"status": "error", "error": "at least one non-empty target is required"}
             self._objective = objective
             self._start_time = datetime.now().isoformat()
             self._total_steps = 0
@@ -250,7 +338,7 @@ class AutonomousAgent:
 
             # Initialize per-target state
             self._target_phases = {}
-            for t in targets:
+            for t in self._targets:
                 tp = TargetPhase(t)
                 tp.start_time = self._start_time
                 self._target_phases[t] = tp
@@ -268,7 +356,7 @@ class AutonomousAgent:
         self._thread.start()
 
         self._emit("on_status_update", self.get_status())
-        return {"status": "started", "targets": targets, "objective": objective}
+        return {"status": "started", "targets": list(self._targets), "objective": objective}
 
     def pause(self):
         """Pause the autonomous agent (waits for current step to finish)."""
@@ -551,36 +639,38 @@ class AutonomousAgent:
             # Inject the prompt into the session
             self.orch.sessions.add_message(tp.session_id, "user", initial_prompt)
 
-        # Run through each phase
+            # v6.3.2: seed the operator's capture interface + scan hints into
+            # the LLM's context immediately, so every wireless/sniffing tool the
+            # model picks defaults to the selected adapter (no guesswork).
+            capture_ctx = self._capture_context()
+            if capture_ctx:
+                self.orch.sessions.add_message(
+                    tp.session_id, "system", capture_ctx)
+
+        # Run through each phase — the LLM drives transitions
         while tp.current_phase and not tp.completed:
             if self.state == AgentState.STOPPING:
                 break
 
-            # Pause gate with timeout
+            # Pause gate
             self._pause_event.wait(timeout=2.0)
             if self.state == AgentState.STOPPING:
                 break
 
-            # ── Skip phases already satisfied by the discovery sweep ──
-            # If this phase already ran (phase_iterations > 0) and would
-            # immediately advance, move on WITHOUT re-running it. This
-            # avoids duplicate recon iterations for hosts the sweep
-            # already recon'd (dead hosts would otherwise pay the full
-            # budget twice).
+            # Skip phases already satisfied by the discovery sweep
             if (not sweep_only
                     and tp.phase_iterations.get(tp.current_phase, 0) > 0
                     and self._should_advance_phase(tp)):
                 self._transition_phase(tp)
                 continue
 
-            # Record phase start on the global Mission Control timeline
+            # Record phase start
             self._timeline.append({
                 "ts": datetime.now().isoformat(),
                 "target": tp.target,
                 "event": "phase_start",
                 "phase": tp.current_phase.upper(),
             })
-
             self._emit("on_phase_start", {
                 "target": tp.target,
                 "phase": tp.current_phase,
@@ -589,34 +679,26 @@ class AutonomousAgent:
 
             self._drive_phase(tp)
 
-            if tp.completed:
-                break
-
-            if self.state == AgentState.STOPPING:
+            if tp.completed or self.state == AgentState.STOPPING:
                 break
 
             if sweep_only:
-                # Discovery sweep: stop after the first phase so the
-                # prioritizer can rank targets by their recon findings.
                 break
 
-            # Check if we should transition
-            should_advance = False
+            # Phase transition: try heuristic first, then let LLM decide
             try:
-                should_advance = self._should_advance_phase(tp)
-                if should_advance:
+                if self._should_advance_phase(tp):
                     self._transition_phase(tp)
+                else:
+                    # Ask the LLM if it wants to continue or move on
+                    self.orch.sessions.add_message(
+                        tp.session_id, "system",
+                        f"[AUTONOMOUS] Current phase: {tp.current_phase.upper()}. "
+                        f"Decide whether to continue this phase or advance to the next. "
+                        f"If you have enough data, call a tool from the next phase. "
+                        f"If not, continue enumerating with a different approach.")
             except Exception as e:
-                logger.warning(f"Target {tp.target}: phase transition failed: {e}")
-                continue  # Skip nudge on error
-
-            if not should_advance:
-                # Stay in current phase — inject a nudge
-                self.orch.sessions.add_message(
-                    tp.session_id, "system",
-                    f"[AUTONOMOUS] Continue {tp.current_phase.upper()} phase. "
-                    f"Try a different approach or deepen the current enumeration."
-                )
+                logger.warning(f"Target {tp.target}: phase transition error: {e}")
 
         logger.info(f"═══ Target {tp.target} engagement complete ═══")
 
@@ -632,10 +714,15 @@ class AutonomousAgent:
         # Inject phase-transition system message (candidate #2: orchestrator
         # delegates prompt building to core.prompt_builder.PromptBuilder)
         phase_prompt = self.orch.prompts.dynamic(new_phase)
-        self.orch.sessions.add_message(
-            tp.session_id, "system",
-            f"[AUTONOMOUS] Phase transition → {new_phase.upper()}\n\n{phase_prompt}"
-        )
+        transition_msg = f"[AUTONOMOUS] Phase transition → {new_phase.upper()}\n\n{phase_prompt}"
+        # v6.3.2: re-affirm the capture interface when entering a phase that
+        # uses wireless/sniffing tools, so the model keeps defaulting adapter-
+        # heavy steps to the operator's selected interface.
+        if self._phase_uses_wireless(new_phase):
+            capture_ctx = self._capture_context()
+            if capture_ctx:
+                transition_msg += f"\n\n{capture_ctx}"
+        self.orch.sessions.add_message(tp.session_id, "system", transition_msg)
         self._timeline.append({
             "ts": datetime.now().isoformat(),
             "target": tp.target,
@@ -652,18 +739,18 @@ class AutonomousAgent:
     def _drive_phase(self, tp: TargetPhase):
         """Run iterations within a single phase for one target.
 
-        The iteration budget is computed dynamically from the target's
-        live findings: hosts with critical/high findings get a boosted
-        budget (attack harder); info-only hosts get chilled.
+        In autonomous mode, the LLM is fully in control: it decides what
+        tools to run, when to transition phases, and when to stop. The engine
+        only enforces hard safety limits (engagement timeout, stop signal).
         """
         phase = tp.current_phase
         base_iters = MAX_ITERATIONS_PER_PHASE.get(phase, 15)
         iteration = 0
+        steps_this_phase = []
 
         phase_start = time.time()
         while True:
-            # Dynamic budget — recomputed each iteration so newly-found
-            # critical findings extend the phase mid-flight.
+            # Dynamic budget
             max_iters = self._priority.phase_budget(tp, phase, base_iters)
             tp.phase_budget[phase] = max_iters
             tp.priority_score = self._priority.score_target(tp)
@@ -674,27 +761,16 @@ class AutonomousAgent:
 
             if self.state == AgentState.STOPPING:
                 break
-            # Engagement timeout check (per-phase)
-            if time.time() - phase_start > MAX_ENGAGEMENT_DURATION / 2:
-                logger.warning(f"Target {tp.target}: {phase} phase timeout — advancing")
+            # Hard engagement timeout (absolute safety limit)
+            elapsed = time.time() - phase_start
+            if elapsed > MAX_ENGAGEMENT_DURATION / 2:
+                logger.warning(f"Target {tp.target}: {phase} phase timeout ({elapsed:.0f}s) — advancing")
+                break
+            if iteration >= max_iters:
+                logger.info(f"Target {tp.target}: {phase} reached budget {iteration}/{max_iters}")
                 break
 
-            if iteration >= max_iters:
-                logger.info(f"Target {tp.target}: {phase} reached dynamic budget "
-                            f"{iteration}/{max_iters} (score={tp.priority_score}, "
-                            f"tier={tp.priority_tier})")
-                break
-            # Pause gate with timeout to detect stop requests
-            self._pause_event.wait(timeout=2.0)
-            if self.state == AgentState.STOPPING:
-                break
-            if self.state == AgentState.STOPPING:
-                break
-            # Engagement timeout check (per-phase)
-            if time.time() - phase_start > MAX_ENGAGEMENT_DURATION / 2:
-                logger.warning(f"Target {tp.target}: {phase} phase timeout — advancing")
-                break
-            # Pause gate with timeout to detect stop requests
+            # Pause gate
             self._pause_event.wait(timeout=2.0)
             if self.state == AgentState.STOPPING:
                 break
@@ -703,18 +779,12 @@ class AutonomousAgent:
             tp.phase_iterations[phase] = tp.phase_iterations.get(phase, 0) + 1
             self._total_steps += 1
 
-            # Update priority after each iteration (findings may have grown)
-            tp.priority_score = self._priority.score_target(tp)
-            tp.priority_tier = self._priority.tier(
-                tp.priority_score,
-                has_findings=self._priority.findings_count(tp) > 0,
-                phase_state=tp)
-
-            # Run one engagement iteration (wrapped in try/except for resilience)
+            # Run one engagement iteration
             try:
                 step_result = self.orch._run_iteration(
-                    tp.session_id, [], stream=False
+                    tp.session_id, steps_this_phase, stream=False
                 )
+                steps_this_phase.append(step_result)
             except Exception as e:
                 logger.warning(f"Target {tp.target}: iteration {iteration} crashed: {e}")
                 tp.consecutive_failures += 1
@@ -736,20 +806,15 @@ class AutonomousAgent:
                 tp.consecutive_failures += 1
                 tp.phase_failures[phase] = tp.phase_failures.get(phase, 0) + 1
                 tp.last_error = step_result["error"]
-
-                # Adaptive retry escalation
                 if tp.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                     self._escalate_retry(tp)
                     tp.consecutive_failures = 0
-
                 self._emit("on_error", {
-                    "target": tp.target,
-                    "phase": phase,
+                    "target": tp.target, "phase": phase,
                     "error": step_result["error"],
                     "retry_level": retry_level_name(tp.retry_level),
                 })
-                if self.state == AgentState.STOPPING:
-                    break
+                # Don't break — let the LLM see the error and self-correct
                 continue
 
             # Reset consecutive failures on success
@@ -767,27 +832,23 @@ class AutonomousAgent:
                     tp.phase_findings[phase].append(finding)
                     self._total_findings += 1
 
-            # Get tactical suggestions from findings
+            # Tactical auto-run: execute suggested follow-up tools
             all_findings = []
             for f_list in tp.phase_findings.values():
                 all_findings.extend(f_list)
 
             if all_findings and self._has_execute_direct:
                 tactical = self.orch.tactics.get_auto_run_actions(
-                    all_findings,
-                    context={"host": tp.target}
-                )
-                for action in tactical[:3]:  # Cap at 3 auto-actions per iteration
+                    all_findings, context={"host": tp.target})
+                for action in tactical[:3]:
                     try:
                         result = self.orch.execute_direct(
-                            action["tool"], action["args"], tp.session_id
-                        )
+                            action["tool"], action["args"], tp.session_id)
                         if result.get("exit_code") == 0:
                             tp.phase_findings[phase].append({
                                 "tool": action["tool"],
                                 "summary": action.get("reasoning", ""),
-                                "severity": "info",
-                            })
+                                "severity": "info"})
                             self._total_findings += 1
                     except Exception as e:
                         logger.debug(f"Tactical auto-run failed: {e}")
@@ -795,13 +856,17 @@ class AutonomousAgent:
             if self.state == AgentState.STOPPING:
                 break
 
-            # Check if LLM says engagement is complete
+            # LLM-driven completion: trust the LLM's response
             llm_response = step_result.get("llm_response", "")
+            action = step_result.get("action", "")
+            if action == "complete":
+                logger.info(f"Target {tp.target}: LLM signals complete in {phase}")
+                break
             if llm_response and self._check_llm_completion_signal(llm_response):
                 logger.info(f"Target {tp.target}: LLM signals completion in {phase}")
                 break
 
-            # Check completion conditions for the phase
+            # Phase completion heuristic (supplements LLM signal)
             if self._check_phase_completion(tp, step_result):
                 break
 

@@ -7,12 +7,187 @@ command builders live here as stateless functions keyed by (output_dir, args, bi
 The ToolRegistry delegates its command building to these functions, keeping that
 class focused on data (tool registry) + execution (subprocess).
 """
+import os
+import re
+
+
+def _resolve_capture_path(output_dir: str, value) -> str:
+    """Resolve a (possibly relative) capture file/path to an absolute path
+    anchored under ``output_dir``.
+
+    Both airdump's ``-w <prefix>`` and aircrack's ``cap_file`` are relative
+    to the *process cwd*, which is the per-task sandbox root
+    (``sandbox_output_dir``). If a tool were ever run from a different cwd,
+    a relative ``-w handshake`` / ``cap_file=handshake-01.cap`` would point
+    at *different* locations and the crack step would silently read a
+    non-existent file. Anchoring both to an absolute path under the shared
+    output_dir makes the chained capture deterministic regardless of cwd.
+    """
+    if value is None:
+        return value
+    value = str(value)
+    if not value or os.path.isabs(value):
+        # Empty values stay empty (don't anchor a missing cap_file to the
+        # output_dir as if it were a real file); absolute paths pass through.
+        return value
+    base = output_dir or os.getcwd()
+    return os.path.normpath(os.path.join(base, value))
+
+
+def _unprivileged_scan_type(scan_type: str) -> str:
+    """Downgrade root-only nmap scan flags when the harness is unprivileged.
+
+    nmap -sS (SYN scan) requires root/CAP_NET_RAW and fails with "You
+    requested a scan type which requires root privileges." when run as a
+    regular user. -sT (TCP connect) is the unprivileged equivalent and
+    reports the same port states, so silently substitute it — this keeps
+    an engagement moving instead of burning iterations on a scan that can
+    never succeed.
+    """
+    try:
+        if os.geteuid() != 0:
+            return re.sub(r'(^|\s)-sS(?=\s|$)', r'\1-sT', scan_type)
+    except AttributeError:
+        pass  # non-POSIX: leave flags untouched
+    return scan_type
+
+
+def _clean_interface(value) -> str:
+    """Normalize a user/LLM-supplied interface name into a safe argv token.
+
+    The LLM frequently appends trailing sentence punctuation to interface
+    args (e.g. `"interface": "wlan0mon."`), which makes airmon-ng/ip fail
+    with a nonexistent-interface error. Strip surrounding whitespace and
+    any trailing/non-ledger punctuation (. , ; : " ' ! ?) so `wlan0mon.`
+    becomes `wlan0mon`. Returns '' for blank input.
+    """
+    if not value or not isinstance(value, str):
+        return ""
+    cleaned = value.strip()
+    # Trim one or more trailing punctuation chars (not part of a real iface
+    # name, which is [A-Za-z0-9_.-]); never strip a leading dot (hidden devs).
+    cleaned = re.sub(r'[.,;:\"\'!?]+$', '', cleaned).strip()
+    return cleaned
+
+
+def _resolve_wordlist(value) -> str:
+    """Return an ABSOLUTE wordlist path that actually exists, falling back.
+
+    A typical failure is the LLM guessing `/usr/share/wordlists/dictionary.txt`
+    which doesn't exist, stalling aircrack/wifite. If the requested path is
+    missing, substitute an existing candidate (repo `wordlists/`, then common
+    Kali paths). Returns the candidate as an absolute path because the runner
+    executes tools with `cwd=sandbox_output_dir`, so a repo-root-relative
+    `./wordlists/rockyou.txt` would otherwise miss the file for the same
+    reason the original path did.
+
+    Returns '' when the value is blank (preserves the 'no -w wordlist flag'
+    behavior) and gives back the stripped original when no fallback exists so
+    the tool surfaces a clear missing-file error.
+    """
+    if not value or not isinstance(value, str):
+        return ""
+    requested = value.strip()
+    if not requested:
+        return ""
+    if os.path.exists(requested):
+        return os.path.abspath(requested)
+    candidates = [
+        "./wordlists/rockyou.txt",
+        "wordlists/rockyou.txt",
+        "/usr/share/wordlists/rockyou.txt",
+        "/usr/share/wordlists/dirb/common.txt",
+        "/usr/share/wordlists/rockyou.txt.gz",
+    ]
+    for cand in candidates:
+        if os.path.exists(cand):
+            return os.path.abspath(cand)
+    # Give back the original so the tool surfaces a clear missing-file error.
+    return requested
+
+
+# Tools that must use a MONITOR-mode interface (airmon-ng renames <base> to
+# <base>mon). When the operator/LLM passes a base iface that no longer exists
+# because it was renamed, adapt to the live monitor variant. This mirrors
+# WorkflowStateMachine._adapt_monitor_interface but lives at the pure builder
+# chokepoint so it also covers the DIRECT + AUTONOMOUS paths (workflows were
+# already covered).
+_ADAPT_MONITOR_TOOLS = frozenset({
+    "airodump_capture", "aireplay_attack", "reaver_attack",
+    "hcxdumptool_capture", "kismet_scan", "wifite_auto",
+})
+
+# Tools that legitimately manipulate interfaces themselves and must keep the
+# exact user-supplied name (never redirect).
+_DONT_ADAPT_TOOLS = frozenset({
+    "monitor_mode_enable", "monitor_mode_disable", "iface_up", "iface_down",
+    "iface_addr", "route_config", "interface_discovery", "macchanger",
+    "ifconfig", "rfkill_status", "airmon_check",
+})
+
+
+def _adapt_monitor_interface(tool_name: str, iface: str) -> str:
+    """Map a base wireless iface to a live monitor iface when it needs one.
+
+    airmon-ng renames the real adapter: `airmon-ng start wlan0` creates
+    `wlan0mon`. An LLM that passes `wlan0` to airodump/aireplay/reaver/wifite
+    would hit a nonexistent-interface error. If the requested iface is for a
+    monitor-required tool, doesn't exist on disk, but a `<base>mon`/
+    `<base>-mon`/`<base>_mon` variant is live on the system, substitute the
+    live monitor iface. Returns the original iface when it needs no adaptation
+    (exists already, not a monitor-required tool, or no monitor variant).
+    """
+    if not iface or not isinstance(iface, str):
+        return iface
+    if tool_name in _DONT_ADAPT_TOOLS:
+        return iface
+    if tool_name not in _ADAPT_MONITOR_TOOLS:
+        return iface
+    if os.path.isdir(f"/sys/class/net/{iface}"):
+        return iface  # already exists (base present) — leave it
+    variants = (iface + "mon", iface + "-mon", iface + "_mon")
+    for v in variants:
+        if os.path.isdir(f"/sys/class/net/{v}"):
+            return v
+    # Loose fallback: any live iface that starts with the base and ends mon.
+    try:
+        for name in sorted(os.listdir("/sys/class/net")):
+            if name.startswith(iface) and name.endswith("mon"):
+                return name
+    except OSError:
+        pass
+    return iface
+
+
+def _adapt_args_interfaces(tool_name: str, args: dict) -> dict:
+    """Apply monitor-rename adaptation to any `interface` arg in-place.
+
+    Returns args unchanged if it has no usable `interface` key.
+    """
+    if not isinstance(args, dict):
+        return args
+    iface = args.get("interface")
+    if not iface or not isinstance(iface, str):
+        return args
+    args["interface"] = _adapt_monitor_interface(tool_name, _clean_interface(iface))
+    return args
 
 
 def _build_command(output_dir, tool, args) -> list:
     binary = tool.path or tool.binary
     name = tool.name
     subcmd = tool.subcommand
+
+    # Central monitor-rename + trailing-punctuation adaptation. Runs BEFORE any
+    # builder dispatch so the DIRECT, AUTONOMOUS, and WORKFLOW paths all get the
+    # same interface normalization (workflows also adapt downstream, which is
+    # now redundant-but-idempotent). Cleaned twice is harmless — both helpers
+    # are idempotent.
+    #
+    # Operate on a shallow COPY: _adapt_args_interfaces mutates args in place,
+    # and we must not leak the cleaned/adapted interface back into the caller's
+    # dict (the runner may reuse or log the original LLM args).
+    args = _adapt_args_interfaces(name, dict(args))
 
     # ── tools needing fully custom builders ──
     _nmap = ("nmap_scan","nmap_vuln_scan","host_discovery","service_enum","banner_grab","subdomain_enum")
@@ -32,7 +207,25 @@ def _build_command(output_dir, tool, args) -> list:
     if name == "netcat_listener":  return _build_nc_listener(output_dir, args, binary)
     if name == "netcat_connect":   return _build_nc_connect(output_dir, args, binary)
     if name == "tcpdump_capture":  return _build_tcpdump(output_dir, args, binary)
+    if name == "airodump_capture":  return _build_airodump(output_dir, args, binary)
+
+    if name == "aireplay_attack":  return _build_aireplay(output_dir, args, binary)
+    if name == "reaver_attack":    return _build_reaver(output_dir, args, binary)
+    if name == "hcxdumptool_capture": return _build_hcxdumptool(output_dir, args, binary)
+    if name == "hcxpcapngtool_convert": return _build_hcxpcapngtool(output_dir, args, binary)
+    if name == "wifite_auto":        return _build_wifite(output_dir, args, binary)
+    if name == "tshark_capture":   return _build_tshark(output_dir, args, binary)
+    if name == "bettercap_mitm":   return _build_bettercap(output_dir, args, binary)
+    if name == "ettercap_mitm":    return _build_ettercap(output_dir, args, binary)
+    if name == "responder_poison": return _build_responder(output_dir, args, binary)
+    if name == "dsniff_suite":     return _build_dsniff(output_dir, args, binary)
+    if name == "monitor_mode_enable":  return ["sudo", "airmon-ng", "start", _clean_interface(args.get("interface", ""))]
+    if name == "monitor_mode_disable": return ["sudo", "airmon-ng", "stop", _clean_interface(args.get("interface", ""))]
+    # ── wireless-stack diagnostics (Interface Doctor) ──
+    if name == "rfkill_status":   return ["rfkill", "list"]
+    if name == "airmon_check":    return ["sudo", "airmon-ng", "check"]
     if name == "socat_relay":      return _build_socat(output_dir, args, binary)
+    if name == "interface_discovery": return ["ip", "-j", "link", "show"]
     if name == "hashid_identify":  return [binary, args.get("hash","")]
     # ── tools taking positional args (no --flags needed) ──
     if name in ("whois_lookup", "waf_detect", "exiftool_read", "exiftool_osint"):
@@ -77,6 +270,22 @@ def _build_command(output_dir, tool, args) -> list:
         return _build_gdb(output_dir, args, binary)
     if name == "apktool_decompile":
         return _build_apktool(output_dir, args, binary)
+
+    # ── system / backend-manipulation builders (v6.x) ──
+    if name == "process_list":    return _build_process_list(output_dir, args, binary)
+    if name == "process_kill":    return _build_process_kill(output_dir, args, binary)
+    if name == "service_control": return _build_service_control(output_dir, args, binary)
+    if name == "iface_up":        return ["sudo", "ip", "link", "set", _clean_interface(args.get("interface","")), "up"]
+    if name == "iface_down":      return ["sudo", "ip", "link", "set", _clean_interface(args.get("interface","")), "down"]
+    if name == "iface_addr":      return _build_iface_addr(output_dir, args, binary)
+    if name == "route_config":    return _build_route_config(output_dir, args, binary)
+    if name == "kernel_sysctl":   return _build_kernel_sysctl(output_dir, args, binary)
+    if name == "firewall_rule":   return _build_firewall_rule(output_dir, args, binary)
+    if name == "hostname_set":    return ["sudo", "hostnamectl", "set-hostname", args.get("name","")]
+    if name == "file_chmod":      return ["chmod", args.get("mode",""), args.get("path","")]
+    if name == "file_chown":      return ["sudo", "chown", args.get("owner",""), args.get("path","")]
+    if name == "package_manager": return _build_package_manager(output_dir, args, binary)
+    if name == "system_info":     return _build_system_info(output_dir, args, binary)
 
     # ── smart generic builder ──
     # Single-param tools: treat as positional (binary value)
@@ -131,7 +340,7 @@ def _build_nmap(output_dir, name, args, binary):
     elif name == "subdomain_enum":
         cmd.extend(["--script","dns-brute"])
     else:
-        st = args.get("scan_type","-sV")
+        st = _unprivileged_scan_type(args.get("scan_type","-sV"))
         if st: cmd.append(st)
         cmd.extend(["-oN", f"{output_dir}/nmap_{target.replace('/','_').replace('.','_')}.txt"])
     ports = args.get("ports","")
@@ -217,8 +426,9 @@ def _build_msfresource(output_dir, args, binary):
     return [binary, "-r", args.get("resource",""), "-q"]
 
 def _build_aircrack(output_dir, args, binary):
-    return [binary, args.get("cap_file","")] + \
-           (["-w", args["wordlist"]] if args.get("wordlist") else [])
+    cap = _resolve_capture_path(output_dir, args.get("cap_file", ""))
+    wl = _resolve_wordlist(args.get("wordlist", ""))
+    return [binary, cap] + (["-w", wl] if wl else [])
 
 def _build_nc_listener(output_dir, args, binary):
     return [binary, "-lvnp", str(args.get("port",4444))]
@@ -227,11 +437,181 @@ def _build_nc_connect(output_dir, args, binary):
     return [binary, args.get("target",""), str(args.get("port",80))]
 
 def _build_tcpdump(output_dir, args, binary):
-    return [binary] + \
-           (["-i", args["interface"]] if args.get("interface") else []) + \
-           (["-c", str(args["count"])] if args.get("count") else []) + \
-           (["-w", args["output_file"]] if args.get("output_file") else []) + \
-           ([args["filter"]] if args.get("filter") else [])
+    """tcpdump capture."""
+    cmd = ["sudo", binary]
+    iface = args.get("interface", "")
+    if iface: cmd.extend(["-i", iface])
+    if args.get("count"): cmd.extend(["-c", str(args["count"])])
+    if args.get("output_file"): cmd.extend(["-w", args["output_file"]])
+    if args.get("filter"): cmd.append(args["filter"])
+    return cmd
+
+def _build_airodump(output_dir, args, binary):
+    """airodump-ng takes flags then the interface as a trailing positional arg.
+
+    Adaptability (v6.2): supports `-w capture_file` (chained from an earlier
+    step so aircrack/hashcat can consume the real .cap path) and `--bssid`
+    target filter, in addition to channel.
+    """
+    cmd = ["sudo", binary]
+    if args.get("channel"): cmd.extend(["--channel", str(args["channel"])])
+    if args.get("bssid"): cmd.extend(["--bssid", str(args["bssid"])])
+    cap = args.get("capture_file") or args.get("write") or args.get("output")
+    if cap:
+        # Anchor the -w prefix to an absolute path under output_dir so the
+        # .cap file (written as <prefix>-01.cap) always lands in the same
+        # place aircrack will read it, independent of process cwd.
+        cmd.extend(["-w", _resolve_capture_path(output_dir, cap)])
+    iface = _clean_interface(args.get("interface", ""))
+    if iface: cmd.append(iface)
+    return cmd
+
+def _build_aireplay(output_dir, args, binary):
+    """aireplay-ng: attack flags first, interface last as positional arg."""
+    cmd = ["sudo", binary]
+    attack = str(args.get("attack", "0"))
+    # Deauth: -0 <count>, fakeauth: -1, etc.
+    cmd.extend(["-" + attack])
+    if args.get("bssid"): cmd.extend(["-a", args["bssid"]])
+    iface = _clean_interface(args.get("interface", ""))
+    if iface: cmd.append(iface)
+    return cmd
+
+def _build_reaver(output_dir, args, binary):
+    """reaver: -i <interface> -b <bssid> are the required flags."""
+    cmd = ["sudo", binary]
+    iface = _clean_interface(args.get("interface", ""))
+    if iface: cmd.extend(["-i", iface])
+    bssid = args.get("bssid", "")
+    if bssid: cmd.extend(["-b", bssid])
+    if args.get("channel"): cmd.extend(["-c", str(args["channel"])])
+    if args.get("verbose"): cmd.append("-vv")
+    return cmd
+
+
+def _build_hcxdumptool(output_dir, args, binary):
+    """hcxdumptool: passive PMKID/EAPOL capture.
+
+    `-o <output>` is anchored to an absolute path under output_dir so the
+    resulting .pcapng has a stable path for hcxpcapngtool to convert.
+    Captures run continuously; `capture_duration` (default 60s) drives the
+    timeout the harness enforces so passive capture is bounded.
+    """
+    cmd = ["sudo", binary]
+    iface = args.get("interface", "")
+    if iface: cmd.extend(["-i", iface])
+    out = args.get("output_file", "")
+    if out: cmd.extend(["-o", _resolve_capture_path(output_dir, out)])
+    if args.get("channel"): cmd.extend(["-c", str(args["channel"])])
+    if args.get("bssid"): cmd.extend(["--filterlist_ap=", str(args["bssid"])])
+    # --rds=1 records the raw handshakes/PMKIDs needed by hcxpcapngtool
+    cmd.append("--rds=1")
+    # With default run behaviour the tool captures forever; cap via a status
+    # flag the harness aligns to (it enforces the step timeout regardless).
+    return cmd
+
+
+def _build_hcxpcapngtool(output_dir, args, binary):
+    """hcxpcapngtool: convert capture to hashcat-ready .hc22000 PMKID file."""
+    cmd = [binary]
+    if args.get("output_file"):
+        cmd.extend(["-o", _resolve_capture_path(output_dir, args["output_file"])])
+    inp = _resolve_capture_path(output_dir, args.get("input", ""))
+    if inp: cmd.append(inp)
+    return cmd
+
+
+def _build_wifite(output_dir, args, binary):
+    """wifite_auto: one-shot automated wireless attack (WiFi Auto-Crack Engine).
+
+    wifite takes the interface via `-i <iface>`, never positionally — the
+    old single-param generic path emitted `wifite wlan0mon`, which wifite
+    rejects with "unrecognized arguments". Needs root for monitor/airmon ops,
+    so it is prefixed with sudo like the rest of the wireless suite. Fails
+    fast when no interface is given instead of launching wifite's interactive
+    scan-and-attack mode for the full step timeout.
+    """
+    iface = _clean_interface(args.get("interface", ""))
+    if not iface:
+        raise ValueError("wifite_auto requires an 'interface' arg")
+    cmd = ["sudo", binary, "-i", iface]
+    # Optional: point wifite at the engagement wordlist instead of its default
+    wl = _resolve_wordlist(args.get("wordlist", "")) if args.get("wordlist") else ""
+    if wl:
+        cmd.extend(["--dict", wl])
+    return cmd
+
+
+def _build_tshark(output_dir, args, binary):
+    """tshark: capture with interface and optional filter."""
+    cmd = ["sudo", binary]
+    iface = _clean_interface(args.get("interface", ""))
+    if iface: cmd.extend(["-i", iface])
+    if args.get("filter"): cmd.extend(["-f", args["filter"]])
+    if args.get("duration"): cmd.extend(["-a", f"duration:{args['duration']}"])
+    if args.get("output_file"): cmd.extend(["-w", args["output_file"]])
+    else:
+        # Write to sandbox output file to avoid hanging on stdout
+        cmd.extend(["-w", f"{output_dir}/tshark_capture.pcap"])
+    return cmd
+
+def _build_bettercap(output_dir, args, binary):
+    """bettercap: run with a caplet or inline script."""
+    cmd = ["sudo", binary]
+    module = args.get("module", "")
+    target = args.get("target", "")
+    if module and target:
+        cmd.extend(["-autostart", module])
+    elif module:
+        cmd.extend(["-autostart", module])
+    if not module:
+        cmd.extend(["-autostart", "events.stream"])
+    return cmd
+
+def _build_ettercap(output_dir, args, binary):
+    """ettercap: -T (text mode) -i <interface> -M arp //target1 //target2"""
+    cmd = ["sudo", binary, "-T", "-q"]
+    iface = _clean_interface(args.get("interface", ""))
+    if iface: cmd.extend(["-i", iface])
+    t1 = args.get("target1", "")
+    t2 = args.get("target2", "")
+    if t1 and t2:
+        cmd.extend(["-M", "arp", f"//{t1}//{t2}//"])
+    elif t1:
+        cmd.extend(["-M", "arp", f"//{t1}//"])
+    return cmd
+
+def _build_responder(output_dir, args, binary):
+    """responder: -I <interface> -w (WPAD) -v (verbose)."""
+    # NOTE: responder is Python 2 only in this install — command will fail
+    # but we build the correct args so the error is clear.
+    cmd = [binary]
+    iface = _clean_interface(args.get("interface", ""))
+    if iface: cmd.extend(["-I", iface])
+    if args.get("verbose"): cmd.append("-v")
+    cmd.extend(["-w", "-f"])
+    return cmd
+
+def _build_dsniff(output_dir, args, binary):
+    """dsniff suite: arpspoof, dnsspoof, urlsnarf are separate binaries."""
+    tool = args.get("tool", "arpspoof")
+    # Map tool names to their actual binary paths
+    tool_map = {
+        "arpspoof": "arpspoof",
+        "dnsspoof": "dnsspoof",
+        "urlsnarf": "urlsnarf",
+        "filesnarf": "filesnarf",
+        "msgsnarf": "msgsnarf",
+        "sshmitm": "sshmitm",
+        "webmitm": "webmitm",
+    }
+    real_binary = tool_map.get(tool, tool)
+    import shutil
+    resolved = shutil.which(real_binary) or binary
+    cmd = [resolved]
+    target = args.get("target", "")
+    if target: cmd.extend(["-t", target])
+    return cmd
 
 def _build_socat(output_dir, args, binary):
     cmd = [binary]
@@ -305,10 +685,34 @@ def _build_cewl(output_dir, args, binary):
     return cmd
 
 def _build_httpx(output_dir, args, binary):
+    """Build httpx command. Handles both ProjectDiscovery httpx and Python httpx."""
     cmd = [binary]
-    if args.get("ports"): cmd.extend(["-ports", args["ports"]])
-    if args.get("tech_detect"): cmd.append("-tech-detect")
-    cmd.append(args.get("targets",""))
+    targets = args.get("targets", "")
+    if isinstance(targets, list):
+        targets = ",".join(targets)
+    # Check if this is Python httpx (HTTP client) or ProjectDiscovery httpx (probe)
+    # ProjectDiscovery: httpx -l <targets> -ports 80,443 -tech-detect
+    # Python httpx: httpx <URL> [OPTIONS]
+    import shutil
+    try:
+        import subprocess
+        result = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=3)
+        is_pd = "-l" in result.stdout or "-tech-detect" in result.stdout
+    except Exception:
+        is_pd = False
+    if is_pd:
+        # ProjectDiscovery httpx
+        if targets: cmd.extend(["-l", targets])
+        if args.get("ports"): cmd.extend(["-ports", args["ports"]])
+        if args.get("tech_detect"): cmd.append("-tech-detect")
+    else:
+        # Python httpx — just probe a single URL
+        url = targets.split(",")[0] if targets else ""
+        if url and not url.startswith("http"):
+            url = f"http://{url}"
+        if url: cmd.append(url)
+        if args.get("method"): cmd.extend(["-m", args["method"]])
+        if args.get("headers"): cmd.extend(["-h", args["headers"]])
     return cmd
 
 def _build_objdump(output_dir, args, binary):
@@ -333,4 +737,94 @@ def _build_gdb(output_dir, args, binary):
 
 def _build_apktool(output_dir, args, binary):
     return [binary, args.get("operation","d"), args.get("apk","")]
+
+
+# ──────────────── SYSTEM / BACKEND-MANIPULATION BUILDERS (v6.x) ────────────────
+
+def _build_process_list(output_dir, args, binary):
+    """List processes. No shell, so a pattern can't drive a grep pipe here;
+    use -ef (full command lines) by default, -e when a narrow list is wanted.
+    The harness reads stdout and can post-filter by pattern itself."""
+    return ["ps", "-ef"] if args.get("full", True) else ["ps", "-e"]
+
+
+def _build_process_kill(output_dir, args, binary):
+    """Kill a process by PID (kill) or name (pkill). Requires root for others."""
+    sig = 9 if args.get("force") else (args.get("signal") or 15)
+    if args.get("name"):
+        return ["sudo", "pkill", "-%d" % int(sig), str(args["name"])]
+    return ["sudo", "kill", "-%d" % int(sig), str(args.get("pid", ""))]
+
+
+def _build_service_control(output_dir, args, binary):
+    """systemctl <action> <unit>. action limited to a safe allowlist."""
+    action = str(args.get("action", "status"))
+    allowed = {"start", "stop", "restart", "reload", "enable", "disable", "status"}
+    if action not in allowed:
+        action = "status"
+    return ["sudo", "systemctl", action, str(args.get("unit", ""))]
+
+
+def _build_iface_addr(output_dir, args, binary):
+    """ip addr add|del <address> dev <interface>."""
+    action = "add" if args.get("action", "add") == "add" else "del"
+    return ["sudo", "ip", "addr", action,
+            str(args.get("address", "")), "dev", str(args.get("interface", ""))]
+
+
+def _build_route_config(output_dir, args, binary):
+    """ip route add|del <network> via <gateway>."""
+    action = "add" if args.get("action", "add") == "add" else "del"
+    return ["sudo", "ip", "route", action,
+            str(args.get("network", "")), "via", str(args.get("gateway", ""))]
+
+
+def _build_kernel_sysctl(output_dir, args, binary):
+    """sysctl write (sudo, -w key=value) or read (plain key)."""
+    key = str(args.get("key", ""))
+    value = args.get("value")
+    if value:
+        return ["sudo", "sysctl", "-w", "%s=%s" % (key, value)]
+    return ["sysctl", key]
+
+
+def _build_firewall_rule(output_dir, args, binary):
+    """iptables -A|-D <chain> <raw spec tokens>.
+
+    spec is a free-form rule string split on whitespace (no shell), e.g.
+    "-p tcp --dport 8080 -j REDIRECT --to-port 80".
+    """
+    flag = "-D" if args.get("action", "add") == "delete" else "-A"
+    spec = str(args.get("spec", "")).split()
+    return ["sudo", "iptables", flag, str(args.get("chain", "INPUT"))] + spec
+
+
+def _build_package_manager(output_dir, args, binary):
+    """apt-get <action> -y <packages>. action allowlisted; pkgs split on space."""
+    action = str(args.get("action", "update"))
+    allowed = {"update", "upgrade", "install", "remove", "autoremove", "purge"}
+    if action not in allowed:
+        action = "update"
+    cmd = ["sudo", "apt-get", action, "-y"]
+    pkgs = str(args.get("packages", "")).split()
+    if pkgs:
+        cmd.extend(pkgs)
+    return cmd
+
+
+def _build_system_info(output_dir, args, binary):
+    """Gather host facts. No sudo; safe read-only commands."""
+    section = args.get("section", "all")
+    if section == "kernel":
+        return ["uname", "-a"]
+    if section == "distro":
+        return ["cat", "/etc/os-release"]
+    if section == "hostname":
+        return ["hostnamectl", "status"]
+    if section == "memory":
+        return ["free", "-h"]
+    if section == "disk":
+        return ["df", "-h"]
+    # all / default: batched facts via uname + os-release
+    return ["uname", "-a"]
 

@@ -97,10 +97,10 @@ TACTICAL_RULES: List[Tuple[str, int, str, Dict[str, str], float, str]] = [
      "Sensitive file exposure — fetch contents"),
 ]
 
-# ── Confidence thresholds ──
-AUTO_RUN_THRESHOLD = 0.85   # Auto-run without asking
-SUGGEST_THRESHOLD = 0.50    # Suggest in chat but require confirmation
-# Below 0.50: ignored unless autonomous mode
+# ── Confidence thresholds (unrestricted mode) ──
+# Every tactical suggestion auto-runs — no confirmation gate exists anymore.
+AUTO_RUN_THRESHOLD = 0.0    # Auto-run everything
+SUGGEST_THRESHOLD = 0.0     # Everything is suggested for auto-run
 
 
 class TacticalEngine:
@@ -168,10 +168,9 @@ class TacticalEngine:
 
         # Deduplicate (same tool+args = single suggestion, keep highest confidence)
         seen = {}
-        unique = []
         for s in suggestions:
             key = f"{s['tool']}:{json.dumps(s['args'], sort_keys=True)}"
-            if key not in seen or s["confidence"] > seen[key].confidence:
+            if key not in seen or s["confidence"] > seen[key]["confidence"]:
                 seen[key] = s
         unique = sorted(seen.values(), key=lambda x: x["confidence"], reverse=True)
 

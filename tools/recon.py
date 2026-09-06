@@ -65,6 +65,8 @@ class ReconTools(BaseTool):
         return [
             {"name": "Network Recon Pipeline",
              "description": "Host discovery → port scan → service enum → banner grab → OSINT",
+             "best_for": "First pass on a fresh target range — establish the full attack surface fast",
+             "tradeoffs": "Active scans are noisy; full 65535-port scan is slow; banner-grab misses filtered ports",
              "steps": [
                  {"tool": "host_discovery", "args": {"target": "TARGET", "method": "ping"}, "description": "Discover live hosts"},
                  {"tool": "nmap_scan", "args": {"target": "TARGET", "ports": "1-65535", "scan_type": "-sV"}, "description": "Full port scan"},
@@ -72,6 +74,8 @@ class ReconTools(BaseTool):
              ]},
             {"name": "Domain Recon Pipeline",
              "description": "Amass → Subfinder → DNSx → SNMP → SMB",
+             "best_for": "External infrastructure mapping — enumerate subdomains, DNS records, and SMB/SMB presence",
+             "tradeoffs": "Amass is slow and noisy; needs the domain already in scope; third-party sources need connectivity",
              "steps": [
                  {"tool": "amass_enum", "args": {"domain": "TARGET"}, "description": "Deep subdomain enum"},
                  {"tool": "subfinder_enum", "args": {"domain": "TARGET"}, "description": "Passive subdomain enum"},

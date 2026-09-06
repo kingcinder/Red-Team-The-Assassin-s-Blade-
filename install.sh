@@ -4,10 +4,10 @@
 # Single-script installer that bundles the entire harness.
 # 100% offline-ready: pre-download wheels, copy to air-gapped host.
 # ═══════════════════════════════════════════════════════════════
-set -e
+set -euo pipefail
 
 # ── Verify mode ───────────────────────────────────────────
-if [ "$1" = "--verify" ]; then
+if [ "${1:-}" = "--verify" ]; then
     echo "Running verification checks..."
     ERRORS=0
     # Check Python version
@@ -22,7 +22,7 @@ if [ "$1" = "--verify" ]; then
     # A bare source checkout ships no wheels/ and no manifest; that is NOT an error,
     # just an unbundled checkout. Build the bundle per RELEASING.md §4 before
     # air-gap deployment. Hash mismatches with a present manifest ARE corruption.
-    WHEEL_COUNT=$(ls wheels/*.whl 2>/dev/null | wc -l)
+    WHEEL_COUNT=$(find wheels -maxdepth 1 -type f -name '*.whl' -print 2>/dev/null | wc -l || true)
     HAS_MANIFEST=0
     if [ -f SHA256SUMS ]; then HAS_MANIFEST=1; fi
     if [ "$WHEEL_COUNT" -eq 0 ] && [ "$HAS_MANIFEST" -eq 0 ]; then
@@ -32,12 +32,12 @@ if [ "$1" = "--verify" ]; then
         REQ_COUNT=$(grep -cvE '^#|^$' requirements.txt 2>/dev/null || echo 9)
         if [ "$WHEEL_COUNT" -lt "$REQ_COUNT" ]; then echo "✗ Only $WHEEL_COUNT wheels found (need ≥$REQ_COUNT for direct deps)"; ERRORS=$((ERRORS+1));
         else echo "✓ $WHEEL_COUNT offline wheels present (≥$REQ_COUNT direct deps)"; fi
-        SDIST=$(ls wheels/*.tar.gz 2>/dev/null | wc -l)
+        SDIST=$(find wheels -maxdepth 1 -type f -name '*.tar.gz' -print 2>/dev/null | wc -l || true)
         if [ "$SDIST" -gt 0 ]; then echo "✗ Found $SDIST source distributions (only .whl allowed)"; ERRORS=$((ERRORS+1));
         else echo "✓ Wheelhouse contains only pre-built .whl files"; fi
         if [ "$HAS_MANIFEST" -eq 1 ]; then
-            WHL_HASHES=$(grep -c '\.whl$' SHA256SUMS 2>/dev/null || echo 0)
-            SRC_HASHES=$(grep -c '\.py$' SHA256SUMS 2>/dev/null || echo 0)
+            WHL_HASHES=$(grep -c '\.whl$' SHA256SUMS 2>/dev/null || true)
+            SRC_HASHES=$(grep -c '\.py$' SHA256SUMS 2>/dev/null || true)
             echo "✓ SHA256SUMS present ($WHL_HASHES wheels, $SRC_HASHES source files)"
             if sha256sum -c SHA256SUMS --quiet 2>/dev/null; then
                 echo "✓ All SHA256 hashes verified"
@@ -91,9 +91,10 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 # Check Python version against built-for version
+WHEEL_DIR="$HARNESS_DIR/wheels"
 BUILD_PYVER=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 PYTAG=$("$PYTHON" -c "import sys, struct; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
-if [ -d "$WHEEL_DIR" ] && [ "$(ls -A "$WHEEL_DIR" 2>/dev/null)" ]; then
+if [ -d "$WHEEL_DIR" ] && find "$WHEEL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
     # Check if any wheel matches this Python version
     MATCHING=$(ls "$WHEEL_DIR"/*${PYTAG}*.whl 2>/dev/null | wc -l)
     TOTAL_WHEELS=$(ls "$WHEEL_DIR"/*.whl 2>/dev/null | wc -l)
@@ -107,7 +108,6 @@ fi
 
 # ── Phase 2: Install Python dependencies ───────────────────
 echo -e "${BOLD}[2/6] Installing Python dependencies...${NC}"
-WHEEL_DIR="$HARNESS_DIR/wheels"
 PIP_FLAGS=""
 # Try --break-system-packages for modern distros, fall back gracefully
 if "$PYTHON" -m pip install --break-system-packages --help >/dev/null 2>&1 || true; then
@@ -116,7 +116,7 @@ elif "$PYTHON" -m pip install --help 2>/dev/null | grep -q break-system-packages
     PIP_FLAGS="--break-system-packages"
 fi
 
-if [ -d "$WHEEL_DIR" ] && [ "$(ls -A "$WHEEL_DIR" 2>/dev/null)" ]; then
+if [ -d "$WHEEL_DIR" ] && find "$WHEEL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
     echo -e "${CYAN}  Installing from local wheelhouse (offline)...${NC}"
     # --no-deps --no-index: true air-gap, all deps in wheelhouse
     if "$PYTHON" -m pip install --no-index --no-deps --find-links="$WHEEL_DIR" -r requirements.txt $PIP_FLAGS 2>/dev/null; then
@@ -254,6 +254,14 @@ else
     echo -e "  ${YELLOW}Coverage: ${PERCENT}% — consider running on Kali or installing tools${NC}"
 fi
 
+# ── Phase 5b: Notable privileged-helper setup (informational) ─
+echo -e "${BOLD}[5b] Privileged helper (sudo) note...${NC}"
+echo -e "  The cockpit runs privileged tools (wireless, sniffing, apt) via sudo. Without"
+echo -e "  passwordless sudo they block on an interactive prompt a headless subprocess"
+echo -e "  cannot answer. Provision scoped NOPASSWD once with:"
+echo -e "    ${CYAN}sudo bash setup/configure_sudo_privileges.sh \$(whoami)${NC}"
+echo -e "  (Removes with: sudo bash setup/configure_sudo_privileges.sh --remove)"
+
 # ── Phase 6: LLM backend check ────────────────────────────
 echo -e "${BOLD}[6/6] Checking LLM backend...${NC}"
 if curl -s http://127.0.0.1:8080/v1/models &>/dev/null; then
@@ -278,7 +286,8 @@ echo -e "    Run workflow: ${CYAN}python3 harness.py --workflow network_recon --
 echo -e "    Multi-target: ${CYAN}python3 harness.py --workflow network_recon --targets 10.0.0.1,10.0.0.2${NC}"
 echo -e "    Generate WF:  ${CYAN}python3 harness.py --generate \"compromise the web tier\"${NC}"
 echo ""
-echo -e "  ${BOLD}Offline air-gap setup:${NC}"echo -e "    ${YELLOW}1. On connected machine:  pip3 download -r requirements.txt -d ./wheels${NC}"
+echo -e "  ${BOLD}Offline air-gap setup:${NC}"
+echo -e "    ${YELLOW}1. On connected machine:  pip3 download -r requirements.txt -d ./wheels${NC}"
     echo -e "    ${YELLOW}2. Copy this directory + wheels/ to air-gapped host${NC}"
     echo -e "    ${YELLOW}3. Run: bash install.sh          (detects offline wheels automatically)${NC}"
     echo -e "    ${YELLOW}4. Run: bash install.sh --verify  (validate air-gap readiness)${NC}"

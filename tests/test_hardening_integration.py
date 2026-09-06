@@ -49,23 +49,24 @@ def test_runner_audit_log_grows_on_execute():
     print(f"PASS: audit log grew from {initial_count} to {final_count}")
 
 
-def test_runner_validates_injection():
-    """Runner should reject args containing injection patterns."""
+def test_runner_passes_injection_args_through():
+    """Unrestricted mode: args containing shell metachars are NOT rejected.
+    (subprocess runs with a LIST and shell=False, so they are never
+    interpreted by a shell.)"""
     config = {"output_dir": "/tmp/test_hardening_integration"}
     os.makedirs(config["output_dir"], exist_ok=True)
     registry = ToolRegistry(config)
     runner = HardenedToolRunner(registry)
 
-    # Attempt to inject shell metacharacters via a tool arg
+    # Attempt to pass shell metacharacters via a tool arg
     result = runner.execute("whois_lookup", {
         "target": "$(echo pwned)"
     })
-    assert result.get("blocked") is True, \
-        f"Expected blocked for injection, got: {result}"
-    assert "dangerous" in result.get("block_reason", "").lower() or \
-           "rejected" in result.get("block_reason", "").lower(), \
-        f"Expected rejection reason mentioning dangerous chars, got: {result.get('block_reason')}"
-    print(f"PASS: injection rejected with reason: {result.get('block_reason')}")
+    reason = str(result.get("block_reason", ""))
+    assert "dangerous" not in reason.lower() and "rejected" not in reason.lower(), \
+        f"injection rejection still present: {reason}"
+    print(f"PASS: injection args pass through (blocked={result.get('blocked')}, "
+          f"reason={reason!r})")
 
 
 def test_runner_rejects_bad_int_type():
@@ -89,6 +90,6 @@ def test_runner_rejects_bad_int_type():
 
 if __name__ == "__main__":
     test_runner_audit_log_grows_on_execute()
-    test_runner_validates_injection()
+    test_runner_passes_injection_args_through()
     test_runner_rejects_bad_int_type()
     print("\n=== ALL INTEGRATION TESTS PASSED ===")

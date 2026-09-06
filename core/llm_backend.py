@@ -44,9 +44,18 @@ class LLMBackend:
             raise ValueError(f"Unknown LLM backend: {self.backend}")
 
         self.model = config.get(self.backend, {}).get("model", "")
+        # Generation / I/O knobs. All three are read from the backend's config
+        # section (llm.llama-server.* / llm.ollama.*) so the whole backend can
+        # be tuned from config.yaml; per-call kwargs still win at each site.
         self.max_tokens = config.get(self.backend, {}).get("max_tokens", 4096)
         self.temperature = config.get(self.backend, {}).get("temperature", 0.3)
         self.timeout = config.get(self.backend, {}).get("timeout", 120)
+        # Reasoning effort for llama-server (OpenAI "reasoning_effort" param).
+        # "none" disables <think> blocks — critical for agentic tool loops
+        # where thinking models otherwise return empty content. Configurable
+        # via llm.llama-server.reasoning_effort; per-call kwargs still win.
+        self.reasoning_effort = config.get(self.backend, {}).get(
+            "reasoning_effort", "none")
         self._connected = False
         self._loaded_model: Optional[str] = None
         self._token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -212,16 +221,69 @@ class LLMBackend:
     # Internal: OpenAI-compatible (llama-server)
     # ═══════════════════════════════════════════════════════════════
 
+    # ── llama-server (OpenAI-compat) message-shape rules ──
+    #
+    # llama-server is started with prefill_assistant enabled (the default),
+    # which changes how it treats a request whose LAST message is an assistant
+    # message:
+    #   * TWO OR MORE trailing assistant messages → HTTP 400
+    #     ("Cannot have 2 or more assistant messages at the end of the list.")
+    #   * ONE trailing assistant message → the server AUTO-CONTINUES the
+    #     assistant's previous text instead of issuing a fresh generation
+    #     prompt (so a stored tool_call JSON would get garbage appended to it).
+    #
+    # The harness's engagement loop legitimately ends most turns with an
+    # assistant message (the previous LLM response), and a single backend
+    # error string stored as an assistant message can poison the whole
+    # session into a permanent 400 loop. Normalize the outgoing list so
+    # every request is well-formed for llama-server (and any OpenAI server):
+    #   * collapse runs of consecutive assistant messages into one,
+    #   * demote harness `[ERROR] ...` sentinel strings to system messages
+    #     (they are engine status, not model speech),
+    #   * ensure the list ends with a user message so the server always
+    #     issues a fresh generation prompt rather than continuing a previous
+    #     assistant message.
     def _format_messages(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        """Map internal roles to OpenAI-compatible roles."""
+        """Map internal roles to OpenAI-compatible roles.
+        Also strips <think>...</think> tags from stored messages to prevent
+        token-budget waste on re-sent thinking blocks.
+        """
+        import re as _re
         formatted = []
         for msg in messages:
             role = msg["role"]
             content = msg["content"]
+            # Strip thinking tags from any message to reclaim context budget
+            if "<think>" in content:
+                content = _re.sub(r'<think>.*?</think>', '', content, flags=_re.DOTALL).strip()
             if role == "tool_result":
                 formatted.append({"role": "user", "content": content})
+            elif role == "assistant" and isinstance(content, str) and content.startswith("[ERROR]"):
+                # Backend error strings must never look like model speech —
+                # consecutive assistant messages wedge llama-server (see above).
+                formatted.append({"role": "system", "content": content})
             else:
                 formatted.append({"role": role, "content": content})
+
+        # Collapse consecutive assistant messages into a single message.
+        collapsed = []
+        for msg in formatted:
+            if collapsed and collapsed[-1]["role"] == "assistant" and msg["role"] == "assistant":
+                collapsed[-1]["content"] = collapsed[-1]["content"] + "\n" + msg["content"]
+            else:
+                collapsed.append(dict(msg))
+        formatted = collapsed
+
+        # Ensure the request does not END on a non-user message (llama-server
+        # auto-continues a trailing assistant message; demoted error strings
+        # leave a trailing system message). Always close with a user message so
+        # the server issues a fresh generation prompt.
+        if formatted and formatted[-1]["role"] != "user":
+            formatted.append({
+                "role": "user",
+                "content": "[HARNESS] Continue the engagement. Analyze the latest results "
+                            "and either output your next tool_call JSON or your findings.",
+            })
         return formatted
 
     def _track_usage(self, data: dict):
@@ -244,6 +306,15 @@ class LLMBackend:
             # Prompt caching: llama-server automatically caches KV for identical prefixes.
             # We hint via cache_prompt, though llama-server may ignore this.
             "cache_prompt": kwargs.get("cache_prompt", True),
+            # Thinking models (e.g. Qwen3.x with a reasoning chat template) will
+            # happily burn the whole token budget on <think> blocks and return
+            # an EMPTY content field — which the harness reads as a failure.
+            # This is an agentic tool-use loop: reasoning is disabled by default
+            # (config llm.llama-server.reasoning_effort); per-call kwargs win.
+            "reasoning_effort": kwargs.get("reasoning_effort", self.reasoning_effort),
+            # Repetition penalty prevents CJK/multilingual repetition loops
+            # that Qwen 3.x models can fall into under long agentic contexts.
+            "repeat_penalty": kwargs.get("repeat_penalty", 1.15),
         }
 
         # JSON Schema enforcement (GBNF grammar)
@@ -256,7 +327,7 @@ class LLMBackend:
             r = requests.post(
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
-                timeout=self.timeout,
+                timeout=kwargs.get("timeout", self.timeout),
             )
             elapsed = time.time() - start
             logger.info(f"LLM response in {elapsed:.1f}s (status={r.status_code})")
@@ -268,10 +339,19 @@ class LLMBackend:
             data = r.json()
             self._track_usage(data)
 
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            message = data.get("choices", [{}])[0].get("message", {})
+            content = message.get("content") or ""
+            # Fallback: some templates/models still emit only reasoning tokens;
+            # surface them rather than reporting an empty response.
+            if not content and message.get("reasoning_content"):
+                content = message["reasoning_content"]
             if not content:
                 logger.warning("LLM returned empty content")
                 return "[ERROR] LLM returned empty response"
+            # Strip Qwen <think>...</think> tags if reasoning_effort=none
+            # but the model still emitted them via the chat template.
+            import re as _re
+            content = _re.sub(r'<think>.*?</think>', '', content, flags=_re.DOTALL).strip()
             return content
 
         except requests.Timeout:
@@ -298,6 +378,7 @@ class LLMBackend:
             "temperature": kwargs.get("temperature", self.temperature),
             "stream": True,
             "cache_prompt": kwargs.get("cache_prompt", True),
+            "reasoning_effort": kwargs.get("reasoning_effort", self.reasoning_effort),
         }
         if "response_format" in kwargs:
             payload["response_format"] = kwargs["response_format"]
@@ -307,7 +388,7 @@ class LLMBackend:
             r = requests.post(
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
-                timeout=self.timeout,
+                timeout=kwargs.get("timeout", self.timeout),
                 stream=True,
             )
             if r.status_code != 200:
@@ -316,8 +397,19 @@ class LLMBackend:
                 yield err
                 return
 
-            for line in r.iter_lines(decode_unicode=True):
-                if not line or line.startswith(":"):
+            # NOTE: llama-server's SSE responses use content-type
+            # "text/event-stream" WITHOUT a charset, so requests falls back to
+            # its apparent encoding (often ISO-8859-1) and mangles any non-ASCII
+            # output (observed: the model's UTF-8 Chinese came back as "åª"-
+            # style mojibake). Always decode the raw bytes as UTF-8 ourselves.
+            for raw_line in r.iter_lines(decode_unicode=False):
+                if not raw_line:
+                    continue
+                try:
+                    line = raw_line.decode("utf-8")
+                except UnicodeDecodeError:
+                    line = raw_line.decode("utf-8", errors="replace")
+                if line.startswith(":"):
                     continue
                 if line == "data: [DONE]":
                     break
@@ -372,7 +464,7 @@ class LLMBackend:
             r = requests.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
-                timeout=self.timeout,
+                timeout=kwargs.get("timeout", self.timeout),
             )
             elapsed = time.time() - start
             logger.info(f"Ollama response in {elapsed:.1f}s")

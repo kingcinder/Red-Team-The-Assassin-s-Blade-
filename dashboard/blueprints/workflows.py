@@ -162,14 +162,11 @@ def register(ctx):
 
         templates_dir = config.get("workflow", {}).get(
             "templates_dir", "workflows/templates")
-        # Resolve name → file (allow with/without extension)
-        path = os.path.join(templates_dir, workflow_name)
-        if not os.path.exists(path):
-            path = os.path.join(templates_dir, workflow_name + ".yaml")
-        if not os.path.exists(path):
+        # Resolve name → file via the shared resolver (exact filename, stem,
+        # or display ``name:`` field). Path-traversal safe.
+        path = WorkflowStateMachine.resolve_template(templates_dir, workflow_name)
+        if not path:
             return jsonify({"error": f"Workflow not found: {workflow_name}"}), 404
-
-        # Block path traversal
         real = os.path.realpath(path)
         if not real.startswith(os.path.realpath(templates_dir) + os.sep):
             return jsonify({"error": "Path traversal blocked"}), 403
@@ -220,12 +217,11 @@ def register(ctx):
         from core.workflow_engine import WorkflowStateMachine
         templates_dir = config.get("workflow", {}).get(
             "templates_dir", "workflows/templates")
-        path = os.path.join(templates_dir, workflow_name)
-        if not os.path.exists(path):
-            path = os.path.join(templates_dir, workflow_name + ".yaml")
-        if not os.path.exists(path):
+        # Resolve name → file via the shared resolver (exact filename, stem,
+        # or display ``name:`` field). Path-traversal safe.
+        path = WorkflowStateMachine.resolve_template(templates_dir, workflow_name)
+        if not path:
             return jsonify({"error": f"Workflow not found: {workflow_name}"}), 404
-        # Block path traversal
         real = os.path.realpath(path)
         if not real.startswith(os.path.realpath(templates_dir) + os.sep):
             return jsonify({"error": "Path traversal blocked"}), 403

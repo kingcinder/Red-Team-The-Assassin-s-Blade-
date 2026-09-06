@@ -51,6 +51,8 @@ class PostExTools(BaseTool):
         return [
             {"name": "AD Attack Path Pipeline",
              "description": "BloodHound → Certipy → Mimikatz → lateral move",
+             "best_for": "Active Directory compromise once you have a foothold — map attack paths, dump creds, move laterally",
+             "tradeoffs": "Needs Neo4j/BloodHound running; Mimikatz needs SYSTEM or admin on the target; very noisy",
              "steps": [
                  {"tool": "bloodhound_analyze", "args": {"neo4j_url": "bolt://localhost:7687"}, "description": "Map AD attack paths"},
                  {"tool": "certipy_ad", "args": {"command": "find", "target": "DC_IP"}, "description": "Find vulnerable cert templates"},
@@ -59,6 +61,8 @@ class PostExTools(BaseTool):
              ]},
             {"name": "Pivoting Pipeline",
              "description": "Socat relay → proxychains → ligolo tunnel",
+             "best_for": "Deep-network pivoting when you need to route traffic through a compromised host into a protected subnet",
+             "tradeoffs": "Complex to set up; latency through the pivot; some tools don't play well with proxychains",
              "steps": [
                  {"tool": "socat_relay", "args": {"listen_addr": "TCP-L:8080", "connect_addr": "TCP:INTERNAL:80"}, "description": "Port forward"},
                  {"tool": "proxychains_tunnel", "args": {"binary": "nmap", "args": "-sT -Pn 10.0.0.0/24"}, "description": "Scan through proxy"},

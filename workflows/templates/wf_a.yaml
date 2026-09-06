@@ -1,5 +1,53 @@
-name: wf_a
+name: "Web Application Recon & Scan"
+description: "Web-layer reconnaissance: fingerprint technologies, scan for dangerous files and misconfigurations, detect hidden content, and run template-based vulnerability scanning on discovered web targets."
+category: web
+attack_vector: "Web technology fingerprinting → content discovery → vulnerability scanning"
+variables:
+  target:
+    required: true
+    description: "Target web URL"
+cutting_edge: false
+references: ["whatweb", "nikto", "ffuf", "nuclei"]
+
 steps:
-  - name: ping
-    tool: nmap_scan
-    args: {target: '{{target}}'}
+  - name: tech_fingerprint
+    tool: whatweb_scan
+    description: "Identify web technologies, CMS, frameworks and versions"
+    args:
+      target: "{{target}}"
+      aggression: 3
+    expected_output: "http|https|PHP|Joomla|WordPress|Apache|nginx"
+    timeout: 120
+    gate: false
+    retries: 2
+
+  - name: nikto_scan
+    tool: nikto_scan
+    description: "Scan for dangerous files, outdated software, misconfigurations"
+    args:
+      target: "{{target}}"
+    expected_output: "OSVDB|discovered|vulnerab|error"
+    timeout: 600
+    gate: false
+    retries: 1
+
+  - name: content_discovery
+    tool: ffuf_fuzz
+    description: "Brute-force hidden directories, files, and vhosts"
+    args:
+      url: "{{target}}/FUZZ"
+      wordlist: "/usr/share/wordlists/dirb/common.txt"
+    expected_output: "Status|\\[Status\\]|FUZZ"
+    timeout: 600
+    gate: false
+    retries: 1
+
+  - name: nuclei_scan
+    tool: nuclei_scan
+    description: "Template-based vulnerability scanning of the web target"
+    args:
+      target: "{{target}}"
+    expected_output: "\\[\\w+\\]|critical|high|medium|error"
+    timeout: 900
+    gate: true
+    retries: 1

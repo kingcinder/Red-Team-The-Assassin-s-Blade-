@@ -3,6 +3,11 @@
 # The Road to v4.0 "Assassin's Blade" — Every Feature, Every Decision
 # ═══════════════════════════════════════════════════════════════
 
+> **NEXT UP — v7.0 "Mech-Unit"**: A deterministic-first refactor (no LLM
+> required) with a point-and-click cockpit, AP attack intent manifests, and a
+> VULN-GRAPH capitalization engine is planned in
+> [`docs/MECH_UNIT_REFACTOR_MANIFEST.md`](MECH_UNIT_REFACTOR_MANIFEST.md).
+
 > **Project**: AI-Piloted Penetration Testing Cockpit
 > **Codename**: Assassin's Blade
 > **Version**: v4.0 (final)
@@ -52,7 +57,7 @@ that way, and what it replaced.
 | **Orchestration** | `core/orchestrator.py` — plan → tool-call → execute → reflect → report loop |
 | **Tools** | `core/tool_registry.py` — 140+ tool definitions across 14 Kali categories |
 | **Tool modules** | 15 category modules (`tools/recon.py` … `tools/hardware.py`) + `tools/base.py` ABC |
-| **Safety** | `core/safety.py` — CIDR scope enforcement, blocked targets, confirmation gates |
+| **Safety** | `core/safety.py` — pass-through engine (all restrictions removed) |
 | **Session** | `core/session.py` — JSON-backed conversation history + command log |
 | **Dashboard** | `dashboard/server.py` + `index.html` + `cockpit.css` + `cockpit.js` |
 | **Config** | `config.yaml` — LLM, tools, safety, harness, dashboard settings |
@@ -66,8 +71,10 @@ that way, and what it replaced.
    builder; enables both direct execution and LLM-driven calls.
 4. **Flask + SocketIO** chosen for the dashboard — real-time streaming of tool output to
    the browser over WebSockets without a frontend build step.
-5. **Safety gates at the orchestrator layer** — destructive tools (`hydra`, `sqlmap`,
-   `msfvenom`) require explicit confirmation; scope is CIDR-validated before any scan.
+5. **Unrestricted operation (v4.4)** — all safety guardrails were removed:
+   no scope enforcement, no confirmation gates, no injection stripping, no
+   arg rejection. `core/safety.py` is a pass-through; the LLM's plans execute
+   unconditionally.
 
 ---
 
@@ -298,6 +305,100 @@ modules** while keeping all 27 test suites green (net −257 lines on the touche
 Trade-offs: the R2 delegates keep a compatibility shim on `FindingCorrelator`, and the
 single `report.py` grows as new formats are added — but every writer is discoverable in
 one place.
+
+---
+
+## 🔹 LLM backend option reference (llama-server / Ollama)
+
+All generation knobs live under the active backend's section in `config.yaml`
+(`llm.llama-server.*` or `llm.ollama.*`) and are read once at `LLMBackend.__init__`.
+Every knob is also overridable per call via a kwarg to `chat` / `chat_stream` /
+`chat_structured` — the kwarg always wins over the config default.
+
+| Option | Config key | Default | Meaning |
+|--------|------------|---------|---------|
+| `reasoning_effort` | `llm.<backend>.reasoning_effort` | `none` | Sent to llama-server as the OpenAI-compat `reasoning_effort` param. `none` disables  thinking blocks so the agentic loop gets direct answers; thinking models otherwise burn the whole token budget and return EMPTY `content` (read as a failure). `low`/`medium`/`high` re-enable reasoning. Set in the cockpit via the Model Manager dropdown (POST `/api/models/reasoning`). Valid set: `none`, `low`, `medium`, `high`. |
+| `max_tokens` | `llm.<backend>.max_tokens` | `4096` | Max completion tokens requested from the backend. |
+| `temperature` | `llm.<backend>.temperature` | `0.6` | Sampling temperature for completions. `0.6` matches the tuned stack in `launch-gguf.sh`; lower values (0.2-0.3) make the Qwen3.6 MoE models over-enumerate port lists in `nmap_scan` tool calls. |
+| `timeout` | `llm.<backend>.timeout` | `300` | HTTP request timeout (seconds) for each LLM round-trip. Overridable per call via `timeout=` kwarg. 300s accommodates the 35B MTP's ~3-5 tok/s decode; 120s was observed aborting healthy generations mid-flight. |
+| `cache_prompt` | — (not in config) | `true` | Sent to both chat and stream payloads as a best-effort KV-cache hint to llama-server (`kwargs.get("cache_prompt", True)`). llama-server may ignore the hint and auto-cache identical prefixes on its own. |
+| `model` | `llm.<backend>.model` | `""` | Label used in the OpenAI-compat payload / Ollama call. For llama-server this is cosmetic — the server serves whatever GGUF it was started with (read live from `/v1/models`). |
+
+### Prefill / message-shape rules (why `_format_messages` exists)
+
+The harness's engagement loop legitimately ends most turns with an assistant message (the
+previous LLM response). That collides with two llama-server defaults:
+
+- **≥2 consecutive trailing assistant messages → HTTP 400** (`"Cannot have 2 or more
+  assistant messages at the end of the list."`). A single backend failure string stored
+  as an assistant message used to wedge the whole session into a permanent 400 loop.
+- **One trailing assistant message → auto-continue** (prefill_assistant). The server keeps
+  generating from the previous assistant text instead of issuing a fresh prompt, so a
+  stored tool-call JSON gets garbage appended to it.
+
+`core/llm_backend._format_messages()` normalizes every outgoing request to avoid both:
+
+1. Runs of consecutive assistant messages are **collapsed** into one.
+2. Harness `[ERROR] ...` sentinel strings are **demoted to `system`** role (engine status,
+   not model speech).
+3. The list is guaranteed to **end with a `user` message** — a `[HARNESS] Continue the
+   engagement. …` prompt is appended if it doesn't — so llama-server always issues a fresh
+   generation instead of auto-continuing a prior assistant message.
+
+### Streaming encoding (a subtle gotcha)
+
+llama-server's SSE responses use `text/event-stream` **without a charset**, so `requests`
+falls back to its apparent encoding (commonly ISO-8859-1) and mangles non-ASCII output
+(observed: the model's UTF-8 Chinese came back as `åª`-style mojibake). The stream path
+decodes each raw line as UTF-8 itself (`_chat_openai_stream`) instead of trusting
+`iter_lines(decode_unicode=True)`. Keep that manual decode when touching stream handling.
+
+### llama-server launch flags that silently corrupt generation (Vulkan + hybrid MoE)
+
+**Symptom:** the Qwen3.6 MoE GQFs (14B VibeForged, 35B Carnice MTP — `qwen35moe`
+architecture: SSM layers interleaved with attention) produce CJK/multi-language word-salad
+(`った`, `觉得`, `不会`…), G-repetition meltdowns, prompt echoes, or empty content under
+the dense agentic system prompt — while minimal prompts sometimes come back clean. This
+looks like a model/prompt problem but is **not**: it is backend flag corruption.
+
+**Root cause (verified 2026-08-27):** `--no-kv-offload` (CPU-resident KV cache) on the
+Vulkan backend corrupts logits for this architecture. Corruption matrix, confirmed on both
+the 14B and 35B with identical prompts ("What is the capital of France?"):
+
+| Config | Result |
+|--------|--------|
+| Vulkan + `-fa on` + GPU KV (no `--no-kv-offload`) | ✅ clean |
+| Vulkan + `-fa off` + GPU KV | ✅ clean |
+| Vulkan + `-fa on` + `--no-kv-offload` | ❌ garbage |
+| Vulkan + `-fa off` + `--no-kv-offload` | ❌ garbage |
+| pure CPU (`--device none -ngl 0`) | ✅ clean |
+
+So the one flag to keep off is `--no-kv-offload`; flash attention is fine. The historical
+intermittent "failed to restore kv cache" errors in `llama-server.log` were the same bug.
+To fit a large `--ctx-size` with KV on the GPU, use quantized KV instead of offloading it:
+`--cache-type-k q8_0 --cache-type-v q8_0` (halves the footprint). See `launch-gguf.sh`
+for the working production invocation.
+
+### Chat templates for the Qwen3.6 MoE GGFUs (JSON tool protocol)
+
+The models' GGUF-embedded `tokenizer.chat_template` is an ~8 KB generic Qwen agentic
+template built around an **XML** `<tool_call><function=..><parameter=..>` tool format. The
+Harness speaks a **JSON** tool protocol (`{"tool_call": {"tool": .., "args": {..}}}`), so a
+custom template is the right integration point. A clean, tested reference lives at
+`~/AI_MODELS/templates/redteam-qwen3.6.jinja` (start llama-server with
+`--jinja --chat-template-file`). Key facts for writing these:
+
+- Envelope is Qwen-style: `BOS=248044`, `<|im_start|>=248045`, `<|im_end|>/EOS=248046`,
+  `PAD=248055`. ` thinking` / ` response` are ORDINARY word tokens (7047 / 1965), not
+  specials — render them as plain text.
+- With `reasoning_effort: "none"` (the Harness default) llama-server sets
+  `enable_thinking=false`. The generation prompt must then be exactly
+  ` thinking\n\n response\n\n`.
+- **Empty-response gotcha:** do NOT append any instruction text after the closed
+  ` response\n\n` buffer. The model reads trailing text as already-written output,
+  emits `<|im_end|>` on its first token, and returns empty content. The JSON protocol
+  belongs in the system prompt (the Harness already writes it via
+  `core/prompt_builder.py` `_BASE_SYSTEM_PROMPT`), never after the generation buffer.
 
 ---
 

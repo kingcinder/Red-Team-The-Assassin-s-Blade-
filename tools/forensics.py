@@ -55,6 +55,8 @@ class ForensicsTools(BaseTool):
         return [
             {"name": "Firmware Extraction Pipeline",
              "description": "Analyze → extract → carve files from firmware",
+             "best_for": "Extracting secrets and filesystems from a firmware image before hardware testing",
+             "tradeoffs": "Encrypted/obfuscated firmware resists extraction; false-positive carving needs manual review",
              "steps": [
                  {"tool": "binwalk_analyze", "args": {"file": "firmware.bin"}, "description": "Analyze firmware structure"},
                  {"tool": "binwalk_analyze", "args": {"file": "firmware.bin", "extract": True}, "description": "Extract filesystems"},
@@ -62,6 +64,8 @@ class ForensicsTools(BaseTool):
              ]},
             {"name": "Incident Response Pipeline",
              "description": "Memory dump → process list → network connections → malware scan",
+             "best_for": "Rapid triage of a memory dump — processes, network state, and malware signatures",
+             "tradeoffs": "Volatility needs a matching profile; large dumps are slow; YARA needs good rules",
              "steps": [
                  {"tool": "volatility_analyze", "args": {"image": "memory.dmp", "plugin": "pslist"}, "description": "List running processes"},
                  {"tool": "volatility_analyze", "args": {"image": "memory.dmp", "plugin": "netscan"}, "description": "Network connections"},

@@ -104,6 +104,7 @@ class WorkflowStateMachine:
             step.setdefault("expected_output", None)
             step.setdefault("extracts", [])
             step.setdefault("on_fail", "retry")  # retry | warn | abort
+            step.setdefault("file_gate", [])  # v6.3: files that must exist+non-empty
 
         return self
 
@@ -200,6 +201,14 @@ class WorkflowStateMachine:
         raw_args = step.get("args", {})
         resolved_args = self._resolve(raw_args)
 
+        # v6.x wireless adaptation: airmon-ng RENAMES the adapter to a monitor
+        # interface (e.g. wlxdcef09d3ad89 -> wlan1mon) when monitor mode is
+        # enabled. Steps that still pass the ORIGINAL name then fail with
+        # "ioctl(SIOCGIFINDEX) failed: No such device". If the requested
+        # interface no longer exists but a live monitor interface does,
+        # substitute it so the chain survives the rename.
+        resolved_args = self._adapt_monitor_interface(resolved_args, tool_name)
+
         # Detect unresolved placeholders
         flat_args = json.dumps(resolved_args)
         unresolved = self._check_unresolved(flat_args)
@@ -209,6 +218,59 @@ class WorkflowStateMachine:
             logger.error(msg)
             return {"step": step_name, "status": "blocked", "reason": msg,
                     "tool": tool_name, "attempts": 0}
+
+        # ── File-existence gate (v6.3): only run this step if every listed
+        # file exists AND is non-empty. Paths are {{var}}-resolved and checked
+        # against the sandbox root (absolute paths are honored). A failed gate
+        # skips the step cleanly so the workflow flows on to the next step /
+        # fallback instead of invoking the tool on a missing or empty capture
+        # (e.g. never hashcat a 0-byte .hc22000). This is a precondition skip —
+        # distinct from `gate: true` (which aborts the workflow on failure).
+        file_gate = step.get("file_gate") or []
+        if file_gate:
+            resolved_gate = [str(self._resolve(raw)) for raw in file_gate]
+            # Unresolved placeholders in gate paths mean missing variables —
+            # block loudly rather than silently "file not found" skipping,
+            # which would mask a misconfigured template.
+            unresolved_gate = self._check_unresolved(json.dumps(resolved_gate))
+            if unresolved_gate:
+                msg = (f"Step '{step_name}': file_gate references missing "
+                       f"variable(s) {unresolved_gate}. Provide via --var "
+                       f"key=value or fix the template.")
+                logger.error(msg)
+                return {"step": step_name, "tool": tool_name,
+                        "status": "blocked", "reason": msg,
+                        "attempts": 0,
+                        "started": datetime.now().isoformat()}
+            missing = []
+            for p in resolved_gate:
+                full = p if os.path.isabs(p) else os.path.join(self.sandbox.root, p)
+                if not os.path.isfile(full) or os.path.getsize(full) == 0:
+                    missing.append(p)
+            if missing:
+                msg = (f"Step '{step_name}': file_gate not satisfied — missing "
+                       f"or empty: {', '.join(missing)}. Skipping step.")
+                logger.info(msg)
+                self.sandbox.write_log("workflow", f"Step {step_name} SKIPPED: {msg}")
+                return {
+                    "step": step_name,
+                    "tool": tool_name,
+                    "args": resolved_args,
+                    "status": "skipped",
+                    "attempts": 0,
+                    "started": datetime.now().isoformat(),
+                    "reason": msg,
+                    "skipped_reason": msg,
+                    # Complete step record so downstream consumers (report
+                    # writer, chain graph) never index missing keys.
+                    "duration": 0.0,
+                    "stdout_preview": "",
+                    "findings_added": 0,
+                    "drift_score": 0.0,
+                    "confidence": "N/A",
+                    "exec_result": {"exit_code": None, "duration": None,
+                                    "blocked": False},
+                }
 
         result = {
             "step": step_name,
@@ -243,7 +305,8 @@ class WorkflowStateMachine:
                 alt = self._llm_suggest_alternative(step, last_error, current_tool, current_args)
                 if alt:
                     current_tool = alt.get("tool", tool_name)
-                    current_args = alt.get("args", resolved_args)
+                    current_args = self._adapt_monitor_interface(
+                        alt.get("args", resolved_args), current_tool)
                     llm_alt_tried = True
                     result["llm_alt"] = {"tool": current_tool, "args": current_args}
                     self.sandbox.write_log(
@@ -432,6 +495,19 @@ class WorkflowStateMachine:
                 self.state["steps_completed"] = completed
                 self.state["current_step"] = len(completed)
                 self.sandbox.save_state(self.state)
+            elif result["status"] == "skipped":
+                # v6.3: file_gate skips are intentional — record as completed
+                # (so the workflow flows on to the next/fallback step and can
+                # still reach 'complete') and surface the reason as a warning.
+                completed.append(result)
+                self.state.setdefault("warnings", []).append({
+                    "step": result["step"],
+                    "reason": result.get("reason", "skipped"),
+                    "skipped": True,
+                })
+                self.state["steps_completed"] = completed
+                self.state["current_step"] = len(completed)
+                self.sandbox.save_state(self.state)
             else:
                 if result.get("gate_failed"):
                     self.state["status"] = "failed"
@@ -455,7 +531,10 @@ class WorkflowStateMachine:
                 self.sandbox.save_state(self.state)
 
         # ── Finalize ──
-        failed_count = len([s for s in completed if s.get("status") != "success"])
+        # v6.3: skipped (file_gate) steps are intentional and must NOT count
+        # as failures — only real failed/blocked steps push status to partial.
+        failed_count = len([s for s in completed
+                            if s.get("status") in ("failed", "blocked")])
         self.state["status"] = "complete" if len(completed) == len(self.steps) else "partial"
         self.state["completed_steps"] = len(completed)
         self.state["failed_steps"] = failed_count
@@ -598,6 +677,60 @@ class WorkflowStateMachine:
         )
 
     @staticmethod
+    def resolve_template(templates_dir: str, name: str) -> Optional[str]:
+        """
+        Resolve a workflow reference to an actual template file path.
+
+        Accepts three forms, in order:
+          1. An exact filename (with or without .yaml/.yml extension)
+          2. A filename stem (case/separator-insensitive, e.g. "evil_twin_chain"
+             or "evil twin chain" matches evil_twin_chain.yaml)
+          3. The template's display ``name:`` field from the YAML (e.g.
+             "Evil Twin & WPA2 Handshake Capture Chain" -> evil_twin_chain.yaml)
+
+        Absolute paths and anything escaping ``templates_dir`` are rejected
+        (path-traversal safe). Returns the absolute file path or None.
+        """
+        def _norm(s: str) -> str:
+            """Lowercase + strip separators/whitespace for fuzzy comparison."""
+            return re.sub(r"[\s_\-]+", "", str(s).lower())
+
+        if not name or os.path.isabs(name):
+            return None
+
+        # 1. Exact file (with or without extension)
+        candidates = [name]
+        if not name.endswith((".yaml", ".yml")):
+            candidates += [name + ".yaml", name + ".yml"]
+        for c in candidates:
+            p = os.path.join(templates_dir, c)
+            if os.path.isfile(p):
+                return p
+
+        want = _norm(name)
+        if not want:
+            return None
+
+        # 2. Filename stem match
+        for p in WorkflowStateMachine.discover_templates(templates_dir):
+            stem = os.path.splitext(os.path.basename(p))[0]
+            if _norm(stem) == want:
+                return p
+
+        # 3. Display ``name:`` field match (case/whitespace-insensitive)
+        for p in WorkflowStateMachine.discover_templates(templates_dir):
+            try:
+                with open(p) as f:
+                    tpl = yaml.safe_load(f) or {}
+                tpl_name = tpl.get("name", "")
+                if tpl_name and _norm(tpl_name) == want:
+                    return p
+            except Exception:
+                continue
+
+        return None
+
+    @staticmethod
     def load_all_summaries(templates_dir: str = "workflows/templates") -> List[Dict]:
         """Load summaries for all templates (for dashboard)."""
         summaries = []
@@ -642,6 +775,10 @@ class WorkflowStateMachine:
 
             if not tool:
                 errors.append(f"Step {i+1} ('{name}'): missing 'tool'")
+            if not isinstance(step.get("args", {}), dict):
+                errors.append(f"Step {i+1} ('{name}'): 'args' must be an object")
+            if not isinstance(step.get("extracts", []), list):
+                errors.append(f"Step {i+1} ('{name}'): 'extracts' must be a list")
 
             # Validate expected_output regexes
             expected = step.get("expected_output")
@@ -654,7 +791,13 @@ class WorkflowStateMachine:
                         errors.append(f"Step {i+1} ('{name}'): invalid regex '{p[:60]}': {e}")
 
             # Validate extract regexes
-            for ex in step.get("extracts", []):
+            extracts = step.get("extracts", [])
+            if not isinstance(extracts, list):
+                extracts = []
+            for ex in extracts:
+                if not isinstance(ex, dict):
+                    errors.append(f"Step {i+1} ('{name}'): each extract must be an object")
+                    continue
                 var = ex.get("var", "")
                 regex = ex.get("regex", "")
                 if not var or not regex:
@@ -664,6 +807,15 @@ class WorkflowStateMachine:
                     re.compile(regex)
                 except re.error as e:
                     errors.append(f"Step {i+1} ('{name}'): invalid extract regex '{regex[:60]}': {e}")
+
+            # Validate file_gate (v6.3): a list of non-empty path strings
+            file_gate = step.get("file_gate", [])
+            if not isinstance(file_gate, list):
+                errors.append(f"Step {i+1} ('{name}'): 'file_gate' must be a list of file paths")
+            else:
+                for p in file_gate:
+                    if not isinstance(p, str) or not p.strip():
+                        errors.append(f"Step {i+1} ('{name}'): file_gate entries must be non-empty strings")
 
             # Validate retries range
             retries = step.get("retries", 2)
@@ -811,6 +963,17 @@ class WorkflowStateMachine:
             args = data.get("args", {})
             if not tool or not isinstance(args, dict):
                 return None
+            # v6.x: the LLM often suggests a raw BINARY name (e.g. 'airodump-ng')
+            # that is not a registered tool — fuzzy-match to the registry so the
+            # alternative actually executes instead of blocking as unknown_tool
+            # (which, on a gate step, aborted the whole workflow).
+            matched = self._match_registered_tool(tool)
+            if matched is None:
+                logger.info(f"LLM alternative tool '{tool}' not in registry — discarding")
+                return None
+            if matched != tool:
+                logger.info(f"LLM alternative tool '{tool}' -> '{matched}'")
+            tool = matched
             # Resolve any {{var}} placeholders the LLM may have echoed back
             try:
                 args = self._resolve(args)
@@ -820,6 +983,132 @@ class WorkflowStateMachine:
         except Exception as e:
             logger.warning(f"LLM alternative suggestion failed: {e}")
             return None
+
+    # System tools that manage interfaces directly. A vanished interface arg
+    # on one of these is a REAL error (the interface was renamed or does not
+    # exist) — never silently redirect them to a monitor interface. Every
+    # other tool that carries an `interface` arg is wireless/sniffing by
+    # construction, so this exclude-list is self-maintaining: future wireless
+    # tools adapt automatically without registry edits.
+    _NO_IFACE_REDIRECT = frozenset({
+        "iface_up", "iface_down", "iface_addr", "route_config",
+        "interface_discovery", "macchanger", "ifconfig",
+    })
+
+    def _match_registered_tool(self, name: str) -> Optional[str]:
+        """
+        Fuzzy-match an LLM-suggested tool name (which may be a raw binary like
+        'airodump-ng' or 'nmap') to a registered tool name. Returns None if no
+        reasonable match exists.
+
+        Hardening: only INSTALLED tools are considered (a suggested
+        alternative that is registered but missing its binary would fail on
+        retry and, on a gate step, abort the workflow — same failure the
+        original bug caused). Requires a meaningful minimum name length and
+        ignores 1-2 char tokens ("ng", "py") so garbage names can't create
+        false token-overlap matches.
+        """
+        registry = getattr(self.runner, "registry", None)
+        if registry is None:
+            return None
+        try:
+            available = list(registry.get_all_tools().keys())
+        except Exception:
+            return None
+        if not available:
+            return None
+
+        def _installed(t: str) -> bool:
+            try:
+                tdef = registry.get_tool(t)
+                return bool(getattr(tdef, "installed", False))
+            except Exception:
+                return False
+
+        if name in available:
+            # Exact matches are also held to the installed filter: suggesting
+            # a registered-but-missing tool would fail on retry and, on a
+            # gate step, abort the workflow — the same failure the original
+            # bug caused.
+            return name if _installed(name) else None
+        installed = [t for t in available if _installed(t)]
+        norm = name.lower().strip().replace("-", "_").replace(" ", "_")
+        # 1. Substring containment (shortest installed name wins). Require a
+        # meaningful minimum length so a garbage single-char LLM name can't
+        # match every tool and silently pick the shortest registered one.
+        if len(norm) >= 3:
+            contained = [t for t in installed
+                         if norm in t.lower() or t.lower() in norm]
+            if contained:
+                return min(contained, key=len)
+        # 2. Token overlap on underscore-separated parts (ignoring 1-2 char
+        # noise tokens like "ng", so 'airodump-ng' -> 'airodump_capture' via
+        # the 'airodump' token, while bare 'ng' can never match anything).
+        tokens = {tok for tok in norm.split("_") if len(tok) >= 3}
+        best, best_score = None, 0
+        for t in installed:
+            overlap = len(tokens & set(t.lower().split("_")))
+            if overlap > best_score:
+                best_score, best = overlap, t
+        if best and best_score >= 1:
+            return best
+        return None
+
+    def _adapt_monitor_interface(self, args: Dict[str, Any],
+                                 tool_name: str = "") -> Dict[str, Any]:
+        """
+        If args reference a wireless interface that no longer exists (because
+        airmon-ng renamed it when entering monitor mode), substitute a live
+        monitor interface (ARPHRD_IEEE80211_RADIOTAP = type 803).
+
+        Scope: EXCLUDE-list, not allowlist — the handful of system tools that
+        legitimately manage interfaces (iface_up/down/addr, route_config,
+        interface_discovery, macchanger, ifconfig) never get redirected; every
+        other tool carrying an `interface` arg (all wireless/sniffing tools)
+        adapts. Selection is deterministic: prefer the airmon-ng rename
+        convention for THIS interface (base+mon), then any monitor iface in
+        sorted order — never os.listdir order.
+        """
+        iface = args.get("interface") if isinstance(args, dict) else None
+        if not iface or not isinstance(iface, str):
+            return args
+        if tool_name in self._NO_IFACE_REDIRECT:
+            return args
+        if os.path.isdir(f"/sys/class/net/{iface}"):
+            return args
+        try:
+            candidates = os.listdir("/sys/class/net")
+        except OSError:
+            return args
+        mon_ifaces = []
+        for name in candidates:
+            try:
+                with open(f"/sys/class/net/{name}/type") as f:
+                    if f.read().strip() == "803":
+                        mon_ifaces.append(name)
+            except OSError:
+                continue
+        if not mon_ifaces:
+            return args
+        # Deterministic two-tier selection: airmon-ng renames <base> ->
+        # <base>mon (also -mon/_mon), so tier 1 is the EXACT variant of THIS
+        # interface. Tier 2 is any monitor iface sharing the base prefix (a
+        # looser heuristic for unusual renames). Tier 3 is any monitor iface
+        # in sorted order. Tiers are never merged before sorting, so a short
+        # base like 'wlan0' can never match an unrelated 'wlan05mon'.
+        def _variant(name: str, base: str) -> bool:
+            return name in (base + "mon", base + "-mon", base + "_mon")
+
+        exact = [n for n in mon_ifaces if _variant(n, iface)]
+        if exact:
+            chosen = sorted(exact)[0]
+        else:
+            prefixed = sorted(n for n in mon_ifaces if n.startswith(iface))
+            chosen = (prefixed or sorted(mon_ifaces))[0]
+        new_args = dict(args)
+        new_args["interface"] = chosen
+        logger.info(f"Interface adapted: {iface} -> {chosen} (monitor rename)")
+        return new_args
 
     # ═══════════════════════════════════════════════════════════════
     # PHASE 2: AUTO PENTEST REPORT

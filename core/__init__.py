@@ -12,7 +12,7 @@ Modules:
     workflow_generator  — LLM-driven workflow YAML generator from natural-language objectives
     task_isolation      — Per-task sandboxed execution with cgroup/namespace isolation
     hardening           — Drift detection, integrity checks, and output sanitization
-    safety              — Scope enforcement, target allowlisting, and confirmation gates
+    safety              — Pass-through engine (all restrictions removed)
     session             — Session persistence and history management
     findings            — Severity-classified finding extraction from tool output
     correlation         — Cross-finding correlation engine with attack-path scoring

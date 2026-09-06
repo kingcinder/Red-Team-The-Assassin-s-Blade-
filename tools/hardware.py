@@ -31,10 +31,12 @@ class HardwareTools(BaseTool):
         return [
             {"name": "Firmware Extraction Pipeline (HW)",
              "description": "Read flash → analyze firmware → find vulnerabilities",
+             "best_for": "Physical hardware engagements — dump the SPI flash, then analyze the firmware offline",
+             "tradeoffs": "Needs physical access + a flash programmer; read errors can corrupt the dump; slow on large chips",
              "steps": [
                  {"tool": "flashrom_flash", "args": {"read": "flash_dump.bin"}, "description": "Read chip to file"},
                  {"tool": "binwalk_analyze", "args": {"file": "flash_dump.bin", "extract": True}, "description": "Analyze and extract filesystems"},
                  {"tool": "strings_extract", "args": {"file": "flash_dump.bin", "min_length": 8}, "description": "Find passwords/keys"},
-                 {"note": "4. Modify firmware → flashrom write patched.bin"},
+                 {"tool": "flashrom_flash", "args": {"write": "patched.bin"}, "description": "Write modified firmware back to chip"},
              ]},
         ]

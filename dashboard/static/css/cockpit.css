@@ -399,6 +399,78 @@ body {
     margin-top: 2px;
 }
 
+/* best_for / tradeoffs operator hints (v6.3) — pick the right chain at a glance */
+.attack-chain .chain-hint {
+    font-size: 10px;
+    line-height: 1.35;
+    margin-top: 4px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border-left: 2px solid;
+    /* hints are informational — don't launch the chain when reading them */
+    pointer-events: none;
+    user-select: none;
+}
+
+.attack-chain .chain-hint .chain-hint-tag {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-right: 4px;
+    font-size: 9px;
+}
+
+.attack-chain .chain-best {
+    color: var(--accent-green);
+    background: rgba(0, 200, 120, 0.07);
+    border-left-color: var(--accent-green);
+}
+
+.attack-chain .chain-tradeoff {
+    color: var(--accent-yellow);
+    background: rgba(255, 200, 60, 0.06);
+    border-left-color: var(--accent-yellow);
+}
+
+/* v6.3: recommended chains — highlighted + badged so the no-tuning option
+   is visually prominent; details auto-expand on click via .chain-collapsed */
+.attack-chain.chain-recommended {
+    border-color: var(--accent-green);
+    background: linear-gradient(180deg, rgba(0, 200, 120, 0.10), var(--bg-card));
+    box-shadow: 0 0 8px rgba(0, 200, 120, 0.15);
+}
+
+.attack-chain.chain-recommended:hover {
+    border-color: var(--accent-green);
+    box-shadow: 0 0 12px rgba(0, 200, 120, 0.25);
+}
+
+.attack-chain .chain-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: #00240f;
+    background: var(--accent-green);
+    border-radius: 8px;
+    vertical-align: middle;
+}
+
+.attack-chain .chain-details {
+    margin-top: 4px;
+}
+
+.attack-chain.chain-collapsed .chain-details {
+    display: none;
+}
+
+.attack-chain .chain-run-btn {
+    margin-top: 6px;
+}
+
 /* ═══════════════ CENTER PANEL ═══════════════ */
 .center-panel {
     flex: 1;
@@ -2562,6 +2634,34 @@ body {
     content: '';
 }
 
+/* Reasoning-effort toggle row (sits under the current model card) */
+.models-reasoning {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    margin-bottom: 14px;
+}
+
+.models-reasoning .modal-label {
+    margin: 0;
+    color: var(--text);
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+#reasoning-select {
+    flex: 0 1 260px;
+}
+
+#reasoning-save-status {
+    flex: 1;
+    text-align: right;
+}
+
 /* Model Grid */
 .models-grid {
     display: grid;
@@ -2697,3 +2797,108 @@ body {
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
+
+/* ─────────────────────────────────────────────
+   WiFi Interface Manager (v6.2)
+   The tool palette capture-interface dropdown
+   is wrapped in a small control panel with
+   monitor-mode ON/OFF + attack-chain chaining.
+──────────────────────────────────────────────── */
+.capture-interface-control.wifi-interface-manager {
+    margin: 12px 0;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.wifi-interface-manager label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.wifi-interface-manager select {
+    width: 100%;
+    padding: 7px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-secondary);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+}
+
+.wifi-iface-status {
+    margin-top: 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-family: var(--font-mono);
+}
+
+.wifi-iface-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+/* ─────────────────────────────────────────────
+   WiFi Interface Manager — top-of-screen strip (v6.3)
+   Full-width bar directly under the LLM banner so the
+   capture interface (and its up/down state) is always
+   visible without scrolling the tool palette.
+──────────────────────────────────────────────── */
+.wifi-manager-strip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 20px;
+    background: linear-gradient(180deg, rgba(0, 255, 136, 0.06), rgba(0, 0, 0, 0));
+    border-bottom: 1px solid var(--border);
+}
+
+.wifi-manager-strip .wifi-interface-manager {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    flex: 1;
+    min-width: 320px;
+}
+
+.wifi-manager-strip .wifi-interface-manager label {
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+
+.wifi-manager-strip .wifi-interface-manager select {
+    width: auto;
+    min-width: 200px;
+    flex: 0 1 260px;
+}
+
+.wifi-manager-strip .wifi-iface-status {
+    margin-top: 0;
+    white-space: nowrap;
+}
+
+.wifi-manager-strip .wifi-iface-actions {
+    margin-top: 0;
+    margin-left: auto;
+}
+
+.btn-sm {
+    padding: 5px 9px !important;
+    font-size: 11px !important;
+}
+

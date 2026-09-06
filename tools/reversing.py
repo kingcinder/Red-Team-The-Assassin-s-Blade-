@@ -55,6 +55,8 @@ class ReversingTools(BaseTool):
         return [
             {"name": "Malware Analysis Pipeline",
              "description": "Strings → disassemble → trace → YARA scan",
+             "best_for": "Static+dynamic triage of an unknown binary — signature hits, imports, and behavior",
+             "tradeoffs": "Static analysis misses runtime behavior; needs a safe sandbox; no automated unpacking",
              "steps": [
                  {"tool": "strings_extract", "args": {"file": "malware.bin", "min_length": 10}, "description": "Extract embedded strings"},
                  {"tool": "readelf_analyze", "args": {"file": "malware.bin", "flags": "-a"}, "description": "ELF header analysis"},
@@ -63,6 +65,8 @@ class ReversingTools(BaseTool):
              ]},
             {"name": "Android APK Analysis",
              "description": "Decompile → convert → analyze Android apps",
+             "best_for": "Mobile app review — recover smali/Java and hunt hardcoded secrets and misconfigs",
+             "tradeoffs": "Obfuscated apps resist clean decompile; requires the APK file locally",
              "steps": [
                  {"tool": "apktool_decompile", "args": {"apk": "app.apk", "operation": "d"}, "description": "Decompile to smali"},
                  {"tool": "jadx_decompile", "args": {"file": "app.apk", "output_dir": "./source"}, "description": "Decompile to Java"},

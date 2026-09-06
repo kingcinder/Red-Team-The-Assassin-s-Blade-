@@ -33,6 +33,7 @@ from core.tool_installer import ToolInstaller
 from core.tool_scorer import ToolScorer
 from core.vector_memory import VectorMemory
 from core.knowledge_base import KnowledgeBase
+from core.capture_state import CaptureStateStore, default_sniff_args, needs_interface
 from core.injection_defense import sanitize_for_llm, sanitize_tool_output
 from core.autonomous import AutonomousAgent
 from core.prompt_builder import PromptBuilder
@@ -42,9 +43,14 @@ logger = logging.getLogger("redteam.orchestrator")
 
 # ── Iteration limits ──
 DEFAULT_MAX_ITERATIONS = 10
-AUTONOMOUS_MAX_ITERATIONS = 200
+AUTONOMOUS_MAX_ITERATIONS = 500  # Truly autonomous: let the LLM run until done
 MAX_CONSECUTIVE_SAME_TOOL = 3   # stuck-detection threshold
 MAX_SELF_CORRECTIONS = 2        # re-prompts for malformed output
+# Autonomous mode: how many consecutive prose-only (no tool_call) responses to
+# tolerate before telling the model to wrap up. Autonomous mode must keep making
+# turns, but a model that refuses to act forever would burn the whole budget on
+# empty chat, so cap the streak.
+AUTONOMOUS_PROSE_NUDGE_LIMIT = 3
 
 # ── Workflow chaining (v4.3) ──
 MAX_CHAIN_LINKS_HARD_CAP = 10
@@ -57,6 +63,42 @@ CHAIN_SCHEMA = {
         "suggested_variables": {"type": "object"},
     },
     "required": ["continue", "next_objective", "rationale"],
+}
+
+# ── Allowed-tool enforcement (v6.3.4) ──
+# Curated map of common unregistered / LLM-mangled tool names to the nearest
+# REGISTERED tool(s). These are SUGGESTIONS offered when an unregistered tool
+# is refused — the invalid call is never silently executed.
+TOOL_ALIASES = {
+    "arp_spoof": ["ettercap_mitm", "bettercap_mitm"],
+    "arp_poison": ["ettercap_mitm", "bettercap_mitm"],
+    "arp_poisoning": ["ettercap_mitm", "bettercap_mitm"],
+    "arpspoof": ["ettercap_mitm", "bettercap_mitm"],
+    "dns_spoof": ["ettercap_mitm", "bettercap_mitm"],
+    "dns_spoofing": ["ettercap_mitm", "bettercap_mitm"],
+    "sniff": ["tshark_capture", "tcpdump_capture"],
+    "packet_capture": ["tcpdump_capture", "tshark_capture"],
+    "deauth_attack": ["aireplay_attack"],
+    "wifi_deauth": ["aireplay_attack"],
+    "wps_attack": ["reaver_attack"],
+    "wps_pin": ["reaver_attack"],
+    "wpa_crack": ["wifite_auto", "aircrack_crack"],
+    "start_monitor": ["monitor_mode_enable"],
+    "stop_monitor": ["monitor_mode_disable"],
+    "set_monitor": ["monitor_mode_enable"],
+}
+
+# Keyword → nearest registered tools, matched when a wholly-unregistered name
+# isn't in TOOL_ALIASES but clearly relates to a known category.
+TOOL_ALIAS_KEYWORDS = {
+    ("arp", "spoof", "poison", "mitm"): ["ettercap_mitm", "bettercap_mitm"],
+    ("packet", "sniff", "capture"): ["tshark_capture", "tcpdump_capture"],
+    ("deauth",): ["aireplay_attack"],
+    ("wps",): ["reaver_attack"],
+    ("wifi", "wpa", "wireless"): ["wifite_auto", "aircrack_crack"],
+    # NOTE: NO loose "monitor" keyword — any name containing "monitor" would
+    # get BOTH enable+disable as suggestions (e.g. "monitor_status"), which is
+    # misleading. Exact aliases cover start_monitor/stop_monitor/set_monitor.
 }
 
 
@@ -107,6 +149,11 @@ class Orchestrator:
         scorer_dir = config.get("harness", {}).get("session_dir", "./sessions")
         self.scorer = ToolScorer(scorer_dir)
         self.memory = VectorMemory(scorer_dir)
+        # v6.3: backend mirror of the cockpit's capture-interface selection.
+        # API/CLI/autonomous paths that omit the interface get it defaulted
+        # here from the last-used adapter, so the cockpit isn't the only path
+        # that remembers which adapter is the engagement's capture interface.
+        self.capture_state = CaptureStateStore(scorer_dir)
         self.installer = ToolInstaller(self.tools)
         self.prompts = PromptBuilder(self.tools, self.scorer, self.memory)
         self.interceptor = ToolInterceptor(self.tools, self.installer, config,
@@ -242,9 +289,9 @@ class Orchestrator:
         Process a user prompt through the full engagement loop.
         Returns the final response and all intermediate steps.
         """
-        sid = session_id or self._current_session
-        if not sid:
-            sid = self.new_session()
+        # Each API call without an explicit session_id gets a fresh session
+        # to prevent stale messages from prior engagements polluting the context.
+        sid = session_id if session_id else self.new_session()
 
         self.sessions.add_message(sid, "user", user_prompt)
 
@@ -269,11 +316,16 @@ class Orchestrator:
         max_iterations = AUTONOMOUS_MAX_ITERATIONS if self._autonomous else DEFAULT_MAX_ITERATIONS
         iteration = 0
         last_tool_sigs = []  # Track tool+args signatures for stuck detection
+        prose_only_streak = 0  # consecutive prose-only responses in autonomous mode
 
         while iteration < max_iterations:
             iteration += 1
             step_result = self._run_iteration(sid, steps, stream=stream)
             steps.append(step_result)
+
+            # Any real tool call resets the prose-only guard.
+            if step_result.get("tool_calls"):
+                prose_only_streak = 0
 
             # Stuck detection: same tool+args 3× in a row?
             for tc in step_result.get("tool_calls", []):
@@ -289,10 +341,45 @@ class Orchestrator:
                         "Try a different approach or report findings.")
                     last_tool_sigs.clear()
 
-            if step_result.get("action") in ("complete", "waiting_for_user", "waiting_for_approval"):
+            action = step_result.get("action")
+
+            # Completion: the loop must STOP when the LLM signals done (this was
+            # missing entirely — autonomous runs used to burn the full 500-
+            # iteration budget even after the model finished). Report generation
+            # happens after the loop.
+            if action == "complete":
                 break
+
+            if action in ("waiting_for_user", "waiting_for_approval"):
+                if not self._autonomous:
+                    break
+                # Autonomous mode: a prose-only response (no tool_call and not a
+                # completion) must NOT halt the engagement — that's what made it
+                # look like "autonomous does nothing." Nudge the model to keep
+                # driving 100+ turns in sequence by emitting its next tool_call.
+                # But a model that NEVER acts (pure prose, no tools, past the
+                # limit) should be wrapped up, not allowed to burn the whole
+                # budget on empty chat.
+                prose_only_streak += 1
+                if prose_only_streak > AUTONOMOUS_PROSE_NUDGE_LIMIT:
+                    self.sessions.add_message(sid, "system",
+                        "[HARNESS] Several consecutive responses with no tool call. "
+                        "Treating the engagement as complete — emitting final summary.")
+                    step_result["action"] = "complete"
+                    break
+                self.sessions.add_message(sid, "system",
+                    "[HARNESS] Continue autonomously — do not wait for user input. "
+                    "Produce your next JSON tool_call to keep going.")
+                continue
+            # In autonomous mode, don't stop on errors — give the LLM a chance
+            # to self-correct with the error context in its next turn.
             if step_result.get("error"):
-                break
+                if not self._autonomous:
+                    break
+                prose_only_streak = 0
+                logger.warning(f"Autonomous mode: continuing after error: {step_result['error'][:120]}")
+                # Don't break — let the loop continue so the LLM sees the error
+                # and can try a different approach.
 
             # Auto phase transition
             self._check_phase_transition(sid, steps)
@@ -315,6 +402,7 @@ class Orchestrator:
         # ── Persist tool scores + vector memory on session end ──
         self.scorer.save()
         self.memory.save()
+        logger.info(f"Engagement finished: {len(steps)} steps, action={steps[-1].get('action') if steps else None}")
 
         return {
             "session_id": sid,
@@ -366,9 +454,10 @@ class Orchestrator:
         try:
             plan_prompt = (
                 f"Based on the user's objective: \"{sanitize_for_llm(user_prompt, max_len=500)}\"\n\n"
-                "Create a step-by-step penetration testing plan. Output as JSON with "
-                "a 'plan' array where each step has: step number, tool name, description, "
-                "and target. Only include tools that are available. Be specific and actionable."
+                "Create a complete step-by-step penetration testing plan. Output as JSON with "
+                "a 'plan' array, one step per phase of the requested chain, preserving the "
+                "user's order. Each step has: step number, tool name, description, and target. "
+                "Only include available tools. Do not return a partial plan or repeat the plan."
             )
             messages = [
                 {"role": "system", "content": self.prompts.dynamic("recon")},
@@ -401,12 +490,17 @@ class Orchestrator:
 
             # Parse plan JSON
             plan = self._parse_json(response)
-            if plan and "plan" in plan:
-                plan_text = json.dumps(plan["plan"], indent=2)
-                self.sessions.add_message(session_id, "system",
-                    f"[PLAN] Engagement strategy:\n{plan_text}")
-                logger.info(f"Plan generated: {len(plan['plan'])} steps")
-                return plan["plan"]
+            if plan and isinstance(plan.get("plan"), list):
+                valid_plan = [step for step in plan["plan"]
+                              if isinstance(step, dict)
+                              and isinstance(step.get("tool"), str)
+                              and isinstance(step.get("description"), str)]
+                if valid_plan:
+                    plan_text = json.dumps(valid_plan, indent=2)
+                    self.sessions.add_message(session_id, "system",
+                        f"[PLAN] Engagement strategy:\n{plan_text}")
+                    logger.info(f"Plan generated: {len(valid_plan)} steps")
+                    return valid_plan
             return None
         except Exception as e:
             logger.warning(f"Planning phase failed (non-fatal): {e}")
@@ -443,8 +537,33 @@ class Orchestrator:
             step_data["corrections"] = corrections
             self._emit("on_llm_response", {"session_id": session_id, "response": llm_response})
 
-            # Parse tool calls
+            # ── Backend-failure guard ──
+            # A backend error string ("Cannot connect to LLM...", "LLM returned
+            # status 400/500...") must NEVER be stored as an assistant message:
+            # llama-server rejects requests whose last two messages are both
+            # assistant ("Cannot have 2 or more assistant messages at the end of
+            # the list"), so one transient failure used to wedge the whole
+            # session into a permanent error loop (observed: 67 consecutive
+            # 400s in a single engagement). Store it as a system message and
+            # fail the step cleanly so the loop can break / retry.
+            if llm_response.startswith("[ERROR]"):
+                err_text = llm_response[:500]
+                self.sessions.add_message(
+                    session_id, "system",
+                    f"[HARNESS] LLM backend error: {err_text}")
+                step_data["action"] = "error"
+                step_data["error"] = err_text
+                self._emit("on_error", {"session_id": session_id, "error": err_text})
+                self._emit("on_step_complete", {"session_id": session_id, "step": step_data})
+                return step_data
+
+            # Parse tool calls and bind capture-interface placeholders to the
+            # operator's explicit interface when one is present in the session.
             tool_calls = self._parse_tool_calls(llm_response)
+            selected_interface = self._selected_interface(session_id)
+            for tc in tool_calls:
+                if selected_interface and tc["args"].get("interface") in {"eth0", "wlan0", "wlan0mon", "{{interface}}"}:
+                    tc["args"]["interface"] = selected_interface
 
             if not tool_calls:
                 self.sessions.add_message(session_id, "assistant", llm_response)
@@ -457,21 +576,49 @@ class Orchestrator:
                 tool_name = tc.get("tool", "")
                 tool_args = tc.get("args", {})
 
-                # Validate tool exists
+                # ── Allowed-tool enforcement (v6.3.4) ──
+                # An UNREGISTERED tool is REFUSED immediately — never silently
+                # auto-corrected to a guessed binary and executed (that previously
+                # produced broken calls like an unimplemented `arp_spoof`). The
+                # nearest registered alternative(s) are surfaced as guidance so
+                # the LLM/operator can retry with a valid tool.
                 if tool_name not in self.tools.get_all_tools():
-                    self.sessions.add_message(session_id, "system",
-                        f"[HARNESS] Unknown tool '{tool_name}'. Available: {', '.join(list(self.tools.get_all_tools().keys())[:20])}...")
+                    recs = self._recommend_tool(tool_name)
+                    if recs:
+                        suggested = ", ".join(f"'{r}'" for r in recs)
+                        logger.info(f"Refused unregistered tool '{tool_name}', suggested {suggested}")
+                        self.sessions.add_message(session_id, "system",
+                            f"[HARNESS] Tool '{tool_name}' is not a registered tool and was REFUSED. "
+                            f"Nearest alternative(s): {suggested}. Retry with one of those.")
+                        step_data["results"].append({
+                            "tool": tool_name, "status": "refused",
+                            "reason": f"Unregistered tool; suggested {suggested}",
+                        })
+                    else:
+                        available = ', '.join(sorted(self.tools.get_all_tools().keys())[:30])
+                        self.sessions.add_message(session_id, "system",
+                            f"[HARNESS] Tool '{tool_name}' is not a registered tool and was REFUSED. "
+                            f"Available tools: {available}")
+                        step_data["results"].append({
+                            "tool": tool_name, "status": "refused",
+                            "reason": "Unregistered tool",
+                        })
                     continue
 
-                # Validate required args
+                # Validate required args — inject defaults when possible
                 tool_def = self.tools.get_all_tools().get(tool_name)
                 if tool_def:
                     missing = [p for p, pi in tool_def.parameters.items()
                                if pi.get("required") and p not in tool_args]
                     if missing:
-                        self.sessions.add_message(session_id, "system",
-                            f"[HARNESS] Tool '{tool_name}' missing required params: {missing}. Please correct and retry.")
-                        continue
+                        # Try to fill 'interface' from selected interface
+                        if "interface" in missing and selected_interface:
+                            tool_args["interface"] = selected_interface
+                            missing.remove("interface")
+                        if missing:
+                            self.sessions.add_message(session_id, "system",
+                                f"[HARNESS] Tool '{tool_name}' missing required params: {missing}. Please correct and retry.")
+                            continue
 
                 valid_tool_calls.append(tc)
 
@@ -493,7 +640,7 @@ class Orchestrator:
             parallel_tcs = []      # [(tc, tool_name, tool_args, orig_idx)]
             blocked_results = []
 
-            for tc in valid_tool_calls:
+            for i, tc in enumerate(valid_tool_calls):
                 tool_name = tc["tool"]
                 tool_args = tc["args"]
 
@@ -541,7 +688,8 @@ class Orchestrator:
                 else:
                     logger.info(f"Parallel execution: {len(parallel_tcs)} tools simultaneously")
                     # Build call dicts for ParallelExecutor
-                    calls = [{"tool": tn, "args": ta} for _, tn, ta in parallel_tcs]
+                    # entries are (tc, tool_name, tool_args, orig_idx)
+                    calls = [{"tool": tn, "args": ta} for _, tn, ta, _ in parallel_tcs]
                     start_time = time.time()
                     raw_results = self.parallel.execute_many(calls)
                     total_elapsed = time.time() - start_time
@@ -601,6 +749,9 @@ class Orchestrator:
 
                 result_msg = (f"[TOOL: {tool_name}] Exit code: {result['exit_code']} "
                               f"({elapsed:.1f}s)\n{summary}")
+                # On failure, include stderr so the LLM can diagnose and self-correct
+                if result['exit_code'] != 0 and raw_stderr:
+                    result_msg += f"\nStderr: {raw_stderr[:1000]}"
                 self.sessions.add_message(session_id, "tool_result", result_msg)
                 self.sessions.log_command(session_id, tool_name, tool_args, tool_result)
 
@@ -644,32 +795,48 @@ class Orchestrator:
     def _call_llm_with_corrections(self, messages: List[Dict], stream: bool = False) -> Tuple[str, int]:
         """
         Call LLM, and if response contains no valid tool_call AND no plain analysis,
-        re-prompt once to get a valid response. Returns (response_str, correction_count).
+        re-prompt to get a valid response. Returns (response_str, correction_count).
+
+        In autonomous mode, retries up to 5 times (vs 2 in normal mode) because
+        the LLM has more context to self-correct.
         """
         corrections = 0
+        max_attempts = 5 if self._autonomous else (MAX_SELF_CORRECTIONS + 1)
 
-        for attempt in range(MAX_SELF_CORRECTIONS + 1):
+        for attempt in range(max_attempts):
             if stream:
                 response = self._accumulate_stream(messages)
             else:
                 response = self.llm.chat(messages, cache_prompt=True)
 
-            if attempt >= MAX_SELF_CORRECTIONS:
+            if attempt >= max_attempts - 1:
                 return response, corrections
 
             # Check if response is valid
             has_tool_call = bool(self._parse_tool_calls(response))
-            has_content = len(response.strip()) > 50
+            has_content = len(response.strip()) > 20
 
             if has_tool_call or has_content:
                 return response, corrections
 
-            # Empty/malformed — re-prompt
+            # Backend error — don't re-prompt (will be handled by caller)
+            if response.startswith("[ERROR]"):
+                return response, corrections
+
+            # Empty/malformed — re-prompt with escalating guidance
             corrections += 1
             logger.warning(f"LLM returned empty/malformed response (attempt {attempt+1})")
-            messages.append({"role": "system",
-                "content": "[HARNESS] Your response was empty or invalid. "
-                           "Respond with a valid JSON tool_call or analysis."})
+            if attempt == 0:
+                messages.append({"role": "system",
+                    "content": "[HARNESS] Your response was empty or invalid. "
+                               "Respond with a JSON tool_call or your analysis text."})
+            else:
+                # After first retry, provide the tool list as concrete guidance
+                available = ', '.join(sorted(self.tools.get_all_tools().keys())[:25])
+                messages.append({"role": "system",
+                    "content": f"[HARNESS] Your last response was invalid. "
+                               f"Choose ONE tool and respond with: {{\"tool_call\": {{\"tool\": \"<name>\", \"args\": {{}}}}}} "
+                               f"Available tools: {available}"})
 
         return response, corrections
 
@@ -682,6 +849,7 @@ class Orchestrator:
             accumulated += chunk
             # Emit chunks for real-time dashboard updates
             self._emit("on_llm_chunk", {"content": chunk})
+        logger.info(f"Stream accumulated: {len(accumulated)} chars")
         return accumulated
 
     # ═══════════════════════════════════════════════════════════════
@@ -755,58 +923,124 @@ class Orchestrator:
     # JSON PARSING
     # ═══════════════════════════════════════════════════════════════
 
+    def _selected_interface(self, session_id: str) -> Optional[str]:
+        """Return the explicit capture interface recorded for this session.
+
+        Searches backwards through session messages AND the tool log for a
+        real (non-generic) interface name.  Checks the most recent successful
+        tool result first (the LLM often calls interface_discovery early),
+        then falls back to operator-injected interface instructions.
+        """
+        _GENERIC = {"eth0", "wlan0", "wlan0mon", "lo", "{{interface}}"}
+        # 1. Check recent tool results for a discovered interface
+        session = self.sessions._load(session_id) if session_id else None
+        if session:
+            for entry in reversed(session.get("tool_log", [])):
+                stdout = (entry.get("result", {}) or {}).get("stdout", "")
+                # interface_discovery returns JSON with interface names
+                if "wlx" in stdout or "wlp" in stdout or "wlan" in stdout:
+                    # Extract the first wireless interface name
+                    m = re.search(r'"ifname"\s*:\s*"(wl[xp]\S+)"', stdout)
+                    if m:
+                        return m.group(1)
+                    m = re.search(r'(wl[xp]\S+)', stdout)
+                    if m:
+                        return m.group(1)
+        # 2. Search messages backwards for an operator-selected interface
+        for message in reversed(self.sessions.get_messages(session_id)):
+            content = message.get("content", "")
+            match = re.search(r"(?:Selected capture interface|interface)\s*[:=]\s*([A-Za-z0-9_.:-]+)", content, re.IGNORECASE)
+            if match and match.group(1) not in _GENERIC:
+                return match.group(1)
+        return None
+
     def _parse_json(self, text: str) -> Optional[dict]:
-        """Robust JSON extraction from LLM output."""
-        # Try direct parse
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
+        """Robust JSON extraction from LLM output.
+        Tolerates trailing commas (Qwen3.x emits ``{"tool": "x",}``)."""
+        for candidate in [text]:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
         # Try ```json blocks
         m = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
         if m:
-            try:
-                return json.loads(m.group(1))
-            except json.JSONDecodeError:
-                pass
+            for candidate in [m.group(1), self._clean_json(m.group(1))]:
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    pass
         # Try first { ... } pair
         m = re.search(r'\{.*\}', text, re.DOTALL)
         if m:
-            try:
-                return json.loads(m.group(0))
-            except json.JSONDecodeError:
-                pass
+            for candidate in [m.group(0), self._clean_json(m.group(0))]:
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    pass
         return None
 
     def _parse_tool_calls(self, llm_response: str) -> list:
         """Parse tool call JSON from the LLM response.
 
-        Handles three formats:
-          - {"tool_call": {"tool": "...", "args": {}}}  (single, legacy)
-          - {"tool_calls": [{"tool": "...", ...}, ...]}   (batch, preferred)
-          - {"tool": "...", "args": {}}                    (bare single)
+        Handles concatenated and multi-object responses: the LLM often emits
+        ``{"tool_calls":[...]}{"plan":[...]}`` or multiple JSON blocks.
+        This parser extracts ALL JSON objects from the full response text,
+        then pulls tool calls from each.
 
-        If both singular and plural keys appear, the singular is folded into
-        the plural list and deduplicated by (tool, args) signature.
+        Formats recognized (order of extraction):
+          1. XML <tool_call>...</tool_call> blocks (Qwen native format)
+          2. JSON inside ```json fences
+          3. Raw JSON objects (brace-depth tracked)
+
+        Per-object formats:
+          - {"tool_call": {"tool": "...", "args": {}}}  (single)
+          - {"tool_calls": [{"tool": "...", ...}, ...]}   (batch)
+          - {"tool": "...", "args": {}}                    (bare single)
         """
         tool_calls = []
-        data = self._parse_json(llm_response)
-        if not data:
-            return tool_calls
 
-        # ── Singular: tool_call or bare tool ──
-        if "tool_call" in data and isinstance(data["tool_call"], dict):
-            tc = data["tool_call"]
-            if "tool" in tc:
-                tool_calls.append({"tool": tc["tool"], "args": tc.get("args", {})})
-        elif "tool" in data:
-            tool_calls.append({"tool": data["tool"], "args": data.get("args", {}) if isinstance(data.get("args"), dict) else {}})
+        # ── Strip <think>...</think> wrapping (Qwen thinking tokens) ──
+        clean = re.sub(r'<think>.*?</think>', '', llm_response, flags=re.DOTALL).strip()
 
-        # ── Plural: tool_calls array ──
-        if "tool_calls" in data and isinstance(data["tool_calls"], list):
-            for tc in data["tool_calls"]:
-                if isinstance(tc, dict) and "tool" in tc:
+        # ── 1. XML <tool_call> format (Qwen native) ──
+        for xml_match in re.finditer(r'<tool_call>(.*?)</tool_call>', clean, re.DOTALL):
+            xml_block = xml_match.group(1)
+            # Extract <name> and <arguments> tags
+            name_m = re.search(r'<name>(.*?)</name>', xml_block, re.DOTALL)
+            args_m = re.search(r'<arguments>(.*?)</arguments>', xml_block, re.DOTALL)
+            if name_m:
+                tool_name = name_m.group(1).strip()
+                tool_args = {}
+                if args_m:
+                    try:
+                        tool_args = json.loads(args_m.group(1).strip())
+                    except json.JSONDecodeError:
+                        # Try extracting JSON from inside arguments block
+                        for obj in self._extract_all_json_objects(args_m.group(1)):
+                            if isinstance(obj, dict):
+                                tool_args = obj
+                                break
+                tool_calls.append({"tool": tool_name, "args": tool_args})
+
+        # ── 2. Extract ALL JSON objects from the full response ──
+        # This handles concatenated output like {"tool_calls":[...]}{"plan":[...]}
+        for data in self._extract_all_json_objects(clean):
+            if not isinstance(data, dict):
+                continue
+            # Singular: tool_call or bare tool
+            if "tool_call" in data and isinstance(data["tool_call"], dict):
+                tc = data["tool_call"]
+                if isinstance(tc.get("tool"), str) and isinstance(tc.get("args", {}), dict):
                     tool_calls.append({"tool": tc["tool"], "args": tc.get("args", {})})
+            elif isinstance(data.get("tool"), str) and isinstance(data.get("args", {}), dict):
+                tool_calls.append({"tool": data["tool"], "args": data.get("args", {})})
+            # Plural: tool_calls array
+            if "tool_calls" in data and isinstance(data["tool_calls"], list):
+                for tc in data["tool_calls"]:
+                    if (isinstance(tc, dict) and isinstance(tc.get("tool"), str)
+                            and isinstance(tc.get("args", {}), dict)):
+                        tool_calls.append({"tool": tc["tool"], "args": tc.get("args", {})})
 
         # ── Deduplicate (preserves order, keeps first occurrence) ──
         seen = set()
@@ -818,6 +1052,170 @@ class Orchestrator:
                 unique.append(tc)
 
         return unique
+
+    @staticmethod
+    def _clean_json(s: str) -> str:
+        """Strip trailing commas before } or ] — Qwen models emit these."""
+        return re.sub(r',\s*([}\]])', r'\1', s)
+
+    def _extract_all_json_objects(self, text: str) -> list:
+        """Extract every top-level JSON object from text.
+
+        Handles concatenated JSON like ``{...}{...}``, JSON inside markdown
+        fences, and mixed prose + JSON.  Uses brace-depth tracking to find
+        balanced objects so nested objects don't get split.
+        Tolerates trailing commas (Qwen3.x emits ``{"tool": "x",}``).
+        """
+        results = []
+        i = 0
+        n = len(text)
+        while i < n:
+            if text[i] == '{':
+                depth = 0
+                start = i
+                in_string = False
+                escape_next = False
+                for j in range(i, n):
+                    c = text[j]
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    if c == '\\' and in_string:
+                        escape_next = True
+                        continue
+                    if c == '"' and not escape_next:
+                        in_string = not in_string
+                        continue
+                    if in_string:
+                        continue
+                    if c == '{':
+                        depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            raw = text[start:j + 1]
+                            try:
+                                obj = json.loads(raw)
+                            except json.JSONDecodeError:
+                                try:
+                                    obj = json.loads(self._clean_json(raw))
+                                except json.JSONDecodeError:
+                                    obj = None
+                            if obj is not None:
+                                results.append(obj)
+                            i = j + 1
+                            break
+                else:
+                    # Unbalanced braces — try the remaining text
+                    raw = text[start:]
+                    try:
+                        obj = json.loads(raw)
+                    except json.JSONDecodeError:
+                        try:
+                            obj = json.loads(self._clean_json(raw))
+                        except json.JSONDecodeError:
+                            obj = None
+                    if obj is not None:
+                        results.append(obj)
+                    break
+            else:
+                i += 1
+        return results
+
+    def _fuzzy_match_tool(self, name: str) -> Optional[str]:
+        """Find the closest registered tool name.
+
+        Uses three strategies in order:
+          1. Substring containment (shortest match wins)
+          2. Token overlap on underscore-separated parts
+          3. Levenshtein edit distance with generous threshold
+        Returns the best match or None.
+        """
+        all_tools = list(self.tools.get_all_tools().keys())
+        if not all_tools:
+            return None
+        lower = name.lower()
+
+        # 1. Exact substring (e.g. "kismet" → "kismet_scan")
+        substrings = [t for t in all_tools if lower in t.lower()]
+        if substrings:
+            return min(substrings, key=len)
+        # Reverse: registered name contains the input
+        reverse = [t for t in all_tools if t.lower() in lower]
+        if reverse:
+            return min(reverse, key=len)
+
+        # 2. Token overlap on underscore-split parts
+        input_tokens = set(lower.split("_"))
+        best_token, best_token_score = None, 0
+        for t in all_tools:
+            tool_tokens = set(t.lower().split("_"))
+            overlap = len(input_tokens & tool_tokens)
+            if overlap > best_token_score:
+                best_token_score = overlap
+                best_token = t
+        if best_token and best_token_score >= 1:
+            return best_token
+
+        # 3. Levenshtein distance
+        best_lev, best_dist = None, len(name)
+        for t in all_tools:
+            dist = self._levenshtein(lower, t.lower())
+            if dist < best_dist:
+                best_dist = dist
+                best_lev = t
+        threshold = max(3, min(len(name), 6) // 2)
+        if best_lev and best_dist <= threshold:
+            return best_lev
+        return None
+
+    def _recommend_tool(self, name: str) -> List[str]:
+        """Return nearest REGISTERED alternative(s) for an unregistered tool name.
+
+        Used exclusively for *refusal guidance*: the invalid tool call is never
+        executed; instead the operator/LLM is told which registered tools to
+        retry with. Priority:
+          1. Exact curated alias (e.g. ``arp_spoof`` → bettercap_mitm/ettercap_mitm)
+          2. Keyword-category match on the name (e.g. any name containing "arp"
+             resolves to the MITM/ARP-spoof tools)
+          3. Fuzzy match (never empty-backed when a confident one exists)
+        Returns an empty list when nothing sensible maps.
+        """
+        if not name or not isinstance(name, str):
+            return []
+        lower = name.lower()
+        if lower in TOOL_ALIASES:
+            return list(TOOL_ALIASES[lower])
+        for keywords, suggestions in TOOL_ALIAS_KEYWORDS.items():
+            if any(kw in lower for kw in keywords):
+                return list(suggestions)
+        # Confident fallback ONLY: substring containment (e.g. "nmap"→"nmap_scan").
+        # The loose token-overlap/levenshtein heuristics suggest WRONG tools for
+        # genuinely-bogus names (e.g. any name sharing the token "tool"), which is
+        # worse than refusing with the full registered list.
+        all_tools = list(self.tools.get_all_tools().keys())
+        sub = [t for t in all_tools if lower in t.lower()]
+        if sub:
+            return [min(sub, key=len)]
+        return []
+
+    @staticmethod
+    def _levenshtein(s1: str, s2: str) -> int:
+        """Compute Levenshtein edit distance between two strings."""
+        if len(s1) < len(s2):
+            return Orchestrator._levenshtein(s2, s1)
+        if len(s2) == 0:
+            return len(s1)
+        prev_row = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            curr_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = prev_row[j + 1] + 1
+                deletions = curr_row[j] + 1
+                substitutions = prev_row[j] + (c1 != c2)
+                curr_row.append(min(insertions, deletions, substitutions))
+            prev_row = curr_row
+        return prev_row[-1]
 
     # ═══════════════════════════════════════════════════════════════
     # COMPLETION DETECTION
@@ -877,26 +1275,25 @@ class Orchestrator:
         tasks_dir = self.config.get("workflow", {}).get(
             "tasks_dir", "tasks")
 
-        # Resolve template path — prevent path traversal (#5 fix)
-        if not workflow_name.endswith((".yaml", ".yml")):
-            workflow_name += ".yaml"
-        template_path = os.path.join(templates_dir, workflow_name)
+        # Resolve template path — accepts exact filename, filename stem, or
+        # display ``name:`` field (e.g. "Evil Twin & WPA2 Handshake Capture
+        # Chain" -> evil_twin_chain.yaml). resolve_template is path-traversal
+        # safe; the realpath guard below is kept as defense in depth.
+        template_path = WorkflowStateMachine.resolve_template(templates_dir, workflow_name)
+        if not template_path:
+            return {"error": f"Workflow template not found: {workflow_name} in {templates_dir}",
+                    "available": [os.path.basename(p) for p in
+                                   WorkflowStateMachine.discover_templates(templates_dir)]}
         real_tpl = os.path.realpath(template_path)
         real_dir = os.path.realpath(templates_dir)
         if not real_tpl.startswith(real_dir + os.sep) and real_tpl != real_dir:
             return {"error": f"Path traversal blocked: {workflow_name}"}
-        if not os.path.exists(template_path):
-            # Maybe it's a full path or name without extension
-            alt = os.path.join(templates_dir, workflow_name.replace(".yaml", "") + ".yml")
-            if os.path.exists(alt):
-                template_path = alt
-            else:
-                return {"error": f"Workflow template not found: {workflow_name} in {templates_dir}",
-                        "available": [os.path.basename(p) for p in
-                                       WorkflowStateMachine.discover_templates(templates_dir)]}
 
-        # Create sandbox + state machine
-        sandbox = TaskSandbox(workflow_name.replace(".yaml", ""), base_dir=tasks_dir)
+        # Create sandbox + state machine — derive the task-dir name from the
+        # RESOLVED file stem (not the raw request, which may be a display name
+        # with spaces/&) so task dirs stay consistent with filename launches.
+        sandbox_name = os.path.basename(template_path).rsplit(".", 1)[0]
+        sandbox = TaskSandbox(sandbox_name, base_dir=tasks_dir)
         sandbox.setup()
 
         wf = WorkflowStateMachine(template_path, sandbox, self.runner, variables, llm=self.llm)
@@ -1449,7 +1846,14 @@ class Orchestrator:
     def get_workflow_status(self, workflow_name: str) -> Dict[str, Any]:
         """Get recent task status for a workflow."""
         tasks_dir = self.config.get("workflow", {}).get("tasks_dir", "tasks")
-        sandbox = TaskSandbox(workflow_name, base_dir=tasks_dir)
+        templates_dir = self.config.get("workflow", {}).get(
+            "templates_dir", "workflows/templates")
+        # Task dirs are named from the resolved file stem (run_workflow does
+        # the same), so resolve display names before listing tasks.
+        tpl = WorkflowStateMachine.resolve_template(templates_dir, workflow_name)
+        name = os.path.basename(tpl).rsplit(".", 1)[0] if tpl \
+            else workflow_name.replace(".yaml", "")
+        sandbox = TaskSandbox(name, base_dir=tasks_dir)
         return {"tasks": sandbox.list_tasks()}
 
     # ═══════════════════════════════════════════════════════════════
@@ -1666,8 +2070,52 @@ class Orchestrator:
     # ═══════════════════════════════════════════════════════════════
 
     def execute_direct(self, tool_name: str, args: dict, session_id: Optional[str] = None) -> Dict[str, Any]:
-        """Execute a tool directly without LLM reasoning."""
+        """Execute a tool directly without LLM reasoning.
+
+        v6.3: interface-defaulting layer. Wireless/sniffing tools (and any
+        tool declaring an `interface` param) that arrive with a blank or
+        missing interface get it filled from the last-used capture interface
+        (server-side store, mirrored from the cockpit), so API/CLI/autonomous
+        callers never silently drop the adapter. Explicit picks are persisted
+        to the same store so the last-used adapter follows every path.
+
+        v6.3.1: the same defaulting now covers `channel` (hint from the last
+        airodump scan) for wireless/sniffing tools, so one-click captures stay
+        one-click. An airodump_capture run also persists its channel/bssid as
+        scan hints for subsequent steps. bssid is never auto-injected — it is
+        an explicit AP-targeting call.
+        """
         sid = session_id or self._current_session
+
+        # ── adapter-typed param defaulting (v6.3 / v6.3.1) ──
+        # Only wireless/sniffing tools (or tools declaring these params) touch
+        # the store — recon/NSE/postex calls never pay the file-read cost, and
+        # an arg named "interface" on a tool that doesn't need one is never
+        # persisted.
+        tool = self.tools.get_tool(tool_name)
+        if tool is not None and needs_interface(tool.category, tool.parameters):
+            effective, injected = default_sniff_args(
+                args, tool.category, tool.parameters,
+                self.capture_state.get(),
+                self.capture_state.get_scan())
+            if injected:
+                logger.info("execute_direct: defaulted %s for %s -> %s",
+                            ",".join(sorted(injected)), tool_name, injected)
+            # Persist an EXPLICIT interface pick (supplied by the caller, not
+            # auto-filled) so later calls (and the cockpit on reload) inherit
+            # the adapter chosen by any path — independently of whether a
+            # channel hint happened to be injected this call.
+            if effective.get("interface") and "interface" not in injected:
+                self.capture_state.set(effective["interface"])
+            args = effective
+
+            # Persist an explicit channel picked by this call so the next
+            # hint reflects the operator's/LLM's actual scan channel.
+            if effective.get("channel") and tool_name == "airodump_capture":
+                self.capture_state.set_scan(
+                    channel=effective.get("channel"),
+                    bssid=effective.get("bssid"))
+
         safe, reason = self.safety.check_tool(tool_name, args)
         if not safe:
             return {"status": "blocked", "reason": reason}

@@ -202,12 +202,16 @@ class MultiTargetScheduler:
         base_variables = base_variables or {}
 
         # Combined task container: tasks/<workflow>/multi_<timestamp>_<hex>/
+        # Named from the resolved file stem (same as run_workflow) so display-
+        # name launches and filename launches land in the same task dir.
         import secrets as _secrets
         ts = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + _secrets.token_hex(2)
-        combined_root = os.path.join(
-            self.tasks_dir, workflow_name.replace(".yaml", ""), f"multi_{ts}")
+        resolved = self._resolve_template(workflow_name)
+        job_stem = os.path.basename(resolved).rsplit(".", 1)[0] if resolved \
+            else workflow_name.replace(".yaml", "")
+        combined_root = os.path.join(self.tasks_dir, job_stem, f"multi_{ts}")
         os.makedirs(combined_root, exist_ok=True)
-        combined_id = f"multi_{workflow_name.replace('.yaml', '')}_{ts}"
+        combined_id = f"multi_{job_stem}_{ts}"
 
         # ── CampaignManager integration ──
         if campaign_id and self._campaign_mgr:
@@ -912,16 +916,10 @@ class MultiTargetScheduler:
     # ═══════════════════════════════════════════════════════════════
 
     def _resolve_template(self, workflow_name: str) -> Optional[str]:
-        name = workflow_name if workflow_name.endswith((".yaml", ".yml")) \
-            else workflow_name + ".yaml"
-        path = os.path.join(self.templates_dir, name)
-        if os.path.exists(path):
-            return path
-        alt = os.path.join(self.templates_dir,
-                           workflow_name.replace(".yaml", "") + ".yml")
-        if os.path.exists(alt):
-            return alt
-        return None
+        # Shared resolver: exact filename, filename stem, or display ``name:``
+        # field (e.g. "Evil Twin & WPA2 Handshake Capture Chain" ->
+        # evil_twin_chain.yaml). Path-traversal safe.
+        return WorkflowStateMachine.resolve_template(self.templates_dir, workflow_name)
 
     def _log(self, root: str, msg: str):
         try:

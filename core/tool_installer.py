@@ -95,6 +95,10 @@ INSTALL_RECIPES: Dict[str, Dict[str, Any]] = {
     "reaver": {"method": "apt", "package": "reaver"},
     "bettercap": {"method": "github_release", "repo": "bettercap/bettercap",
                    "asset_pattern": "bettercap", "ext": "zip"},
+    # hcxtools family — hcxdumptool (passive PMKID capture) + hcxpcapngtool
+    # (converts .pcapng → hashcat .hc22000) ship across two Kali packages.
+    "hcxdumptool": {"method": "apt", "package": "hcxdumptool"},
+    "hcxpcapngtool": {"method": "apt", "package": "hcxtools"},
 
     # ═══════════ SNIFFING ═══════════
     "tcpdump": {"method": "apt", "package": "tcpdump"},
@@ -150,6 +154,35 @@ INSTALL_RECIPES: Dict[str, Dict[str, Any]] = {
 }
 
 
+# ── Recipe key ⇢ registered binary aliases ──
+# INSTALL_RECIPES is keyed by the *recipe* name, which is not always the
+# binary name the tool registry exposes. When they differ the installer must
+# map the registered binary to the recipe key or install_tool() (which looks
+# up by resolved binary) silently finds no recipe. Kept here — not cloned in
+# install_manifest.py — so the recipe source stays single.
+RECIPE_BINARY_ALIASES: Dict[str, str] = {
+    # registered binary  ->  INSTALL_RECIPES key
+    "proxychains": "proxychains4",  # recipe key is the proxychains4 package
+}
+
+
+def recipe_for(binary: str) -> Dict[str, Any]:
+    """Resolve the install recipe for a registered *binary* name.
+
+    Checks INSTALL_RECIPES directly, then the binary→key alias map, so a
+    recipe that ships under a different key (e.g. proxychains4) is still
+    found when the caller has a registered binary (e.g. proxychains)."""
+    if binary in INSTALL_RECIPES:
+        return INSTALL_RECIPES[binary]
+    key = RECIPE_BINARY_ALIASES.get(binary)
+    return INSTALL_RECIPES.get(key, {}) if key else {}
+
+
+def has_recipe(binary: str) -> bool:
+    """True if any install recipe exists for the given registered binary."""
+    return bool(recipe_for(binary))
+
+
 class ToolInstaller:
     """
     Installs missing tools on-demand. The LLM can call install_tool()
@@ -185,7 +218,7 @@ class ToolInstaller:
 
         # Resolve tool_name to binary name if it's a harness tool name
         binary_name = self._resolve_binary(tool_name)
-        recipe = INSTALL_RECIPES.get(binary_name)
+        recipe = recipe_for(binary_name)
 
         if not recipe:
             return {
@@ -233,7 +266,7 @@ class ToolInstaller:
         for name, tool in self.registry.get_all_tools().items():
             if not tool.installed:
                 binary = tool.binary
-                recipe = INSTALL_RECIPES.get(binary, {})
+                recipe = recipe_for(binary)
                 missing.append({
                     "tool_name": name,
                     "binary": binary,
@@ -248,7 +281,7 @@ class ToolInstaller:
         """Check if a specific tool is installed and get details."""
         binary = self._resolve_binary(tool_name)
         path = shutil.which(binary)
-        recipe = INSTALL_RECIPES.get(binary, {})
+        recipe = recipe_for(binary)
         tool_def = None
         for name, t in self.registry.get_all_tools().items():
             if t.binary == binary or name == tool_name:
@@ -270,7 +303,7 @@ class ToolInstaller:
         """Count how many missing tools have install recipes."""
         count = 0
         for name, tool in self.registry.get_all_tools().items():
-            if not tool.installed and tool.binary in INSTALL_RECIPES:
+            if not tool.installed and has_recipe(tool.binary):
                 count += 1
         return count
 
@@ -596,7 +629,7 @@ class ToolInstaller:
                 break
             if tool.installed:
                 continue
-            if tool.binary not in INSTALL_RECIPES:
+            if not has_recipe(tool.binary):
                 results["skipped"].append(name)
                 continue
 

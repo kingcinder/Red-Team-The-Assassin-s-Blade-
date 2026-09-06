@@ -31,6 +31,24 @@ import re
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
+
+def _json_default(obj: Any) -> Any:
+    """JSON fallback serializer — findings can carry numpy scalars (scores,
+    counts from sklearn/TF-IDF pipelines) that plain json.dump rejects."""
+    if _HAS_VECTOR_DEPS:
+        import numpy as np
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
 # numpy / scikit-learn are OPTIONAL — the wheels bundle ships neither, so a
 # clean air-gapped host must still boot. When absent, vector memory degrades
 # to pure-stdlib keyword retrieval (see _keyword_query) and skips vector
@@ -526,7 +544,7 @@ class VectorMemory:
                     "saved_at": datetime.now().isoformat(),
                     "count": len(self._findings),
                     "findings": self._findings,
-                }, f, indent=2)
+                }, f, indent=2, default=_json_default)
 
             # Save vectors (only when deps present — pure JSON otherwise)
             if _HAS_VECTOR_DEPS and self._vectors is not None and self._fitted:
@@ -539,7 +557,7 @@ class VectorMemory:
                         "max_features": self._vectorizer.max_features,
                         "ngram_range": list(self._vectorizer.ngram_range),
                         "sublinear_tf": self._vectorizer.sublinear_tf,
-                    }, f)
+                    }, f, default=_json_default)
 
             logger.debug(f"Saved vector memory: {len(self._findings)} findings")
         except Exception as e:
@@ -612,6 +630,6 @@ class VectorMemory:
                         "saved_at": datetime.now().isoformat(),
                         "count": len(self._findings),
                         "findings": self._findings,
-                    }, f)
+                    }, f, default=_json_default)
         except Exception:
             pass

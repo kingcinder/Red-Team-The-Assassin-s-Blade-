@@ -59,6 +59,8 @@ class WebTools(BaseTool):
         return [
             {"name": "Web App Assessment",
              "description": "Fingerprint → WAF check → crawl → dir brute → vuln scan → SQLi",
+             "best_for": "Full-breadth web audit of a single host when the stack is unknown",
+             "tradeoffs": "Slow (many steps); no auth-aware testing; aggressive fuzzing may trip WAFs",
              "steps": [
                  {"tool": "whatweb_scan", "args": {"target": "TARGET"}, "description": "Technology fingerprint"},
                  {"tool": "waf_detect", "args": {"target": "TARGET"}, "description": "WAF detection"},
@@ -68,6 +70,8 @@ class WebTools(BaseTool):
              ]},
             {"name": "Full URL Discovery Pipeline",
              "description": "Crawl → Wayback → GAU → ffuf fuzz",
+             "best_for": "Surface-area mapping before targeted testing — best when you need every URL fast",
+             "tradeoffs": "Third-party lookups need connectivity; output volume is large; no vuln detection",
              "steps": [
                  {"tool": "katana_crawl", "args": {"url": "TARGET"}, "description": "Live crawl"},
                  {"tool": "waybackurls_fetch", "args": {"domain": "TARGET"}, "description": "Historical URLs"},

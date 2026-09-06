@@ -1,13 +1,11 @@
 """
-Tests for core/safety.py — the SafetyEngine seam (architecture candidate #6).
+Tests for core/safety.py — the SafetyEngine seam (unrestricted mode).
 
-The safety gate is the FIRST thing every LLM tool call passes through; it was
-one of the load-bearing untested modules. These tests pin:
-  - require_confirmation tool gating
-  - blocked-target rejection (exact, prefix, CIDR overlap)
-  - allowed-scope enforcement (IP-in-CIDR + string suffix)
-  - target extraction from args
-  - policy summary
+All restrictions and guardrails have been removed: the engine is a
+pass-through. These tests pin that:
+  - every tool is approved unconditionally (no confirmation gating)
+  - no target is ever blocked (no blocked list, no scope enforcement)
+  - approve_tool / get_policy_summary still work for API compatibility
 """
 import os
 import sys
@@ -26,67 +24,45 @@ def _check(name, fn):
         raise
 
 
-def test_confirmation_gate():
+def test_confirmation_gate_removed():
+    # Even tools that USED to require confirmation now pass unconditionally
     eng = SafetyEngine({"require_confirmation": ["msfconsole", "hydra_brute"]})
     ok, reason = eng.check_tool("hydra_brute", {"target": "10.0.0.5"})
-    assert not ok, "destructive tool must require confirmation"
-    assert "requires explicit user confirmation" in reason
+    assert ok, "destructive tool must NOT require confirmation anymore"
+    assert reason == "Approved"
 
-    # Non-confirmation tool passes through
     ok, reason = eng.check_tool("nmap_scan", {"target": "10.0.0.5"})
     assert ok and reason == "Approved"
 
 
-def test_blocked_targets():
+def test_blocked_targets_removed():
+    # Configured blocked targets are ignored — nothing is ever blocked
     eng = SafetyEngine({"blocked_targets": ["10.0.0.5", "192.168.1.0/24", "evil.com"]})
-    # Exact match
-    ok, reason = eng.check_tool("nmap_scan", {"target": "10.0.0.5"})
-    assert not ok and "blocked" in reason
-    # CIDR overlap
-    ok, _ = eng.check_tool("nmap_scan", {"target": "192.168.1.42"})
-    assert not ok, "CIDR-blocked target must be rejected"
-    # String match
-    ok, _ = eng.check_tool("nmap_scan", {"url": "evil.com"})
-    assert not ok
-    # Outside blocked scope is fine
-    ok, _ = eng.check_tool("nmap_scan", {"target": "10.0.0.99"})
-    assert ok
+    for target in ["10.0.0.5", "192.168.1.42", "evil.com", "8.8.8.8", "10.0.0.99"]:
+        ok, _ = eng.check_tool("nmap_scan", {"target": target})
+        assert ok, f"target must never be blocked: {target}"
 
 
-def test_allowed_scope():
+def test_allowed_scope_removed():
+    # Scope enforcement is gone — out-of-scope targets are approved too
     eng = SafetyEngine({"allowed_targets": ["10.0.0.0/24", "lab.local"]})
-    ok, _ = eng.check_tool("nmap_scan", {"target": "10.0.0.50"})
-    assert ok, "in-scope IP must be allowed"
-    ok, _ = eng.check_tool("nmap_scan", {"target": "host.lab.local"})
-    assert ok, "allowed-suffix hostname must be allowed"
-    ok, reason = eng.check_tool("nmap_scan", {"target": "172.16.0.1"})
-    assert not ok and "not in the allowed scope" in reason
-
-    # No allowed_targets configured → everything passes scope
-    eng2 = SafetyEngine({})
-    ok, _ = eng2.check_tool("nmap_scan", {"target": "172.16.0.1"})
-    assert ok
+    ok, _ = eng.check_tool("nmap_scan", {"target": "172.16.0.1"})
+    assert ok, "out-of-scope target must be approved (no scope enforcement)"
 
 
-def test_target_extraction():
+def test_approve_tool_compat():
     eng = SafetyEngine({})
-    assert eng._extract_target({"target": "10.0.0.1"}) == "10.0.0.1"
-    assert eng._extract_target({"url": "http://x.com"}) == "http://x.com"
-    assert eng._extract_target({"domain": "x.com"}) == "x.com"
-    assert eng._extract_target({"host": "x.com"}) == "x.com"
-    assert eng._extract_target({"ports": "80"}) == ""
+    assert eng.approve_tool("hydra_brute", {"target": "10.0.0.1"}) is True
 
 
 def test_policy_summary():
-    eng = SafetyEngine({"allowed_targets": ["10.0.0.0/24"],
-                        "blocked_targets": ["10.0.0.5"],
-                        "require_confirmation": ["msfconsole"],
-                        "log_all_commands": False})
+    eng = SafetyEngine({"log_all_commands": False})
     s = eng.get_policy_summary()
-    assert s["allowed_targets"] == ["10.0.0.0/24"]
-    assert s["blocked_targets"] == ["10.0.0.5"]
-    assert s["require_confirmation"] == ["msfconsole"]
+    assert s["allowed_targets"] == []
+    assert s["blocked_targets"] == []
+    assert s["require_confirmation"] == []
     assert s["log_all_commands"] is False
+    assert s["restrictions_enabled"] is False
 
 
 if __name__ == "__main__":

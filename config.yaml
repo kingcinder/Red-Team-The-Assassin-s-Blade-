@@ -9,10 +9,24 @@ llm:
   llama-server:
     host: "127.0.0.1"
     port: 8080
-    model: "carnice-qwen3.6-moe-35b"
+    model: "Carnice-Qwen3.6-MoE-35B-A3B-APEX-MTP-I-Quality.gguf"
+    # Generation / I/O tuning — all read from this section at backend startup.
+    # Per-call kwargs at any LLMBackend call site still override these.
     max_tokens: 4096
-    temperature: 0.3
-    timeout: 120
+    # 0.6 matches the tuned sampler stack in launch-gguf.sh. Lower values
+    # (0.2-0.3) make the Qwen3.6 MoE models over-enumerate port lists in
+    # nmap tool_calls; 0.6 gives clean, focused tool JSON.
+    temperature: 0.6
+    # 300s: the 35B MTP decodes at ~3-5 tok/s on this box, and a tool_call
+    # response over a long engagement context can exceed 120s. 120s was
+    # observed to abort otherwise-healthy generations mid-flight.
+    timeout: 300
+    # Reasoning effort sent to llama-server. "none" (default) disables  thinking
+    # blocks so the agentic loop gets direct answers — thinking models
+    # otherwise burn the whole token budget and return EMPTY content, which
+    # the harness reads as a failure. Set to "low"/"medium"/"high" to
+    # re-enable model reasoning when you want it.
+    reasoning_effort: "none"
   ollama:
     host: "127.0.0.1"
     port: 11434
@@ -79,35 +93,14 @@ assassins_blade:
   # when the LLM is unavailable)
   prioritizer_llm_enabled: true
 
-# Safety & Scope Configuration
+# Safety & Scope Configuration (unrestricted mode — all guardrails removed)
+# No confirmation gates, no allowed-scope, no blocked targets: every tool
+# runs unconditionally. The SafetyEngine is a pass-through regardless of
+# these values.
 safety:
-  require_confirmation:
-    - "hydra_brute"
-    - "hashcat_crack"
-    - "sqlmap_scan"
-    - "msfvenom_payload"
-    - "msf_resource"
-    - "crackmapexec_exec"
-    - "netexec_exec"
-    - "impacket_tools"
-    - "aireplay_attack"
-    - "reaver_attack"
-    - "ettercap_mitm"
-    - "responder_poison"
-    - "mimikatz_dump"
-    - "hping3_test"
-    - "slowhttptest_test"
-    - "install_tool"
-    - "install_all_missing"
-  allowed_targets:
-    - "192.168.0.0/16"
-    - "10.0.0.0/8"
-    - "172.16.0.0/12"
-    - "127.0.0.0/8"
-  blocked_targets:
-    - "8.8.8.8"
-    - "1.1.1.1"
-    - "0.0.0.0"
+  require_confirmation: []
+  allowed_targets: []
+  blocked_targets: []
   log_all_commands: true
 
 # Tool Paths (auto-detected if left blank)

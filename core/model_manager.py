@@ -16,6 +16,8 @@ import time
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
+import requests
+
 logger = logging.getLogger("redteam.model_manager")
 
 # ── Quantization label map (filename heuristic) ──
@@ -135,7 +137,127 @@ def get_current_model_info(llm_backend) -> Dict[str, Any]:
         "backend": status.get("backend", "llama-server"),
         "connected": status.get("connected", False),
         "base_url": status.get("machine_url", ""),
+        "reasoning_effort": getattr(llm_backend, "reasoning_effort", "none"),
     }
+
+
+# Valid values for llama-server's `reasoning_effort` param (OpenAI-compat).
+REASONING_EFFORT_VALUES = ("none", "low", "medium", "high")
+
+
+def _config_path() -> str:
+    """Default config.yaml path (sidecar to this package), matching harness.py."""
+    return os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml"))
+
+
+def set_reasoning_effort(llm_backend, config: dict, value: str,
+                         config_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Apply a `reasoning_effort` value to the running backend AND to config.yaml
+    so the change survives a restart and takes effect on the next request.
+
+    Returns a dict with ``success`` and either ``reasoning_effort`` or
+    ``error``.
+    """
+    value = (value or "none").strip().lower()
+    if value not in REASONING_EFFORT_VALUES:
+        return {"success": False,
+                "error": f"Invalid reasoning_effort {value!r}; "
+                         f"choose one of {', '.join(REASONING_EFFORT_VALUES)}."}
+
+    # Apply to the running backend — the next LLM request uses this value.
+    if hasattr(llm_backend, "reasoning_effort"):
+        llm_backend.reasoning_effort = value
+
+    # Update the in-memory config dict (what callers like the orchestrator hold)
+    # by mirroring how LLMBackend reads it: config[backend]["reasoning_effort"].
+    backend = getattr(llm_backend, "backend", "llama-server")
+    section = config.setdefault("llm", {}).get(backend)
+    if section is None:
+        section = config.setdefault("llm", {})[backend] = {}
+    changed = section.get("reasoning_effort") != value
+    section["reasoning_effort"] = value
+
+    # Persist to config.yaml so the change survives a restart. This edits the
+    # file IN PLACE (a targeted single-line replace / insert) rather than
+    # round-tripping through yaml.safe_dump — a full reserialize strips every
+    # comment from the file, which would be a destructive side effect.
+    persisted = False
+    try:
+        path = config_path or _config_path()
+        if os.path.isfile(path):
+            new_text, replaced = _rewrite_reasoning_line(path, backend, value)
+            if new_text is not None:
+                with open(path, "w") as f:
+                    f.write(new_text)
+                persisted = True
+                if not replaced:
+                    logger.info(
+                        "Inserted missing reasoning_effort line into %s (%s=%s)",
+                        path, backend, value)
+    except Exception as e:
+        logger.warning("Could not persist reasoning_effort to config.yaml: %s", e)
+
+    return {"success": True, "reasoning_effort": value, "persisted": persisted,
+            "changed": changed}
+
+
+def _rewrite_reasoning_line(path: str, backend: str, value: str):
+    """Return (new_text, replaced) after setting ``backend.reasoning_effort``
+    to ``value`` inside ``path``, preserving all comments and unrelated lines.
+
+    Operates on the literal text so existing formatting/commentary is left
+    untouched. Locates the ``  <backend>:`` section, then either rewrites the
+    section's ``reasoning_effort:`` line or inserts one directly after the
+    section's ``model:`` line. Returns (None, False) if the section can't be
+    found.
+    """
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+    except OSError:
+        return None, False
+
+    section_tok = f"  {backend}:"
+    anchor_tok = "    model:"
+    replace_tok = "reasoning_effort:"
+
+    def _section_lines(lines_):
+        """Yield (index, line) pairs belonging to the backend section."""
+        in_section = False
+        for i, line in enumerate(lines_):
+            # A new top-level key ends the current backend section.
+            if not line.startswith(" ") and line.strip() and line.strip().endswith(":"):
+                in_section = False
+            if line.startswith(section_tok):
+                in_section = True
+            if in_section:
+                yield i, line
+
+    # Pass 1: replace an existing `reasoning_effort:` line inside the section.
+    out = list(lines)
+    change_idx = None
+    for i, line in _section_lines(out):
+        if line.lstrip().startswith(replace_tok):
+            change_idx = i
+            break
+    if change_idx is not None:
+        indent = out[change_idx][:len(out[change_idx]) - len(out[change_idx].lstrip())]
+        out[change_idx] = f"{indent}reasoning_effort: {value}\n"
+        return "".join(out), True
+
+    # Pass 2: no existing line — insert one right after the section's `model:`.
+    insert_after = None
+    for i, line in _section_lines(out):
+        if line.startswith(anchor_tok):
+            insert_after = i
+    if insert_after is not None:
+        indent = "    "  # same depth as other backend keys
+        out.insert(insert_after + 1, f"{indent}reasoning_effort: {value}\n")
+        return "".join(out), True
+
+    return None, False
 
 
 def find_llama_server_pid() -> Optional[int]:
@@ -241,20 +363,30 @@ def swap_model(
         # Use the launch script with the new model path
         # We modify the environment or pass the model as an override
         try:
-            # Read the script and replace the --model argument
+            # Read the script and replace the model argument
             with open(script_path) as f:
                 script_content = f.read()
 
-            # Replace the model path in the script
-            old_model_pattern = re.search(r'--model\s+["\']?([^"\'\s\\]+)', script_content)
-            if old_model_pattern:
-                new_script = script_content.replace(
-                    old_model_pattern.group(0),
-                    f'--model "{target_model_path}"'
+            # Replace the model path in the script. The launch script passes the
+            # model via `-m "$MODEL"` (or `--model ...`); the model arg is the
+            # FIRST occurrence of `-m`/`--model` followed by an (optionally
+            # quoted) value. Rewriting it to a concrete path also makes the
+            # script work when $MODEL is unset in the environment.
+            model_arg = re.search(r'(?m)^(\s*(?:-m|--model)\s+)(["\']?)[^"\'\s]+', script_content)
+            if model_arg:
+                new_script = (
+                    script_content[:model_arg.start()]
+                    + f'{model_arg.group(1)}"{target_model_path}"'
+                    + script_content[model_arg.end():]
                 )
             else:
-                # Add --model before the first - in the llama-server command
-                new_script = script_content
+                # No model arg found — inject one right after the llama-server
+                # binary invocation line so the script still starts the right model.
+                new_script = re.sub(
+                    r'(?m)^(\s*exec\s+\S*llama-server\s*\\?)$',
+                    lambda m: m.group(1) + '\n  -m "' + target_model_path + '" \\',
+                    script_content,
+                )
 
             # Write a temp script and execute it
             temp_script = "/tmp/_redteam_model_swap.sh"

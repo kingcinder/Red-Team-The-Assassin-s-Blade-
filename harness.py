@@ -457,7 +457,11 @@ def run_dashboard(config):
     print(f"  http://localhost:{port}")
     print(f"{'='*60}\n")
 
-    app.run(host=host, port=port, debug=debug)
+    try:
+        app.run(host=host, port=port, debug=debug)
+    except OSError as exc:
+        logger.error("Dashboard failed to bind %s:%s: %s", host, port, exc)
+        raise SystemExit(1) from exc
 
 # ═══════════════════════════════════════════════════════════════
 # Check Mode
@@ -498,7 +502,55 @@ def run_check(config):
     else:
         print(f"    ✗ Not connected at {llm.base_url}")
 
+    # Check passwordless sudo (privileged helpers run the cockpit headlessly)
+    print(f"\n  {'─'*50}")
+    print("  Privilege (passwordless sudo for harness 'sudo' helpers):")
+    _report_sudo_readiness()
+
     print()
+
+
+def _report_sudo_readiness():
+    """Report whether the LLM-driven cockpit can run privileged tools headlessly.
+
+    Commands that need root (wireless, sniffing, install) are invoked with
+    'sudo'. From a headless subprocess with no TTY there is no way to answer
+    an interactive password prompt, so those tools only work when the invoking
+    user has NOPASSWD sudo for the exact binaries (see
+    setup/configure_sudo_privileges.sh).
+    """
+    try:
+        if os.geteuid() == 0:
+            print("    ✓ running as root — all tools already privileged")
+            return
+    except AttributeError:
+        pass
+
+    import subprocess
+    import pwd
+    try:
+        euid_user = pwd.getpwuid(os.geteuid()).pw_name
+    except Exception:
+        euid_user = os.environ.get("USER", "")
+    # A couple of representative harness-sudo binaries; the actual set lives in
+    # setup/configure_sudo_privileges.sh and core/command_builder.py.
+    probes = ["tcpdump", "airodump-ng", "airmon-ng", "tshark"]
+    missing = [p for p in probes if not (os.path.exists("/usr/sbin/%s" % p)
+                                         or os.path.exists("/usr/bin/%s" % p)
+                                         or os.path.exists("/bin/%s" % p))]
+    if missing:
+        print(f"    ⚠ helpers not installed on this host: {', '.join(missing)}")
+    try:
+        proc = subprocess.run(["sudo", "-n", "-l", "-U", euid_user],
+                              capture_output=True, text=True, timeout=10)
+        has = "NOPASSWD" in (proc.stdout or "") or "NOPASSWD" in (proc.stderr or "")
+    except Exception:
+        has = False
+    if has:
+        print("    ✓ passwordless sudo present — privileged tools will run headlessly")
+    else:
+        print("    ✗ no passwordless sudo — privileged tools will block on a password prompt")
+        print("        Fix: run once →  sudo bash setup/configure_sudo_privileges.sh $(whoami)  (scoped,NOPASSWD)")
 
 # ═══════════════════════════════════════════════════════════════
 # Main

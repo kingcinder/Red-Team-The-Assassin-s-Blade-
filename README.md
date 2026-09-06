@@ -118,8 +118,14 @@ llm:
   llama-server:
     host: "127.0.0.1"
     port: 8080
-    model: "carnice-qwen3.6-moe-35b"
-    temperature: 0.3
+    model: "Carnice-Qwen3.6-MoE-35B-A3B-APEX-MTP-I-Quality.gguf"
+    max_tokens: 4096
+    temperature: 0.6
+    timeout: 300
+    reasoning_effort: "none"   # none/low/medium/high; "none" so the agentic
+                               # loop gets direct answers instead of empty
+                               #  thinking. See DEVELOPMENT.md → "LLM
+                               # backend option reference" for details.
 
 # Assassin's Blade tuning
 assassins_blade:
@@ -131,11 +137,11 @@ assassins_blade:
   tactics_auto_run_threshold: 0.85
   drift_confidence_threshold: 0.7
 
-# Safety scope
+# Safety (unrestricted mode — all guardrails removed)
 safety:
-  allowed_targets: ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
-  blocked_targets: ["8.8.8.8", "1.1.1.1"]
-  require_confirmation: [hydra_brute, hashcat_crack, sqlmap_scan, msfvenom_payload]
+  allowed_targets: []
+  blocked_targets: []
+  require_confirmation: []
 ```
 
 ---
@@ -202,17 +208,34 @@ The harness exclusively talks to `localhost` loopback addresses:
 
 Both support: streaming (SSE chunks), JSON schema enforcement (GBNF grammar), and prompt caching. No cloud APIs, no telemetry, no phoning home.
 
+Every generation knob (`reasoning_effort`, `max_tokens`, `temperature`, `timeout`) is set
+in the backend's `config.yaml` block and overridable per call. `reasoning_effort` can also
+be toggled live from the cockpit's Model Manager dropdown (saves to `config.yaml`). For
+the full behavior of each option — especially the llama-server prefill message-shape rules
+that `_format_messages` defends against — see **DEVELOPMENT.md → "LLM backend option
+reference (llama-server / Ollama)"**.
+
 ---
 
-## 🔒 Safety Features
+## 🔓 Unrestricted Mode (restrictions & guardrails removed)
 
-- **CIDR scope enforcement** — only target authorized IP ranges
-- **Blocked target list** — hardcoded blocks for 8.8.8.8, 1.1.1.1, 0.0.0.0
-- **Confirmation gates** — destructive tools (hydra, sqlmap, msfvenom) require explicit approval
-- **Hardened subprocess** — list-mode execution, injection pattern rejection, timeout SIGTERM→SIGKILL
+The harness runs with **no operational restrictions**:
+
+- **No scope enforcement** — any target is allowed; the blocked-target list is empty
+- **No confirmation gates** — destructive/brute-force tools (hydra, sqlmap, msfvenom, etc.) run immediately with no human approval
+- **No prompt steering** — the system prompt imposes no scope/safety/privilege rules on the LLM
+- **No injection stripping** — user text and tool output flow to the LLM verbatim
+- **No arg rejection** — tool arguments are never rejected for shell-metacharacter or path-traversal patterns
+- **Tactical engine auto-runs everything** — every suggested action executes without confirmation
+
+What remains are mechanical/resource protections only (not restrictions):
+
+- **Hardened subprocess** — list-mode execution (`shell=False`), timeout SIGTERM→SIGKILL
 - **Per-workflow sandboxes** — `tasks/<name>/<timestamp>/` with size limits and per-step state.json
 - **Full audit trail** — every tool invocation logged with args, exit code, duration
-- **Path traversal hardening** — all workflow-name API routes validate against realpath
+- **Path traversal hardening** — workflow-name API routes validate against realpath (protects the harness host's own filesystem)
+- **Length caps** — oversized tool output is truncated to protect the LLM context window
+- **nmap compat downgrade** — `-sS` → `-sT` only when the process is genuinely unprivileged (root runs are untouched)
 
 ---
 

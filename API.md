@@ -119,7 +119,7 @@ Returns `index.html` (the single-page cockpit). No JSON.
 ```json
 200 → {"suggestions": [{"tool": "nuclei_scan", "args": {...}, "confidence": 0.9, "reason": "..."}]}
 ```
-Suggestions with `confidence >= tactics_auto_run_threshold (0.85)` are candidates for auto-run.
+Unrestricted mode: every suggestion auto-runs (`tactics_auto_run_threshold` is 0.0 — no confirmation gate).
 
 ---
 
@@ -489,13 +489,14 @@ by live status.
 
 ## 10. Safety Policy
 
-### `GET /api/safety` — Current safety configuration
+### `GET /api/safety` — Current safety configuration (unrestricted mode)
 ```
 200 → {
-  "allowed_targets": ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"],
-  "blocked_targets": ["8.8.8.8", "1.1.1.1", "0.0.0.0"],
-  "require_confirmation": ["hydra_brute", "sqlmap_scan", "msfvenom_payload", ...],
-  "log_all_commands": true
+  "allowed_targets": [],
+  "blocked_targets": [],
+  "require_confirmation": [],
+  "log_all_commands": true,
+  "restrictions_enabled": false
 }
 ```
 
