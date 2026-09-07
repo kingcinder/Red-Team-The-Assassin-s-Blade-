@@ -3,15 +3,17 @@
 # AP Vulnerability Capitalization · Deterministic Exploitation ·
 # Point-and-Click Operation · Zero LLM Required
 # ═══════════════════════════════════════════════════════════════
-> **Status**: EXECUTED — all phases P0–P6 complete (2026-09-06)
+> **Status**: COMPLETE — all phases P0–P6 executed and verified (2026-09-06)
 > **Written**: 2026-09-06
 > **Baseline**: 44 uncommitted v6.x working-tree changes committed as `ba020bb`
->   at operator request; all v7.0 work built on top, still uncommitted pending
->   operator review.
+>   at operator request; the full v7.0 delta committed as `2dcb206`.
 > **Verification**: 441/441 pytest (131 mech + 310 legacy), manifest validator
->   green, no-LLM end-to-end compile `runnable: true`, secret scan CLEAN.
-> **Release**: version bumped to v7.0.0 in docs; tag/push/SHA256SUMS per
->   RELEASING.md left to operator (requires gpg signing key + network).
+>   green, no-LLM end-to-end compile `runnable: true`, secret scan CLEAN,
+>   RELEASING dead-code sweep CLEAN repo-wide.
+> **Release**: version bumped to v7.0.0 in docs (DEVELOPMENT/API/README);
+>   remaining release steps — signed tag `v7.0.0`, SHA256SUMS regeneration,
+>   and push — are operator actions per RELEASING.md (require the maintainer
+>   gpg key + network). See .serpent-circle/03-execution/checkpoint-notes.md.
 > **Scope rule**: This manifest is a plan. It changes no code until each
 >   phase is executed in order. Every phase ends with gates that must pass.
 > **Canon rule**: Per repo policy (AGENTS.md §4), this refactor touches core
