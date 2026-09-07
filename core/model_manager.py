@@ -8,13 +8,11 @@ v6.1: Model Manager panel — GUI-driven model switching.
 import os
 import re
 import glob
-import json
 import signal
 import logging
 import subprocess
 import time
 from typing import Dict, Any, List, Optional
-from pathlib import Path
 
 import requests
 

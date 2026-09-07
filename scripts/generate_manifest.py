@@ -17,7 +17,6 @@ import os
 import re
 import ast
 import json
-import hashlib
 
 # Ensure we can import from the harness root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

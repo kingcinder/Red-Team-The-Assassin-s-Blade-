@@ -45,6 +45,22 @@ harness:
   max_parallel_tools: 3
   session_dir: "./sessions"
   output_dir: "./output"
+  # v7.0 Mech-Unit: which engagement runtime the harness boots into.
+  #   mech   — deterministic plans from attacks/ manifests; the LLM is an
+  #            optional advisor and the harness fully works with it off
+  #   legacy — the v6 LLM-piloted loop (orchestrator + autonomous agent)
+  mode: "mech"
+
+# ═══════════════════════════════════════════════════════════════
+# Mech-Unit runtime (v7.0) — deterministic attack plans, zero LLM required
+# ═══════════════════════════════════════════════════════════════
+mech:
+  manifest_dir: "./attacks"        # attack intent manifests (one per family)
+  sandbox_root: "./tasks/mech"     # per-plan sandboxes (tasks/mech/<plan_id>/)
+  vuln_graph: "./attacks/vuln_graph.yaml"
+  advisor:                         # OPTIONAL LLM advisor — off by default
+    enabled: false                 # true → resolver-blank suggestions + plan critique
+    max_tokens: 512                # hard bound on every advisory call
 
 # Workflow Engine Configuration (v4.0)
 workflow:

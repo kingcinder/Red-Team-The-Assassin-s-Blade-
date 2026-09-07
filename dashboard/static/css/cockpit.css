@@ -2902,3 +2902,32 @@ body {
     font-size: 11px !important;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   Mech-Unit console (v7.0) — targets → intents → run console
+   ═══════════════════════════════════════════════════════════════ */
+.mech-console { display: flex; flex-direction: column; gap: 18px; padding: 8px; }
+.mech-section h3 { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; }
+.mech-targets { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
+.mech-target { border: 1px solid var(--border, #2a2a3a); border-radius: 6px; padding: 6px 10px; cursor: pointer; display: flex; flex-direction: column; }
+.mech-target:hover { border-color: var(--accent, #0ff); }
+.mech-target.selected { border-color: var(--accent, #0ff); box-shadow: 0 0 6px var(--accent, #0ff); }
+.mech-intents { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.mech-card { border: 1px solid var(--border, #2a2a3a); border-radius: 8px; padding: 10px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.mech-card:hover { border-color: var(--accent, #0ff); }
+.mech-card.selected { border-color: var(--accent, #0ff); box-shadow: 0 0 8px var(--accent, #0ff); }
+.mech-card.disabled { opacity: 0.45; cursor: not-allowed; }
+.mech-card-title { font-weight: 600; }
+.mech-card-missing { color: #ff6b6b; font-size: 0.8em; }
+.mech-plan-preview { display: flex; flex-direction: column; gap: 6px; }
+.mech-step { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border, #2a2a3a); border-radius: 6px; padding: 5px 10px; }
+.mech-step.running { border-color: #ffd93d; }
+.mech-step.success { border-color: #6bff8d; }
+.mech-step.failed { border-color: #ff6b6b; }
+.mech-step-num { color: var(--accent, #0ff); font-weight: 700; }
+.mech-step-args { font-size: 0.75em; opacity: 0.75; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mech-gate { font-size: 0.75em; color: #ffd93d; }
+.mech-run-controls { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+.mech-run-controls button { min-width: 90px; }
+.mech-next-moves h4 { margin: 10px 0 6px; }
+.mech-move { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }

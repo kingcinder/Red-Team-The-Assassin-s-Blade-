@@ -1,18 +1,18 @@
 # ═══════════════════════════════════════════════════════════════
 # RedTeam Harness — Complete Development Timeline & Architecture
-# The Road to v4.0 "Assassin's Blade" — Every Feature, Every Decision
+# The Road to v7.0 "Mech-Unit" — Every Feature, Every Decision
 # ═══════════════════════════════════════════════════════════════
 
-> **NEXT UP — v7.0 "Mech-Unit"**: A deterministic-first refactor (no LLM
+> **Current — v7.0 "Mech-Unit"**: A deterministic-first refactor (no LLM
 > required) with a point-and-click cockpit, AP attack intent manifests, and a
-> VULN-GRAPH capitalization engine is planned in
-> [`docs/MECH_UNIT_REFACTOR_MANIFEST.md`](MECH_UNIT_REFACTOR_MANIFEST.md).
+> VULN-GRAPH capitalization engine. Full design and execution record in
+> [`docs/MECH_UNIT_REFACTOR_MANIFEST.md`](docs/MECH_UNIT_REFACTOR_MANIFEST.md).
 
 > **Project**: AI-Piloted Penetration Testing Cockpit
-> **Codename**: Assassin's Blade
-> **Version**: v4.0 (final)
-> **Origin**: 2026-08-24 · **Current HEAD**: `483eb90` (2026-08-25)
-> **Scale**: 24 core modules · 15 tool modules · 27 workflow templates · 88 tracked files · ~14,200 lines of Python
+> **Codename**: Mech-Unit
+> **Version**: v7.0.0
+> **Origin**: 2026-08-24
+> **Scale**: 24 core modules · 15 tool modules · 27 workflow templates · 12 attack intent manifests · Mech-Unit runtime (`core/mech/`)
 
 ---
 
@@ -308,6 +308,31 @@ one place.
 
 ---
 
+## 🔹 v7.0 — The Mech-Unit (deterministic-first refactor, 2026-09-06)
+
+> **Evolution**: From "LLM-piloted" to "point-and-click, zero-LLM-required." The
+> operator selects a target and an attack intent; deterministic code fills every
+> parameter and runs the hardened chain. The LLM is demoted to an optional,
+> feature-flagged advisor.
+>
+> Full design + execution record:
+> [`docs/MECH_UNIT_REFACTOR_MANIFEST.md`](docs/MECH_UNIT_REFACTOR_MANIFEST.md).
+> See also **PART 7 — v7.0 Mech-Unit** below for the decision register additions.
+
+### What shipped
+
+| Component | Purpose |
+|-----------|---------|
+| `core/mech/` (11 modules) | intents → probes → resolver → compiler → executor → state → events, + vuln_graph, targets, bridge, advisors, cli |
+| `attacks/*.yaml` | 12 attack intent manifests (wireless, network/AD, web, host) + `vuln_graph.yaml` |
+| `harness.py --mech` | list / probe / compile / run / resume / next-moves CLI |
+| Cockpit Mech-Unit tab | TARGETS → INTENT WALL → RUN CONSOLE point-and-click flow |
+| `core/mech/advisors.py` | Optional LLM advisor, OFF by default, bounded + sanitized |
+| `harness.mode` | `mech` (shipped default) vs `legacy` (pre-v7 LLM loop preserved) |
+| `scripts/validate_mech_manifests.py` | Release-time manifest integrity gate |
+
+---
+
 ## 🔹 LLM backend option reference (llama-server / Ollama)
 
 All generation knobs live under the active backend's section in `config.yaml`
@@ -493,6 +518,33 @@ tests/
 
 ---
 
+# PART 7 — v7.0 Mech-Unit (deterministic-first refactor)
+
+> Full design: [`docs/MECH_UNIT_REFACTOR_MANIFEST.md`](MECH_UNIT_REFACTOR_MANIFEST.md).
+
+v7.0 inverts the architecture: deterministic code pilots attacks, the LLM is an
+optional advisor. New package `core/mech/` (intents → probes → resolver →
+compiler → executor → state → events, plus `vuln_graph.py`, `targets.py`,
+`bridge.py`, `advisors.py`, `cli.py`), 12 attack intent manifests in `attacks/`,
+a Mech-Unit dashboard blueprint + cockpit panel, and a `--mech` CLI. The legacy
+LLM loop is untouched behind `harness.mode: legacy` (the default when the key
+is absent); the shipped config sets `mode: mech`.
+
+### Decision register additions
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 19 | Determinism-first: plans compiled from manifests, LLM advisory only | AP/kill-chain work is structurally deterministic; stochasticity belongs in research, not parameter selection. |
+| 20 | Intent manifests as the operator interface | Encodes expert knowledge once; operator needs outcome-expectation knowledge only. |
+| 21 | Resolver layer over prompt engineering | Deterministic parameter selection is auditable, offline-safe, and testable (`param ← source` log). |
+| 22 | VULN-GRAPH replaces the auto-run threshold model | Capitalization becomes a visible, scored choice instead of silent auto-execution. |
+| 23 | Executor must not own subprocess logic | Single hardened execution path (tool_registry + hardening); tests assert no `subprocess` import in `core/mech/`. |
+| 24 | Legacy mode preserved behind `mode:` flag | Existing LLM-piloted behavior stays available; v7 is additive supremacy, not removal. |
+| 25 | Advisor is feature-flagged OFF by default | The Mech-Unit must be fully functional with the LLM absent; advisory calls are compile/preview-time only, bounded at 512 tokens, sanitized. |
+| 26 | Parallel capabilities allowed in VULN-GRAPH | Handshake and PMKID are genuinely parallel paths to the same capability; cycle detection operates over directed edges, not uniqueness. |
+
+---
+
 # PART 5 — ARCHITECTURAL DECISION REGISTER
 
 A running register of every significant "why" decision in the project:
@@ -522,22 +574,22 @@ A running register of every significant "why" decision in the project:
 
 # PART 6 — VERIFICATION MATRIX
 
-The state of the repo at HEAD (`483eb90`):
+The state of the repo at HEAD (`ba020bb` + v7.0 working tree), verified 2026-09-06:
 
 | Check | Result |
 |-------|--------|
-| Python modules compile | ✅ 26/26 clean |
-| Core modules import | ✅ 23/23 clean |
-| Workflow templates validate | ✅ 27/27 (YAML + step counts) |
-| Correlation tests | ✅ 10/10 pass |
-| Parallel/campaign tests | ✅ 5/5 pass |
-| Unreachable code (AST scan) | ✅ 0 found |
-| TODO/FIXME/HACK markers | ✅ 0 found |
-| Bare `except:` clauses | ✅ 0 found |
-| Unused imports (AST) | ✅ purged across 10 files |
-| Tracked files | ✅ 88 |
-| Tags | ✅ `v1.0.0`, `v4.0.0` |
-| Remote | ✅ `origin` → `github.com/kingcinder/redteam-harness` (private) |
+| Python modules compile | ✅ all clean (`core/**`, `dashboard`, `tools`, `tests`, `scripts`, root) |
+| Full pytest suite | ✅ 441/441 pass (131 mech + 310 legacy) |
+| JS syntax (`node --check`) | ✅ `mech.js`, `cockpit.js` clean |
+| Import smoke (`tests/smoke_imports.py`) | ✅ 43/43 checks passed |
+| Server boot (`create_app()`) | ✅ builds, 12 Mech-Unit routes live |
+| Mech-Unit manifest validation | ✅ `scripts/validate_mech_manifests.py` — 12 intents, 12 vuln-graph vertices, patterns compile, all `llm_required: false`, tools exist |
+| No-LLM compile (end-to-end) | ✅ `harness.py --mech compile wifi_pmkid` → `runnable: true` with model off |
+| Unused imports (AST) | ⚠️ new Mech-Unit files CLEAN; 6 pre-existing v6.x WIP flags remain (logged in P6.5 report) |
+| Secret scan (RELEASING gate) | ✅ CLEAN |
+| Tracked files | ✅ 88 baseline |
+| Tags | ✅ `v1.0.0`, `v4.0.0`, `v5.8.0`, `v6.0.0` |
+| Remote | ✅ `origin` (private) |
 
 ---
 

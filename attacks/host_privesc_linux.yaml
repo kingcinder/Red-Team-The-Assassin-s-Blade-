@@ -1,0 +1,56 @@
+# Mech-Unit attack intent — Linux privilege escalation enumeration.
+# Packages linpeas + linux-exploit-suggester from
+# workflows/templates/linux_privesc_chain.yaml.
+id: host_privesc_linux
+name: Linux Privilege Escalation
+category: host
+operator_label: "Escalate privileges on a Linux host"
+operator_description: >
+  Runs LinPEAS and the Linux Exploit Suggester against a foothold to find
+  SUID binaries, misconfigurations, and kernel exploits that yield root.
+outcome: "Ranked privesc candidates and root exploit suggestions"
+grants: [host.root_candidates]
+time_to_impact: tens-of-minutes
+noise: low
+risk_notes: >
+  Enumeration runs inside the target account; exploit attempts can crash
+  the kernel. Authorized hosts only.
+
+preconditions:
+  - probe: tools_present
+    with: [linpeas]
+  - probe: tools_present
+    with: [linux-exploit-suggester]
+    optional: true
+
+plan:
+  - step: enum
+    tool: linpeas_run
+    args:
+      output: "{{ plan_dir }}/linpeas.txt"
+    max_wait: 1200
+    extracts:
+      suid_bins: "(-rwsr|SUID)"
+      sudo_misconfig: "(sudo.*NOPASSWD|sudoers)"
+    gate:
+      output: "SUID|sudo|CVE"
+    on_fail: warn
+
+  - step: kernel_suggest
+    tool: linux_exploit_suggester
+    args:
+      kernel: "{{ target.kernel }}"
+    max_wait: 300
+    gate:
+      output: "\\[\\+\\]|CVE"
+    on_fail: warn
+    fallbacks:
+      - step: lse_enum
+        tool: linux_smart_enum
+        args:
+          level: 2
+
+artifacts:
+  linpeas_report: "{{ plan_dir }}/linpeas.txt"
+
+llm_required: false

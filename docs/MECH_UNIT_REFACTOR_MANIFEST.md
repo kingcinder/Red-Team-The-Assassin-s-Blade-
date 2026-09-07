@@ -3,9 +3,15 @@
 # AP Vulnerability Capitalization · Deterministic Exploitation ·
 # Point-and-Click Operation · Zero LLM Required
 # ═══════════════════════════════════════════════════════════════
-> **Status**: PROPOSED — not yet approved or implemented
+> **Status**: EXECUTED — all phases P0–P6 complete (2026-09-06)
 > **Written**: 2026-09-06
-> **Baseline**: HEAD `483eb90` on `main`, 44 uncommitted working-tree changes
+> **Baseline**: 44 uncommitted v6.x working-tree changes committed as `ba020bb`
+>   at operator request; all v7.0 work built on top, still uncommitted pending
+>   operator review.
+> **Verification**: 441/441 pytest (131 mech + 310 legacy), manifest validator
+>   green, no-LLM end-to-end compile `runnable: true`, secret scan CLEAN.
+> **Release**: version bumped to v7.0.0 in docs; tag/push/SHA256SUMS per
+>   RELEASING.md left to operator (requires gpg signing key + network).
 > **Scope rule**: This manifest is a plan. It changes no code until each
 >   phase is executed in order. Every phase ends with gates that must pass.
 > **Canon rule**: Per repo policy (AGENTS.md §4), this refactor touches core
@@ -500,14 +506,13 @@ docs updated.
 
 ---
 
-## 8. Open Questions (need operator input before or during P1)
+## 8. Open Questions (resolved during P0 — see checkpoint for operator answers)
 
-1. **Default mode**: should the cockpit default to mech mode with legacy
-   behind a toggle (recommended), or keep legacy default until P4 lands?
-2. **Manifest location**: `attacks/` (new top-level, mirrors `workflows/`) —
-   confirm, or prefer `workflows/attacks/`?
-3. **AP automation depth for v7.0**: does "Next moves" auto-run the next
-   intent when confidence ≥ threshold (like today's auto-run), or always
-   require the click? (Manifest `autonomous: true` flag can mix both.)
-4. **Language**: keep the "Assassin's Blade" naming for v7 or adopt
-   "Mech-Unit" as the codename throughout?
+1. **Default mode**: → **mech as shipped default**, legacy behind `mode:` flag.
+2. **Manifest location**: → **`attacks/`** (new top-level).
+3. **AP automation depth for v7.0**: → plan-internal steps auto-run within one
+   compiled plan (deterministic, on_fail/fallback directives); cross-intent
+   "Next moves" require an operator click unless a manifest sets
+   `autonomous: true`. Matches "mostly autonomous: human selects attack type +
+   target."
+4. **Language**: → **"Mech-Unit"** codename adopted for v7 throughout.

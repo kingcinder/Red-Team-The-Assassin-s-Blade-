@@ -103,6 +103,87 @@ AUTO_RUN_THRESHOLD = 0.0    # Auto-run everything
 SUGGEST_THRESHOLD = 0.0     # Everything is suggested for auto-run
 
 
+# ═══════════════════════════════════════════════════════════════
+# VULN-GRAPH seed metadata (v7.0 P3.1)
+# Tool → {requires, provides, grants, phase, fallbacks, time_to_impact,
+#         noise}. Legacy TACTICAL_RULES tuples above are UNCHANGED (existing
+#         tests keep passing); the Mech-Unit's VULN-GRAPH merges this
+#         metadata onto rule vertices at graph-build time.
+# ═══════════════════════════════════════════════════════════════
+TOOL_GRAPH_META: Dict[str, Dict[str, Any]] = {
+    "nikto_scan": {
+        "phase": "vuln", "requires": ["net.http_service"],
+        "provides": ["web.vulns"], "grants": ["web.exploit_candidates"],
+        "fallbacks": ["whatweb_scan"], "time_to_impact": "minutes",
+        "noise": "medium"},
+    "hydra_brute": {
+        "phase": "exploit", "requires": ["net.credential_surface"],
+        "provides": ["creds.valid_candidates"], "grants": ["creds.valid"],
+        "fallbacks": ["hashcat_crack"], "time_to_impact": "minutes-to-hours",
+        "noise": "high"},
+    "enum4linux": {
+        "phase": "recon", "requires": ["net.smb_service"],
+        "provides": ["net.share_map", "net.user_list"],
+        "grants": ["net.credential_surface"],
+        "fallbacks": ["smbmap_enum"], "time_to_impact": "minutes",
+        "noise": "low"},
+    "sqlmap_scan": {
+        "phase": "exploit", "requires": ["web.dynamic_params"],
+        "provides": ["web.sql_injection"], "grants": ["db.access"],
+        "fallbacks": ["manual"], "time_to_impact": "minutes-to-tens-of-minutes",
+        "noise": "high"},
+    "wpscan": {
+        "phase": "vuln", "requires": ["web.wordpress"],
+        "provides": ["web.vulns", "web.user_enum"],
+        "grants": ["web.exploit_candidates"],
+        "fallbacks": [], "time_to_impact": "minutes", "noise": "medium"},
+    "crackmapexec_exec": {
+        "phase": "postex", "requires": ["creds.valid"],
+        "provides": ["host.exec"], "grants": ["lateral.movement"],
+        "fallbacks": ["impacket_tools"], "time_to_impact": "minutes",
+        "noise": "low"},
+    "hashcat_crack": {
+        "phase": "exploit", "requires": ["creds.hashes"],
+        "provides": ["creds.valid"], "grants": ["lateral.movement"],
+        "fallbacks": ["john_crack"], "time_to_impact": "minutes-to-hours",
+        "noise": "silent"},
+    "impacket_tools": {
+        "phase": "exploit", "requires": ["ad.kerberos_surface"],
+        "provides": ["creds.hashes", "creds.valid_candidates"],
+        "grants": ["creds.valid", "ad.access"],
+        "fallbacks": ["certipy_ad"], "time_to_impact": "minutes",
+        "noise": "low"},
+    "msfvenom_payload": {
+        "phase": "exploit", "requires": ["host.exploit_candidates"],
+        "provides": ["host.exec"], "grants": ["postex.shell"],
+        "fallbacks": ["msf_resource"], "time_to_impact": "minutes",
+        "noise": "high"},
+    "nuclei": {
+        "phase": "vuln", "requires": ["net.http_service"],
+        "provides": ["web.vulns"], "grants": ["web.exploit_candidates"],
+        "fallbacks": ["nikto_scan"], "time_to_impact": "minutes",
+        "noise": "low"},
+    "bloodhound_analyze": {
+        "phase": "postex", "requires": ["creds.valid"],
+        "provides": ["ad.attack_paths"], "grants": ["ad.access"],
+        "fallbacks": [], "time_to_impact": "tens-of-minutes",
+        "noise": "low"},
+    "socat": {
+        "phase": "postex", "requires": ["host.docker_socket"],
+        "provides": ["container.escape_path"], "grants": ["host.root"],
+        "fallbacks": [], "time_to_impact": "minutes", "noise": "low"},
+    "curl_request": {
+        "phase": "exploit", "requires": ["net.http_service"],
+        "provides": ["web.content"], "grants": ["creds.valid_candidates"],
+        "fallbacks": [], "time_to_impact": "seconds", "noise": "silent"},
+    "gobuster": {
+        "phase": "recon", "requires": ["net.http_service"],
+        "provides": ["web.paths"], "grants": ["web.dynamic_params"],
+        "fallbacks": ["feroxbuster_scan"], "time_to_impact": "tens-of-minutes",
+        "noise": "medium"},
+}
+
+
 class TacticalEngine:
     """Maps findings → next actions using predefined rules (+ vector memory)."""
 

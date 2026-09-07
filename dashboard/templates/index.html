@@ -165,6 +165,7 @@
                     <button class="tab" onclick="showResultsTab('kb')">📚 KB</button>
                     <button class="tab" onclick="showResultsTab('mission')">🛰️ Mission</button>
                     <button class="tab" onclick="showResultsTab('models')">🤖 Models</button>
+                    <button class="tab" onclick="showResultsTab('mech')">🤖 Mech-Unit</button>
                     </div>
                 </div>
                 <div class="results-content" id="results-live">
@@ -172,6 +173,30 @@
                 </div>
                 <div class="results-content hidden" id="results-plan">
                     <div id="plan-content"><p class="muted">No plan yet. Send a prompt to generate an attack plan.</p></div>
+                </div>
+                <div class="results-content hidden" id="results-mech">
+                    <div class="mech-console" id="mech-console">
+                        <div class="mech-section">
+                            <h3>1 · Targets <button class="tab" onclick="mechScanTargets()">📡 Scan</button></h3>
+                            <div id="mech-targets" class="mech-targets"><p class="muted">Click Scan to discover wireless targets (deterministic airodump sweep, no LLM).</p></div>
+                        </div>
+                        <div class="mech-section">
+                            <h3>2 · Attack Intents</h3>
+                            <div id="mech-intents" class="mech-intents"><p class="muted">Loading attack intents…</p></div>
+                        </div>
+                        <div class="mech-section">
+                            <h3>3 · Run Console</h3>
+                            <div id="mech-plan-preview" class="mech-plan-preview"><p class="muted">Select an attack intent to compile a plan preview.</p></div>
+                            <div id="mech-run-controls" class="mech-run-controls hidden">
+                                <button onclick="mechRunPlan()">▶ Run</button>
+                                <button onclick="mechPausePlan()">⏸ Pause</button>
+                                <button onclick="mechAbortPlan()">⏹ Abort</button>
+                                <span id="mech-plan-state" class="muted"></span>
+                            </div>
+                            <div id="mech-steps" class="mech-steps"></div>
+                            <div id="mech-next-moves" class="mech-next-moves"></div>
+                        </div>
+                    </div>
                 </div>
                 <div class="results-content hidden" id="results-findings">
                     <div id="findings-list"><p class="muted">No findings yet.</p></div>
@@ -605,5 +630,6 @@
     </div>
 
     <script src="/static/js/cockpit.js"></script>
+    <script src="/static/js/mech.js"></script>
 </body>
 </html>

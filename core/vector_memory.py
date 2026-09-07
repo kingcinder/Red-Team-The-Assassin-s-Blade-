@@ -20,7 +20,7 @@ Usage:
     results = memory.query("192.168.1.10", top_k=10)
     context = memory.get_context_block("192.168.1.10")  # for LLM injection
 """
-from __future__ import annotations
+from __future__ import annotations  # noqa: F401 (load-bearing: defers eval of np/TfidfVectorizer annotations)
 
 import json
 import os

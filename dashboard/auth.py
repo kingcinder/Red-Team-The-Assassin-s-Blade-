@@ -17,7 +17,7 @@ import logging
 from functools import wraps
 from typing import Optional
 
-from flask import request, jsonify, g
+from flask import request, jsonify
 
 logger = logging.getLogger("redteam.auth")
 

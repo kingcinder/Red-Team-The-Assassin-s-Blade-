@@ -169,6 +169,11 @@ class AutonomousAgent:
     Supports pause/resume/stop and emits events for dashboard monitoring.
     """
 
+    # v7.0 mech-bridge defaults (class level so __new__-built instances,
+    # including tests that bypass __init__, see the legacy behavior).
+    _mode = "legacy"
+    _mech_driver = None
+
     def __init__(self, orchestrator):
         self.orch = orchestrator
         self.state = AgentState.IDLE
@@ -200,6 +205,23 @@ class AutonomousAgent:
 
         # Check execute_direct availability
         self._has_execute_direct = hasattr(self.orch, 'execute_direct')
+
+        # v7.0 Mech-Unit bridge: when the harness runs in mech mode, the
+        # kill-chain is driven by deterministic intent plans instead of LLM
+        # iterations. Default (and every pre-v7 config) stays legacy.
+        from core.mech.bridge import harness_mode, MechCampaignDriver
+        self._mode = harness_mode(getattr(self.orch, 'config', None))
+        self._mech_driver = None
+        if self._mode == 'mech':
+            try:
+                from core.mech import MechUnit
+                self._mech_unit = MechUnit(config=getattr(self.orch, 'config', None))
+                self._mech_driver = MechCampaignDriver(self.orch, self._mech_unit)
+                logger.info("AutonomousAgent: mech mode — plans drive the kill chain")
+            except Exception as exc:
+                logger.warning("AutonomousAgent: mech unit unavailable (%s) — "
+                               "falling back to legacy loop", exc)
+                self._mech_driver = None
 
         # v6.3.2: backend store mirroring the operator's capture interface +
         # last airodump scan hints (populated by the cockpit). The autonomous
@@ -624,6 +646,24 @@ class AutonomousAgent:
         """
         logger.info(f"═══ Engaging target: {tp.target} "
                     f"(sweep={sweep_only}) ═══")
+
+        # ── v7.0 mech-mode drive: deterministic plans, no LLM ──
+        if self._mech_driver is not None:
+            accumulated = [f for flist in tp.phase_findings.values() for f in flist]
+            rounds = self._mech_driver.drive_target(
+                tp.target, findings=accumulated,
+                max_rounds=len(KILL_CHAIN))
+            for summary in rounds:
+                tp.phase_findings.setdefault('exploit', []).extend([
+                    {"tool": summary.get('intent', 'mech'),
+                     "summary": f"mech round {summary.get('round')}: "
+                                f"{summary.get('state')}",
+                     "severity": 'high' if summary.get('findings_count') else 'info',
+                     "stdout": ''}])
+                tp.phase_iterations['exploit'] = \
+                    tp.phase_iterations.get('exploit', 0) + 1
+            tp.completed = True
+            return
 
         # Create a session for this target if one doesn't exist yet
         if not tp.session_id:

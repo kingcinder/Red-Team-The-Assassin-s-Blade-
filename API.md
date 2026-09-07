@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════
-# RedTeam Harness — API Reference v4.0
+# RedTeam Harness — API Reference v7.0 (Mech-Unit)
 # 57 REST Routes (55 unique paths) · 15 WebSocket Handlers · Real-Time Event Bus
 # ═══════════════════════════════════════════════════════════════
 
@@ -779,6 +779,59 @@ Events the server **pushes** to all connected clients (from orchestrator callbac
 
 ---
 
+## 16. Mech-Unit (v7.0)
+
+Deterministic attack runtime — every route below works with **no LLM backend**.
+Channel names for WebSocket events come from `core/mech/events.py`
+(`mech_<event>`); the mapping is defined in exactly one place.
+
+### REST
+
+| Route | Method | Body / Params | Response |
+|-------|--------|---------------|----------|
+| `/api/mech/intents` | GET | — | `{intents: [IntentCard]}` — cockpit card payloads (id, labels, outcome, noise, steps, grants) |
+| `/api/mech/intents/<id>/probe` | GET | — | `{probes: [{probe, ok, missing, reason, fix, detail}]}` — precondition detail for intent-wall greying |
+| `/api/mech/plan/compile` | POST | `{intent_id, target?, facts?}` | full CompiledPlan dict (`plan_id`, `steps` with resolved args + `resolution_log`, `unresolved`, `runnable`). `403 blocked_by_probe` when a hard precondition fails (error carries reason + fix); `404` unknown intent |
+| `/api/mech/plan/<plan_id>/run` | POST | — | `{status: "started", plan_id}` — executes in a background thread; live updates stream on `mech_*` events. `400` when `unresolved` params remain |
+| `/api/mech/plan/<plan_id>/pause` | POST | — | `{status: "pausing"}` — cooperative, takes effect at next step boundary |
+| `/api/mech/plan/<plan_id>/resume` | POST | — | `{status: "resume_requested"}` |
+| `/api/mech/plan/<plan_id>/abort` | POST | — | `{status: "aborting"}` — cooperative |
+| `/api/mech/plan/<plan_id>/status` | GET | — | `{plan_id, intent_id, state, current_step, steps_total, steps_done, findings_count, error}` |
+| `/api/mech/plan/<plan_id>/next-moves` | GET | — | `{moves: [{vertex_id, intent, score, confidence, value, probe_ok, why}]}` — VULN-GRAPH capitalization, deterministic ordering |
+| `/api/mech/targets/scan` | POST | `{interface?, duration?}` | `{ok, interface, targets: [{bssid, essid, channel, encryption, power, clients, wps}], count}` — deterministic airodump sweep; persists scan hints to capture_state. `503` when no monitor-capable adapter/interface |
+| `/api/mech/targets` | GET | — | `{selected_interface, scan_hints, known_targets}` |
+| `/api/mech/suggest` | POST | `{findings: [...]}` | `{moves: [...]}` — VULN-GRAPH for arbitrary findings, no plan needed |
+
+### WebSocket events (server → client)
+
+| Event | Payload |
+|-------|---------|
+| `mech_plan_state` | `{plan_id, state, label, summary}` |
+| `mech_step_started` | `{plan_id, step, tool, attempt, fallback_of?}` |
+| `mech_step_complete` | `{plan_id, step, exit_code, finding}` |
+| `mech_step_failed` | `{plan_id, step, error, attempt}` |
+| `mech_step_skipped` | `{plan_id, step}` — `when:` condition false |
+| `mech_step_retry` | `{plan_id, step, attempt}` |
+| `mech_step_fallback` | `{plan_id, step, fallback? , use_intent?}` |
+| `mech_finding` | reserved (findings currently ride on `mech_step_complete.finding`) |
+| `mech_next_moves` | reserved for push (moves currently pulled via REST) |
+| `mech_plan_complete` | `{plan_id, findings}` |
+| `mech_plan_aborted` | reserved |
+
+### CLI equivalent
+
+```bash
+python3 harness.py --mech list                       # intents + probe status
+python3 harness.py --mech probe wifi_pmkid
+python3 harness.py --mech compile wifi_pmkid --target bssid=AA:BB:CC:DD:EE:FF
+python3 harness.py --mech run wifi_pmkid --target bssid=AA:BB:CC:DD:EE:FF
+python3 harness.py --mech resume <plan_id>
+python3 harness.py --mech status <plan_id>
+python3 harness.py --mech next-moves <plan_id>
+```
+
+---
+
 ## Quick reference — grouping by orchestrator subsystem
 
 | Subsystem | REST group | WS group |
@@ -795,3 +848,4 @@ Events the server **pushes** to all connected clients (from orchestrator callbac
 | MSF | `/api/msf/*` | — |
 | Safety | `/api/safety` | — |
 | Cache/Tactics | `/api/cache/*`, `/api/tactics/suggest` | `execute_tactical` |
+| Mech-Unit (v7.0) | `/api/mech/*` | `mech_*` bus events |

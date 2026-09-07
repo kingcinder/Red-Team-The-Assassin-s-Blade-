@@ -1,0 +1,205 @@
+# ═══════════════════════════════════════════════════════════════
+# VULN-GRAPH — vulnerability capitalization graph (v7.0 P2.4 / P3.4)
+# Findings → scored, dependency-aware next moves. Zero LLM.
+#
+# A vertex fires when a finding matches its pattern. Each capitalization
+# entry under it is a next move: intent + confidence + value (+ optional
+# probe). Score = confidence × value × probe_satisfaction.
+#
+# requires/provides form the capability dependency graph — cycles are
+# rejected at load time (core.mech.vuln_graph).
+#
+# ATT&CK technique references (from the offline core.kb_data dataset):
+#   T1110 Brute Force · T1555 Credentials from Password Stores ·
+#   T1203 Exploitation for Client Execution · T1046 Network Service
+#   Discovery · T1187 Forging Web Tickets (Kerberoasting) ·
+#   T1550.003 Pass the Ticket · T1562 Impair Defenses
+# ═══════════════════════════════════════════════════════════════
+
+vertices:
+
+  # ── AP discovery ────────────────────────────────────────────────
+  - id: ap.discovered
+    phase: recon
+    matched_by:
+      pattern: '(BSSID|ESSID|\d+ stations)'
+    requires: []
+    provides: [wifi.ap_target]
+    grants: []
+    capitalization:
+      - intent: wifi_wpa_handshake
+        confidence: 0.70
+        value: 0.80
+        probe: wireless_adapter_monitor_capable
+      - intent: wifi_pmkid
+        confidence: 0.65
+        value: 0.80
+        probe: wireless_adapter_monitor_capable
+      - intent: wifi_wep
+        confidence: 0.20
+        value: 0.40
+        probe: wireless_adapter_monitor_capable
+
+  - id: ap.wps_enabled
+    phase: recon
+    matched_by:
+      pattern: '(WPS.{0,12}(?:enabled|exposed|yes)|WPS\[)'
+    requires: [wifi.ap_target]
+    provides: [wifi.wps_surface]
+    grants: []
+    capitalization:
+      - intent: wifi_wps
+        confidence: 0.85
+        value: 0.90
+        probe: wireless_adapter_monitor_capable
+      - intent: wifi_pmkid
+        confidence: 0.70
+        value: 0.80
+        probe: wireless_adapter_monitor_capable
+
+  # ── Handshake / PMKID capture ───────────────────────────────────
+  - id: ap.handshake_captured
+    phase: exploit
+    matched_by:
+      pattern: '(WPA handshake|handshake captured|EAPOL)'
+    requires: [wifi.ap_target]
+    provides: [wifi.handshake_file]
+    grants: [wifi.psk_candidates]
+    capitalization:
+      - intent: wifi_wpa_handshake
+        confidence: 0.95
+        value: 0.90
+        probe: wireless_adapter_monitor_capable
+      - intent: wifi_evil_twin
+        confidence: 0.40
+        value: 0.60
+        probe: wireless_adapter_monitor_capable
+
+  - id: ap.pmkid_captured
+    phase: exploit
+    matched_by:
+      pattern: '(PMKID|hc22000)'
+    requires: [wifi.ap_target]
+    provides: [wifi.handshake_file]
+    grants: [wifi.psk_candidates]
+    capitalization:
+      - intent: wifi_pmkid
+        confidence: 0.95
+        value: 0.90
+
+  # ── PSK recovered → AP is spoofable ────────────────────────────
+  - id: wifi.psk_recovered
+    phase: postex
+    matched_by:
+      pattern: '(KEY FOUND|WPA PSK|Cracked)'
+    requires: [wifi.psk_candidates]
+    provides: [wifi.psk]
+    grants: [ap.spoofable, creds.wifi]
+    capitalization:
+      - intent: wifi_rogue_ap
+        confidence: 0.80
+        value: 0.90
+        probe: running_as_root
+      - intent: wifi_evil_twin
+        confidence: 0.60
+        value: 0.70
+        probe: wireless_adapter_monitor_capable
+
+  # ── Credential material → cross-domain bridge (P3.4) ───────────
+  # Chain documented in §3.5 of the manifest:
+  #   wifi.psk → creds.valid → smb_credential_relay → host.secrets →
+  #   ad.access (T1550.003 pass-the-hash style lateral movement)
+  - id: client.credential_harvest
+    phase: postex
+    matched_by:
+      pattern: '(NTLMv2|NTLMv1|credential material|Hash captured)'
+    requires: []
+    provides: [creds.hashes]
+    grants: [creds.valid_candidates]
+    capitalization:
+      - intent: smb_credential_relay      # ATT&CK T1110 / T1550.003
+        confidence: 0.75
+        value: 0.95
+      - intent: ad_kerberoast             # ATT&CK T1187
+        confidence: 0.50
+        value: 0.85
+
+  - id: creds.validated
+    phase: postex
+    matched_by:
+      pattern: '(Pwn3d|SUCCESS|\[\+\]|valid credentials)'
+    requires: [creds.valid_candidates]
+    provides: [creds.valid]
+    grants: [lateral.movement, ad.access]
+    capitalization:
+      - intent: host_privesc_windows      # SYSTEM via validated creds
+        confidence: 0.85
+        value: 0.90
+      - intent: ad_kerberoast             # ATT&CK T1187 — widen access
+        confidence: 0.55
+        value: 0.80
+
+  - id: host.secrets_dumped
+    phase: postex
+    matched_by:
+      pattern: '(secretsdump|NTLM|:::|Dumping)'
+    requires: [creds.valid]
+    provides: [host.secrets]
+    grants: [lateral.movement]
+    capitalization:
+      - intent: host_privesc_windows
+        confidence: 0.80
+        value: 0.85
+      - intent: smb_credential_relay      # ATT&CK T1110 — next host
+        confidence: 0.45
+        value: 0.70
+
+  # ── Web domain vertices ─────────────────────────────────────────
+  - id: web.dynamic_params
+    phase: recon
+    matched_by:
+      pattern: '(\.php\?|\.asp\?|\.jsp\?|dynamic parameter)'
+    requires: []
+    provides: [web.dynamic_params]
+    grants: [web.exploit_candidates]
+    capitalization:
+      - intent: web_sql_injection         # ATT&CK T1190
+        confidence: 0.75
+        value: 0.90
+
+  - id: web.upload_endpoint
+    phase: recon
+    matched_by:
+      pattern: '(upload|file_upload|attachment)'
+    requires: []
+    provides: [web.upload_surface]
+    grants: [web.exploit_candidates]
+    capitalization:
+      - intent: web_rce_via_upload        # ATT&CK T1190
+        confidence: 0.70
+        value: 0.95
+
+  # ── Host privesc vertices ───────────────────────────────────────
+  - id: host.shell_obtained
+    phase: postex
+    matched_by:
+      pattern: '(meterpreter|shell|root|SYSTEM|administrator)'
+    requires: []
+    provides: [postex.shell]
+    grants: [host.root_candidates]
+    capitalization:
+      - intent: host_privesc_linux        # ATT&CK T1068
+        confidence: 0.80
+        value: 0.90
+
+  - id: host.sudo_misconfig
+    phase: postex
+    matched_by:
+      pattern: '(NOPASSWD|sudoers)'
+    requires: [postex.shell]
+    provides: [host.root_candidates]
+    grants: [host.root]
+    capitalization:
+      - intent: host_privesc_linux
+        confidence: 0.90
+        value: 0.95

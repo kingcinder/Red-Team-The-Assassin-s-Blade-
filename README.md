@@ -1,3 +1,25 @@
+# 🎯 RedTeam Harness v7.0 — Mech-Unit
+
+> **Deterministic attack plans. Point-and-click operation. The LLM is optional.**
+
+RedTeam Harness is a fully offline penetration-testing cockpit. v7.0 "Mech-Unit"
+makes it operable **without any LLM**: attack intent manifests in `attacks/`
+compile into hardened plan DAGs, capability probes prove the host can run them,
+and the VULN-GRAPH engine turns findings into scored next moves. The operator
+selects a target and an attack intent — the Mech-Unit fills every parameter and
+runs the chain. The legacy LLM-piloted loop remains available (`harness.mode:
+legacy`).
+
+- **Zero-LLM operation** — plans compile and execute with the model off; the advisor is feature-flagged off by default
+- **Point-and-click cockpit** — Mech-Unit tab: TARGETS → INTENT WALL → RUN CONSOLE
+- **CLI** — `python3 harness.py --mech list | run <intent> --target k=v | resume | next-moves`
+- **VULN-GRAPH** — deterministic vulnerability capitalization (`attacks/vuln_graph.yaml`), AP subgraph + cross-domain credential chaining
+- **12 attack intents** — 6 wireless (handshake, PMKID, WPS, evil twin, rogue AP, WEP) + network/AD/web/host families
+
+Full design + execution manifest: [`docs/MECH_UNIT_REFACTOR_MANIFEST.md`](docs/MECH_UNIT_REFACTOR_MANIFEST.md).
+
+---
+
 # 🎯 RedTeam Harness v4.0 — Assassin's Blade
 
 > **140+ Kali Linux security tools. 7-phase optimization engine. 27 workflow templates. One local LLM piloting it all. 100% offline. Zero internet.**

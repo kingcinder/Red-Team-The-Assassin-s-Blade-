@@ -9,7 +9,6 @@ Enforces security boundaries around every tool execution:
   - Full audit trail
 """
 import os
-import re
 import json
 import time
 import logging

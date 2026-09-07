@@ -71,6 +71,8 @@ We treat every boundary below as attacker-controlled input.
 | **Tool args** | LLM planner | Argument injection | Subprocess **list-mode** execution (no `shell=True`); arg-injection rejection removed |
 | **Dashboard HTTP** | Localhost operator | Path traversal, CSRF | `realpath` validation on workflow names, localhost bind |
 | **LLM output** | Local model | Malformed/unsafe tool plans | GBNF grammar enforcement, JSON-schema validation |
+| **Mech intent manifests** (`attacks/*.yaml`) | Repo files (reviewed) | Manifests are code — a malicious manifest executes tools via plans | Fail-fast schema validation at load; `llm_required: true` rejected; directives pinned to a fixed vocabulary; manifests ship with the repo and are review artifacts |
+| **Mech advisor (optional)** | Local model, compile/preview-time only | A suggested parameter could be attacker-influenced if tool output reached the prompt | All advisor inputs/outputs pass `injection_defense.sanitize_for_llm`; calls bounded at 512 tokens; suggestions are tagged and operator-confirmed on the preview; advisor is feature-flagged OFF by default and never on the execution path (`llm_required: false` is structurally enforced) |
 
 ### Assumed trust (unrestricted mode)
 

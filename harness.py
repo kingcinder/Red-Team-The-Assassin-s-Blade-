@@ -601,6 +601,10 @@ Examples:
                         help="Training export format (default: jsonl)")
     parser.add_argument("--replay-script", action="store_true",
                         help="Print the full replay transcript instead of stepping interactively")
+    parser.add_argument("--mech", nargs="*", metavar="CMD",
+                        help="Mech-Unit mode (v7.0): list | probe <id> | run <id> "
+                             "[--target k=v] | compile <id> | resume <plan_id> | "
+                             "status <plan_id> | next-moves <plan_id>")
 
     args = parser.parse_args()
     setup_logging(debug=args.debug)
@@ -618,7 +622,18 @@ Examples:
     os.makedirs(config.get("harness", {}).get("output_dir", "./output"), exist_ok=True)
     os.makedirs(config.get("workflow", {}).get("tasks_dir", "./tasks"), exist_ok=True)
 
-    if args.check:
+    if args.mech is not None:
+        from core.mech.cli import run_mech_cli
+        # The top-level --target/--var flags belong to workflow mode; when
+        # Mech-Unit mode is active, forward them into the mech command line
+        # so `--mech run <id> --target bssid=...` reaches the mech parser.
+        mech_args = list(args.mech)
+        if args.target:
+            mech_args += ["--target", args.target]
+        for v in args.var:
+            mech_args += ["--facts", v]
+        sys.exit(run_mech_cli(config, mech_args))
+    elif args.check:
         run_check(config)
     elif args.replay is not None:
         run_replay_cli(config, args.replay or None,

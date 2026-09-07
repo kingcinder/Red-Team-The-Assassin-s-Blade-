@@ -10,7 +10,6 @@ Extracted from core/orchestrator.py (candidate #2, architecture review):
 the orchestrator now delegates to this module, which owns the single
 responsibility of turning harness state into model-ready messages.
 """
-import os
 import re
 import logging
 from typing import Dict, List, Optional
