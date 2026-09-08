@@ -132,6 +132,44 @@ python3 harness.py --mech run wifi_pmkid --target bssid=AA:BB:CC:DD:EE:FF   # 3.
 # Everything degrades instead of dying: hung tools honor on_timeout, captures reroute
 # to sibling intents, plans survive crashes (--mech plans) and browser refreshes (REATTACH).
 
+### ⚙️ Lifecycle wrapper & shortcuts
+
+`redteam.sh` bundles the four lifecycle actions — install / update / uninstall / run —
+with per-action shortcut shims living right next to it in the repo:
+
+```bash
+bash redteam.sh install                     # deps + runtime dirs (same as install.sh)
+bash redteam.sh install --tools             # …plus the 85+ Kali tools installer (needs sudo)
+bash redteam.sh install --sudo              # …plus scoped passwordless sudo provisioning
+bash redteam.sh install --shortcuts         # …plus ~/.local/bin links (redteam, redteam-install, …)
+bash redteam.sh install --verify            # …plus air-gap readiness verification
+bash redteam.sh update                      # git pull --ff-only + reinstall deps
+bash redteam.sh run                         # dashboard (all harness args pass through)
+bash redteam.sh run --cli                   # interactive CLI
+bash redteam.sh uninstall                   # stop processes, uninstall deps, remove runtime data
+bash redteam.sh uninstall --keep-data       # …but keep sessions/ output/ tasks/
+bash redteam.sh shortcuts                   # link shortcuts into ~/.local/bin (--remove unlinks)
+bash redteam.sh help
+
+# Shortcut shims (work from the repo, or from anywhere once linked)
+./redteam-install.sh    ./redteam-uninstall.sh
+./redteam-update.sh     ./redteam-run.sh
+
+# Windows (cmd.exe / PowerShell) — same verbs, requires Git for Windows
+redteam-install.cmd     redteam-install.ps1
+redteam-uninstall.cmd   redteam-uninstall.ps1
+redteam-update.cmd      redteam-update.ps1
+redteam-run.cmd         redteam-run.ps1
+```
+
+The `.cmd`/`.ps1` shims delegate to the same wrapper through Git Bash
+(auto-detected on PATH or in the standard Git install locations) and pass
+harness args straight through, e.g. `redteam-run.cmd --cli` or
+`powershell -File .\redteam-run.ps1 --mech doctor`.
+
+`uninstall` prompts before doing anything, never deletes the repo checkout itself, and
+will also remove the scoped-sudo drop-in and `~/.local/bin` links if you created them.
+
 # CLI workflows (legacy, LLM-piloted)
 python3 harness.py --workflow network_recon --target 192.168.1.0/24
 python3 harness.py --workflow network_recon --targets 10.0.0.1,10.0.0.2,10.0.0.3

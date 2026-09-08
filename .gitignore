@@ -7,6 +7,9 @@ sessions/
 output/
 tasks/
 
+# ── Lifecycle install marker (machine-local state, written by redteam.sh) ──
+.installed-version
+
 # ── Python ──
 __pycache__/
 *.pyc
