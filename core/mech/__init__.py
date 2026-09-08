@@ -62,7 +62,7 @@ class MechUnit:
         self.graph_path = graph_path or mech_cfg.get(
             "vuln_graph", DEFAULT_GRAPH_PATH)
         self._intents: Dict[str, Any] = {}
-        self._loaded_dir: Optional[str] = None
+        self._loaded_fp: Optional[tuple] = None
         self._plans: Dict[str, Any] = {}
         self._run_states: Dict[str, Any] = {}
         self._executors: Dict[str, Any] = {}
@@ -78,12 +78,31 @@ class MechUnit:
 
     # ── intents ──────────────────────────────────────────────────────
 
+    def _manifest_fingerprint(self) -> Optional[tuple]:
+        """Per-file (name, mtime_ns, size) snapshot of every manifest in
+        the manifest dir. None when the dir is unreadable (cache disabled).
+        O(scandir) — tens of microseconds vs a ~90ms YAML re-parse.
+        """
+        try:
+            return tuple(sorted(
+                (e.name, e.stat().st_mtime_ns, e.stat().st_size)
+                for e in os.scandir(self.manifest_dir)
+                if e.name.endswith((".yaml", ".yml"))
+            ))
+        except OSError:
+            return None
+
     def _load_intents(self) -> Dict[str, Any]:
-        if self._loaded_dir == self.manifest_dir and self._intents:
+        # Cache keyed on a directory fingerprint, not just the path: a
+        # manifest edited/added/removed on disk must invalidate the cache,
+        # or a long-running dashboard silently serves stale intents and
+        # compiles stale plans until restart.
+        fp = self._manifest_fingerprint()
+        if fp is not None and fp == self._loaded_fp and self._intents:
             return self._intents
         from core.mech.intents import load_manifest_dir
         self._intents = load_manifest_dir(self.manifest_dir)
-        self._loaded_dir = self.manifest_dir
+        self._loaded_fp = fp
         return self._intents
 
     def list_intents(self) -> List[Dict[str, Any]]:

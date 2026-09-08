@@ -19,6 +19,7 @@ import sys
 import json
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -790,6 +791,59 @@ class TestResumeAcrossRestart(unittest.TestCase):
         report = unit.get_plan_report(plan.plan_id)
         self.assertEqual(report["plan_id"], plan.plan_id)
         self.assertEqual(report["intent_id"], "wifi_pmkid")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Serpent Circle — manifest cache freshness (stat-aware invalidation)
+# ═══════════════════════════════════════════════════════════════
+
+class TestManifestCacheFreshness(unittest.TestCase):
+    """MechUnit._load_intents caches parsed manifests, but the cache must
+    invalidate when manifests change on disk — a long-running dashboard
+    would otherwise serve stale intents and compile stale plans until
+    restart. Each test builds a fresh unit against a temp manifest dir.
+    """
+
+    def _unit(self, directory):
+        from core.mech import MechUnit
+        return MechUnit(config={}, manifest_dir=directory,
+                        sandbox_root=tempfile.mkdtemp())
+
+    def test_cache_hits_repeat_calls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_manifest(tmp, valid_manifest_dict())
+            unit = self._unit(tmp)
+            with mock.patch("core.mech.intents.load_manifest_dir",
+                            wraps=load_manifest_dir) as spy:
+                unit.list_intents()
+                unit.list_intents()
+                unit.list_intents()
+                self.assertEqual(spy.call_count, 1)
+
+    def test_cache_invalidates_on_manifest_edit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_manifest(tmp, valid_manifest_dict(
+                operator_label="OLD LABEL"))
+            unit = self._unit(tmp)
+            self.assertEqual(unit.list_intents()[0]["operator_label"],
+                             "OLD LABEL")
+            _write_manifest(tmp, valid_manifest_dict(
+                operator_label="NEW LABEL"))
+            # Same unit, no re-instantiation — the on-disk edit must be
+            # picked up by the next call.
+            self.assertEqual(unit.list_intents()[0]["operator_label"],
+                             "NEW LABEL")
+
+    def test_cache_invalidates_on_new_manifest_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_manifest(tmp, valid_manifest_dict())
+            unit = self._unit(tmp)
+            self.assertEqual({m["id"] for m in unit.list_intents()},
+                             {"wifi_wpa_handshake"})
+            _write_manifest(tmp, valid_manifest_dict(
+                id="wifi_pmkid", name="PMKID"), filename="wifi_pmkid.yaml")
+            self.assertEqual({m["id"] for m in unit.list_intents()},
+                             {"wifi_wpa_handshake", "wifi_pmkid"})
 
 
 if __name__ == "__main__":
