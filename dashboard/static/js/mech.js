@@ -55,6 +55,16 @@ async function mechScanTargets() {
     }
 }
 
+// Escape helper — every interpolation of scan/plan data into innerHTML or
+// an onclick attribute MUST go through this. AP names (essid) and bssids
+// are attacker-controlled over the air; unescaped, they are stored XSS
+// into the cockpit. Escapes &<>"' so attribute contexts are safe too.
+function mechEscapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
 function mechRenderTargets(targets) {
     mechState._lastTargets = targets || [];
     const box = mechEl('mech-targets');
@@ -64,9 +74,9 @@ function mechRenderTargets(targets) {
     }
     const rows = targets.map(t => `
         <div class="mech-target ${mechState.selectedTarget?.bssid === t.bssid ? 'selected' : ''}"
-             onclick="mechSelectTarget('${t.bssid}')">
-            <strong>${t.essid || '(hidden)'}</strong>
-            <span class="muted">${t.bssid} · ch ${t.channel || '?'} · ${t.encryption || '?'} · ${t.power} dBm</span>
+             onclick="mechSelectTarget('${mechEscapeHtml(t.bssid)}')">
+            <strong>${mechEscapeHtml(t.essid) || '(hidden)'}</strong>
+            <span class="muted">${mechEscapeHtml(t.bssid)} · ch ${mechEscapeHtml(t.channel) || '?'} · ${mechEscapeHtml(t.encryption) || '?'} · ${mechEscapeHtml(t.power)} dBm</span>
         </div>`).join('');
     box.innerHTML = rows;
 }
@@ -107,13 +117,13 @@ function mechRenderIntents() {
         const noiseBar = {silent: '▢', low: '▫', medium: '▯', high: '▮'}[card.noise] || '▫';
         return `
         <div class="mech-card ${card.ready ? '' : 'disabled'} ${mechState.selectedIntent === card.id ? 'selected' : ''}"
-             onclick="${card.ready ? `mechSelectIntent('${card.id}')` : `mechShowBlocked('${card.id}')`}">
-            <div class="mech-card-title">${card.operator_label}</div>
-            <div class="mech-card-outcome muted">${card.outcome}</div>
+             onclick="${card.ready ? `mechSelectIntent('${mechEscapeHtml(card.id)}')` : `mechShowBlocked('${mechEscapeHtml(card.id)}')`}">
+            <div class="mech-card-title">${mechEscapeHtml(card.operator_label)}</div>
+            <div class="mech-card-outcome muted">${mechEscapeHtml(card.outcome)}</div>
             <div class="mech-card-meta muted">
-                noise ${noiseBar} · ${card.time_to_impact} · ${card.steps.length} steps
+                noise ${noiseBar} · ${mechEscapeHtml(card.time_to_impact)} · ${card.steps.length} steps
             </div>
-            ${missing.length ? `<div class="mech-card-missing">missing: ${missing.join(', ')}</div>` : ''}
+            ${missing.length ? `<div class="mech-card-missing">missing: ${mechEscapeHtml(missing.join(', '))}</div>` : ''}
         </div>`;
     }).join('');
     box.innerHTML = cards || '<p class="muted">No intents loaded.</p>';
@@ -156,18 +166,19 @@ async function mechSelectIntent(intentId) {
 }
 
 function mechRenderPlanPreview(plan) {
+    const esc = mechEscapeHtml;
     const rows = plan.steps.map((s, i) => `
-        <div class="mech-step" id="mech-step-${s.step}">
+        <div class="mech-step" id="mech-step-${esc(s.step)}">
             <span class="mech-step-num">${i + 1}</span>
-            <strong>${s.step}</strong>
-            <span class="muted">${s.tool}</span>
-            <code class="mech-step-args">${JSON.stringify(s.args)}</code>
-            ${s.gate ? `<span class="mech-gate">gate: ${s.gate.output || (s.gate.file || []).join(',') || s.gate.exit_code}</span>` : ''}
+            <strong>${esc(s.step)}</strong>
+            <span class="muted">${esc(s.tool)}</span>
+            <code class="mech-step-args">${esc(JSON.stringify(s.args))}</code>
+            ${s.gate ? `<span class="mech-gate">gate: ${esc(s.gate.output || (s.gate.file || []).join(',') || s.gate.exit_code)}</span>` : ''}
         </div>`).join('');
     const unresolved = (plan.unresolved || []).map(u =>
-        `<div class="mech-card-missing">needs input: ${u.step}.${u.arg} (${u.placeholder})</div>`).join('');
+        `<div class="mech-card-missing">needs input: ${esc(u.step)}.${esc(u.arg)} (${esc(u.placeholder)})</div>`).join('');
     mechEl('mech-plan-preview').innerHTML = `
-        <div class="muted">plan ${plan.plan_id} · target ${plan.target.bssid || plan.target.host || '(none)'}
+        <div class="muted">plan ${esc(plan.plan_id)} · target ${esc(plan.target.bssid || plan.target.host || '(none)')}
              · every param's source is in the tooltip</div>
         ${rows}${unresolved}`;
 }
@@ -238,9 +249,9 @@ function mechRenderPlans(plans) {
                          failed: '❌', aborted: '⛔', compiled: '⚪'}[s] || '⚪');
     box.innerHTML = '<h4>Plans on this host</h4>' + plans.slice(0, 8).map(p => `
         <div class="mech-plan-row">
-            <span>${badge(p.state)} ${p.plan_id}</span>
-            <span class="muted">${p.intent_id} · ${p.steps_done}/${p.steps_total} steps</span>
-            <button class="tab" onclick="mechReattach('${p.plan_id}')">REATTACH</button>
+            <span>${badge(p.state)} ${mechEscapeHtml(p.plan_id)}</span>
+            <span class="muted">${mechEscapeHtml(p.intent_id)} · ${p.steps_done}/${p.steps_total} steps</span>
+            <button class="tab" onclick="mechReattach('${mechEscapeHtml(p.plan_id)}')">REATTACH</button>
         </div>`).join('');
 }
 
@@ -305,8 +316,8 @@ function mechRenderNextMoves(moves) {
     if (!moves.length) { box.innerHTML = ''; return; }
     const rows = moves.map(m => `
         <div class="mech-move ${m.score <= 0 ? 'muted' : ''}">
-            <button onclick="mechSelectIntent('${m.intent}')">➜ ${m.intent}</button>
-            <span class="muted">score ${m.score.toFixed(2)} · ${m.why}</span>
+            <button onclick="mechSelectIntent('${mechEscapeHtml(m.intent)}')">➜ ${mechEscapeHtml(m.intent)}</button>
+            <span class="muted">score ${m.score.toFixed(2)} · ${mechEscapeHtml(m.why)}</span>
         </div>`).join('');
     box.innerHTML = `<h4>Next moves (VULN-GRAPH)</h4>${rows}`;
 }
