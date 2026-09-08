@@ -3,6 +3,14 @@
 # The Road to v7.0 "Mech-Unit" — Every Feature, Every Decision
 # ═══════════════════════════════════════════════════════════════
 
+> **Current — v7.1 "Just Works"**: A resilience pass over the v7.0 Mech-Unit —
+> `on_timeout` is now implemented (hung tools honor operator routing), resume
+> survives process restarts (plans rebuild from `plan.json`), the cockpit
+> survives browser refreshes (reattach), the target scan rebinds to the monitor
+> vhost, `--mech doctor` gives novices a first-run capability report, and every
+> long wireless step carries a degrade path (pinned by policy tests). Plan:
+> [`docs/superpowers/plans/2026-09-08-just-works-resilience.md`](docs/superpowers/plans/2026-09-08-just-works-resilience.md).
+
 > **Current — v7.0 "Mech-Unit"**: A deterministic-first refactor (no LLM
 > required) with a point-and-click cockpit, AP attack intent manifests, and a
 > VULN-GRAPH capitalization engine. Full design and execution record in
@@ -10,7 +18,7 @@
 
 > **Project**: AI-Piloted Penetration Testing Cockpit
 > **Codename**: Mech-Unit
-> **Version**: v7.0.0
+> **Version**: v7.1.0
 > **Origin**: 2026-08-24
 > **Scale**: 24 core modules · 15 tool modules · 27 workflow templates · 12 attack intent manifests · Mech-Unit runtime (`core/mech/`)
 
@@ -569,12 +577,19 @@ A running register of every significant "why" decision in the project:
 | 16 | Vector memory keyed by target | Re-engagements start with prior findings instead of from zero |
 | 17 | Tool scoring + installer | The harness adapts to the host's actual tool inventory |
 | 18 | Gitignore everything generated | sessions/, output/, tasks/, wheels/ never pollute the repo |
+| 24 | `on_timeout` routing precedes retries and fallbacks | A hung tool means a stuck environment — sibling fallbacks would hang too; the operator's timeout directive decides immediately (v7.1) |
+| 25 | Resume rebuilds from the persisted `plan.json` | Crash recovery must survive the death of the compiling process; the compile report is the single source of truth (v7.1) |
+| 26 | Long wireless steps must carry a degrade path | No single tool failure kills an operation — fallbacks/`use_intent` reroutes/warn routing are pinned by `tests/mech/test_manifest_resilience.py` (v7.1) |
 
 ---
 
 # PART 6 — VERIFICATION MATRIX
 
 The state of the repo at HEAD (`ba020bb` + v7.0 working tree), verified 2026-09-06:
+
+**v7.1 verification (2026-09-08):** full suite green with the new resilience
+and reattach tests included (see the v7.1 plan document for the matrix);
+manifest validator green; `--mech doctor` verified against live probes.
 
 | Check | Result |
 |-------|--------|

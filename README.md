@@ -1,6 +1,6 @@
-# 🎯 RedTeam Harness v7.0 — Mech-Unit
+# 🎯 RedTeam Harness v7.1 — Mech-Unit
 
-> **Deterministic attack plans. Point-and-click operation. The LLM is optional.**
+> **Deterministic attack plans. Point-and-click operation. Everything degrades, nothing dies. The LLM is optional.**
 
 RedTeam Harness is a fully offline penetration-testing cockpit. v7.0 "Mech-Unit"
 makes it operable **without any LLM**: attack intent manifests in `attacks/`
@@ -123,7 +123,16 @@ python3 harness.py        # Launch dashboard at http://localhost:9999
 python3 harness.py --cli  # Interactive CLI mode
 python3 harness.py --check  # Tool audit
 
-# CLI workflows
+# Mech-Unit in 3 commands (novice path — no LLM, no tool knowledge):
+python3 harness.py --mech doctor                        # 1. What can this host run? (+ exact install fixes)
+python3 harness.py --mech list                          # 2. Which attacks are ready? (probe-annotated)
+python3 harness.py --mech run wifi_pmkid --target bssid=AA:BB:CC:DD:EE:FF   # 3. Attack
+
+# In the cockpit: Mech tab → 📡 Scan → click a target → click an intent card → ▶ Run.
+# Everything degrades instead of dying: hung tools honor on_timeout, captures reroute
+# to sibling intents, plans survive crashes (--mech plans) and browser refreshes (REATTACH).
+
+# CLI workflows (legacy, LLM-piloted)
 python3 harness.py --workflow network_recon --target 192.168.1.0/24
 python3 harness.py --workflow network_recon --targets 10.0.0.1,10.0.0.2,10.0.0.3
 python3 harness.py --generate "compromise the web tier and pivot to the database"

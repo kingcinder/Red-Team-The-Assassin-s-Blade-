@@ -779,7 +779,7 @@ Events the server **pushes** to all connected clients (from orchestrator callbac
 
 ---
 
-## 16. Mech-Unit (v7.0)
+## 16. Mech-Unit (v7.0, updated v7.1)
 
 Deterministic attack runtime — every route below works with **no LLM backend**.
 Channel names for WebSocket events come from `core/mech/events.py`
@@ -794,9 +794,12 @@ Channel names for WebSocket events come from `core/mech/events.py`
 | `/api/mech/plan/compile` | POST | `{intent_id, target?, facts?}` | full CompiledPlan dict (`plan_id`, `steps` with resolved args + `resolution_log`, `unresolved`, `runnable`). `403 blocked_by_probe` when a hard precondition fails (error carries reason + fix); `404` unknown intent |
 | `/api/mech/plan/<plan_id>/run` | POST | — | `{status: "started", plan_id}` — executes in a background thread; live updates stream on `mech_*` events. `400` when `unresolved` params remain |
 | `/api/mech/plan/<plan_id>/pause` | POST | — | `{status: "pausing"}` — cooperative, takes effect at next step boundary |
-| `/api/mech/plan/<plan_id>/resume` | POST | — | `{status: "resume_requested"}` |
+| `/api/mech/plan/<plan_id>/resume` | POST | — | `{status: "started", plan_id}` — resumes in a background thread (v7.1 fix: the old handler was a no-op). Works across process restarts: plans are rebuilt from their persisted `plan.json`. `404` unknown plan |
 | `/api/mech/plan/<plan_id>/abort` | POST | — | `{status: "aborting"}` — cooperative |
 | `/api/mech/plan/<plan_id>/status` | GET | — | `{plan_id, intent_id, state, current_step, steps_total, steps_done, findings_count, error}` |
+| `/api/mech/plan/<plan_id>` | GET | — | full persisted compile report (plan.json) — cockpit reattach after a browser refresh |
+| `/api/mech/plans` | GET | — | `{plans: [summary]}` — every persisted plan run, newest first (reattach list) |
+| `/api/mech/doctor` | GET | — | `{host: {ok, probes: [...]}, intents: [{id, label, category, ready, missing, fix}]}` — first-run capability report (v7.1) |
 | `/api/mech/plan/<plan_id>/next-moves` | GET | — | `{moves: [{vertex_id, intent, score, confidence, value, probe_ok, why}]}` — VULN-GRAPH capitalization, deterministic ordering |
 | `/api/mech/targets/scan` | POST | `{interface?, duration?}` | `{ok, interface, targets: [{bssid, essid, channel, encryption, power, clients, wps}], count}` — deterministic airodump sweep; persists scan hints to capture_state. `503` when no monitor-capable adapter/interface |
 | `/api/mech/targets` | GET | — | `{selected_interface, scan_hints, known_targets}` |
@@ -810,6 +813,7 @@ Channel names for WebSocket events come from `core/mech/events.py`
 | `mech_step_started` | `{plan_id, step, tool, attempt, fallback_of?}` |
 | `mech_step_complete` | `{plan_id, step, exit_code, finding}` |
 | `mech_step_failed` | `{plan_id, step, error, attempt}` |
+| `mech_step_timeout` | `{plan_id, step}` — tool was killed on timeout and `on_timeout: warn/abort` routing applied (v7.1) |
 | `mech_step_skipped` | `{plan_id, step}` — `when:` condition false |
 | `mech_step_retry` | `{plan_id, step, attempt}` |
 | `mech_step_fallback` | `{plan_id, step, fallback? , use_intent?}` |
@@ -821,14 +825,23 @@ Channel names for WebSocket events come from `core/mech/events.py`
 ### CLI equivalent
 
 ```bash
+python3 harness.py --mech doctor                     # first-run: what can this host run?
 python3 harness.py --mech list                       # intents + probe status
 python3 harness.py --mech probe wifi_pmkid
 python3 harness.py --mech compile wifi_pmkid --target bssid=AA:BB:CC:DD:EE:FF
 python3 harness.py --mech run wifi_pmkid --target bssid=AA:BB:CC:DD:EE:FF
-python3 harness.py --mech resume <plan_id>
+python3 harness.py --mech plans                      # persisted runs (recoverable)
+python3 harness.py --mech resume <plan_id>           # survives process restarts
 python3 harness.py --mech status <plan_id>
 python3 harness.py --mech next-moves <plan_id>
 ```
+
+**v7.1 resilience semantics:** a timed-out tool routes through `on_timeout`
+(warn/abort skip retries and sibling fallbacks — a hung environment must not
+burn retries); `targets/scan` rebinds to the monitor vhost after airmon
+renames the interface (`interface_used` in the response); every long
+wireless capture step in `attacks/*.yaml` carries a fallback, retries, or
+warn routing (pinned by `tests/mech/test_manifest_resilience.py`).
 
 ---
 
