@@ -254,6 +254,13 @@ def compile_intent(manifest: IntentManifest,
         resolved = resolver.resolve_value(template, arg_key=f"artifact:{name}")
         artifacts[name] = str(resolved)
     artifact_log = [r.to_dict() for r in resolver.log]
+    # Feed the resolved artifacts back into the resolver context so step args
+    # referencing {{ artifacts.<name> }} (e.g. wifi_wep.crack.cap_file) resolve
+    # to the plan sandbox path. Without this the artifacts.* namespace is always
+    # empty in production (MechUnit._resolve_context creates it blank) and every
+    # plan that chains a later step off a named artifact compiles unresolved and
+    # can never be run.
+    ctx.artifacts = artifacts
 
     # 4. Resolve every step.
     steps: List[CompiledStep] = []

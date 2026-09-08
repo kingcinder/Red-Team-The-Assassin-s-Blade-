@@ -513,6 +513,40 @@ class TestCompiler(unittest.TestCase):
         self.assertEqual(plan.artifacts["cap"],
                          os.path.join(plan.plan_dir, "capture-01.cap"))
 
+    def test_compile_step_arg_references_named_artifact(self):
+        # Regression: a step arg referencing {{ artifacts.<name> }} must resolve
+        # to the plan sandbox path. Production wiring (MechUnit._resolve_context)
+        # builds the resolver context with NO pre-seeded artifacts — the compiler
+        # must feed the resolved artifact dict back in. The happy-path fixture
+        # masks this by manually seeding ctx.artifacts, so we use a clean context
+        # exactly like the real compile path.
+        from core.mech.intents import ProbeSpec, StepSpec
+        manifest = IntentManifest(
+            id="chains_artifact", name="n", category="wireless",
+            operator_label="l", operator_description="d",
+            outcome="o", grants=[], time_to_impact="t", noise="low",
+            risk_notes="r",
+            preconditions=[ProbeSpec(probe="tools_present", raw={"with": ["sh"]})],
+            plan=[StepSpec(step="crack", tool="aircrack_crack",
+                           args={"cap_file": "{{ artifacts.capture }}",
+                                 "wordlist": "{{ resolver.wordlist.adaptive }}"})],
+            artifacts={"capture": "{{ plan_dir }}/capture-01.cap"},
+            source_path="<test>")
+        ctx = ResolveContext(
+            target={"bssid": "AA:BB:CC:DD:EE:FF"},
+            capture_interface="wlan0mon",
+            interfaces=[{"name": "wlan0mon", "wireless": True,
+                         "monitor": True, "up": True}],
+            path_exists=lambda p: "rockyou" in p or "lab" in p,
+            # NOTE: artifacts left empty — the compiler must populate it.
+        )
+        plan = compile_intent(manifest, ctx, sandbox_root=tempfile.mkdtemp())
+        self.assertTrue(plan.runnable, f"unresolved: {plan.unresolved}")
+        cap = plan.steps[0].args["cap_file"]
+        self.assertEqual(cap, os.path.join(plan.plan_dir, "capture-01.cap"))
+        self.assertEqual(plan.artifacts["capture"], cap)
+
+
 
 # ═══════════════════════════════════════════════════════════════
 # 5. Plan state machine (P1.5)
