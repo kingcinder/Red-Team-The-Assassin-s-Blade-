@@ -191,8 +191,13 @@ class HardenedToolRunner:
             "audit": audit_entry,
         }
 
-        # ── 7. Store in cache ──
-        self.cache.put(tool_name, args, result)
+        # ── 7. Store in cache (clean successes only) ──
+        # A killed/timeout or failed run must never become canonical: the
+        # result cache is keyed on (tool, args) with a 10-minute TTL, and
+        # re-serving a partial capture as from_cache would mask real state
+        # (new APs, recovered handshakes) for the entire TTL.
+        if exit_code == 0 and not killed:
+            self.cache.put(tool_name, args, result)
 
         return result
 

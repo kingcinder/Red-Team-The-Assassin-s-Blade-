@@ -34,6 +34,14 @@ def _make_registry(tmpdir):
     )
     reg._tools["echo_test"].installed = True
     reg._tools["echo_test"].path = "/usr/bin/echo"
+    # A real, always-failing binary for the not-cached regression test
+    reg._tools["fail_test"] = ToolDefinition(
+        "fail_test", "recon", "always fails", "false",
+        {"message": {"type": "string", "required": True, "description": "text"}},
+        timeout=30,
+    )
+    reg._tools["fail_test"].installed = True
+    reg._tools["fail_test"].path = "/bin/false"
     return reg
 
 
@@ -106,6 +114,21 @@ def test_happy_path_and_cache():
     # Second identical call → cache hit
     res2 = r.execute("echo_test", {"message": "hello world"})
     assert res2.get("from_cache") is True
+
+
+def test_failed_run_is_not_cached():
+    """A failed/killed run must never become canonical in the result cache
+    (10-min TTL): re-serving a timed-out capture as from_cache would mask
+    real state (new APs, recovered handshakes) for the whole TTL."""
+    import tempfile
+    reg = _make_registry(tempfile.mkdtemp())
+    r = HardenedToolRunner(reg)
+    # First run fails (non-zero exit)
+    res = r.execute("fail_test", {"message": "boom"})
+    assert res["exit_code"] != 0
+    # Identical second call must NOT come from cache — it re-executes.
+    res2 = r.execute("fail_test", {"message": "boom"})
+    assert res2.get("from_cache") is not True
 
 
 def test_audit_log():
