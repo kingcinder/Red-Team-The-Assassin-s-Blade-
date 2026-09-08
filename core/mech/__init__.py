@@ -69,6 +69,12 @@ class MechUnit:
         self._abort_requested: set = set()
         self._graph = None
         self._graph_loaded = False
+        # The ONE event bus every executor shares with the facade — the
+        # dashboard relay subscribes here and must see executor emissions.
+        # (A private per-executor bus would silently drop all step events.)
+        self._bus = None
+
+    MAX_REROUTE_DEPTH = 4   # guard: sibling reroutes can never loop forever
 
     # ── intents ──────────────────────────────────────────────────────
 
@@ -183,11 +189,21 @@ class MechUnit:
 
     # ── execution ────────────────────────────────────────────────────
 
+    def _ensure_bus(self):
+        """The facade's single event bus (created on first need)."""
+        if self._bus is None:
+            from core.mech.events import EventBus
+            self._bus = EventBus()
+        return self._bus
+
     def _executor_for(self, plan) -> "Any":
         from core.mech.executor import PlanExecutor
         if plan.plan_id not in self._executors:
             runner = self._make_runner()
-            self._executors[plan.plan_id] = PlanExecutor(runner)
+            # Share the facade bus so executor events reach the relay AND the
+            # facade can observe use_intent reroutes below.
+            self._executors[plan.plan_id] = PlanExecutor(
+                runner, bus=self._ensure_bus())
         return self._executors[plan.plan_id]
 
     def _make_runner(self):
@@ -198,15 +214,44 @@ class MechUnit:
         registry = ToolRegistry({})
         return HardenedToolRunner(registry)
 
-    def run(self, plan):
-        """Execute a compiled plan; returns the final PlanRunState."""
+    def run(self, plan, _reroute_chain=None):
+        """Execute a compiled plan; returns the final PlanRunState.
+
+        Honors the use_intent fallback contract: when a step triggers a
+        reroute (recorded as a 'fallback_intent' finding), this facade
+        compiles + runs the referenced sibling intent as its own plan and
+        returns ITS run state — the operator sees the actual work, not a
+        dead handoff. Guarded against reroute cycles (handshake↔pmkid) by a
+        depth limit + a visited-intent set.
+        """
         from core.mech.state import PlanState
         run_state = self._run_states[plan.plan_id]
         if run_state.state == PlanState.ABORTED.value:
             raise ValueError(f"plan {plan.plan_id} is aborted")
         executor = self._executor_for(plan)
         result = executor.run(plan, run_state)
+
+        if _reroute_chain is None:
+            _reroute_chain = {plan.intent.id}
+        reroute = self._reroute_target(result)
+        if reroute and reroute not in _reroute_chain \
+                and len(_reroute_chain) < self.MAX_REROUTE_DEPTH:
+            try:
+                sibling = self.compile(reroute, target=dict(plan.target))
+            except (KeyError, PermissionError, ValueError):
+                return result  # sibling not compilable — surface the original
+            if not sibling.runnable:
+                return result
+            return self.run(sibling, _reroute_chain | {reroute})
         return result
+
+    @staticmethod
+    def _reroute_target(run_state) -> Optional[str]:
+        """The sibling intent id a finished plan rerouted to, or None."""
+        for f in getattr(run_state, "findings", []) or []:
+            if f.get("title") == "fallback_intent" and f.get("intent"):
+                return str(f["intent"])
+        return None
 
     def resume(self, plan_id: str):
         """Resume a persisted plan from its last step boundary.
@@ -339,7 +384,4 @@ class MechUnit:
 
     def on_event(self, event: str, callback: Callable) -> None:
         """Subscribe to the MechUnit-level bus (see core.mech.events)."""
-        from core.mech.events import EventBus
-        if not hasattr(self, "_bus"):
-            self._bus = EventBus()
-        self._bus.subscribe(event, callback)
+        self._ensure_bus().subscribe(event, callback)

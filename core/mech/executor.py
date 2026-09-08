@@ -99,6 +99,20 @@ class PlanExecutor:
             if outcome == "abort":
                 run_state.save()
                 return run_state
+            if outcome == "rerouted":
+                # A use_intent fallback handed this plan off to a sibling
+                # intent. The current plan stops here — the MechUnit facade
+                # compiles + runs the referenced intent as its own plan
+                # (deterministic graph edge). Complete as done: the
+                # fallback_intent finding records the reroute for the caller.
+                run_state.complete()
+                run_state.save()
+                self._emit_state(run_state, "done")
+                self.bus.emit(mech_events.PLAN_COMPLETE, {
+                    "plan_id": plan.plan_id,
+                    "findings": list(run_state.findings),
+                    "rerouted": True})
+                return run_state
 
         # Terminal state: reaching here while RUNNING means every failure
         # was either routed through fallbacks or explicitly warned (an
@@ -120,7 +134,8 @@ class PlanExecutor:
                                facts: Dict[str, Any]) -> str:
         """Run one step with retry/fallback/on_fail routing.
 
-        Returns "continue" or "abort".
+        Returns "continue", "abort", or "rerouted" (a use_intent fallback
+        stopped the current plan so the facade can launch the sibling intent).
         """
         max_attempts = step.retries + 1
         last_error = ""
@@ -195,7 +210,7 @@ class PlanExecutor:
             for fb in step.fallbacks:
                 fb_name = fb.get("step", "")
                 if fb.get("use_intent"):
-                    # Intent reroute: record it and stop this plan — the
+                    # Intent reroute: record it and STOP this plan — the
                     # MechUnit facade compiles + runs the referenced intent
                     # as its own plan (deterministic graph edge, not an
                     # in-plan surprise).
@@ -209,7 +224,7 @@ class PlanExecutor:
                     self.bus.emit(mech_events.STEP_FALLBACK, {
                         "plan_id": plan.plan_id, "step": step.step,
                         "use_intent": fb["use_intent"]})
-                    return "continue"
+                    return "rerouted"
                 # Inline fallback tool step
                 fb_result = self._run_fallback_step(
                     plan, run_state, step, fb, artifacts, facts)

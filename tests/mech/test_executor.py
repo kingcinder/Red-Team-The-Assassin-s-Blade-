@@ -249,6 +249,19 @@ class TestFallbacks(unittest.TestCase):
         self.assertIn("wifi_pmkid", json.dumps(
             [p for e, p in bus.events if e == mech_events.STEP_FALLBACK]))
 
+    def test_use_intent_stops_subsequent_steps(self):
+        # A reroute hands the plan off to a sibling intent — the current plan
+        # must STOP, not keep running the steps after the failed one.
+        st, runner, bus, plan = run_plan(
+            [step("a", fallbacks=[{"step": "r", "use_intent": "wifi_pmkid"}]),
+             step("b"), step("c")],
+            {"echo_tool": lambda a: fail()})
+        self.assertEqual(st.state, PlanState.DONE.value)
+        self.assertEqual(st.records["a"].state, StepState.FALLBACK.value)
+        # b and c never ran.
+        self.assertEqual(st.records["b"].state, StepState.PENDING.value)
+        self.assertEqual(st.records["c"].state, StepState.PENDING.value)
+
     def test_fallback_fallback_args_forwarded(self):
         st, runner, bus, plan = run_plan(
             [step("a", fallbacks=[{"step": "a_fb", "tool": "fb_tool",
