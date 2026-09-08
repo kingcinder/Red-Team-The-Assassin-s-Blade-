@@ -10,6 +10,10 @@ tasks/
 # ── Lifecycle install marker (machine-local state, written by redteam.sh) ──
 .installed-version
 
+# ── 134MB wordlist — over GitHub's 100MB blob limit; kept on disk, never
+#    tracked (install_kali_tools.sh downloads it from SecLists) ──
+wordlists/rockyou.txt
+
 # ── Python ──
 __pycache__/
 *.pyc
