@@ -11,11 +11,14 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("redteam.mech.targets")
 
-# airodump-ng station/ap table row: BSSID, power, ..., AP/STA, ESSID
-_ROW_RE = re.compile(
-    r"^([0-9A-Fa-f:]{17})\s+(-?\d+)")
-_AP_RE = re.compile(
-    r"^([0-9A-Fa-f:]{17})\s+(-?\d+)\s+.*?(AP|\w*)\s")
+# Re-exported so callers (and tests) can patch the interface inventory
+# through this module's namespace.
+from core.mech.probes import list_interfaces  # noqa: E402
+
+# airodump-ng CSV AP-table data row: starts with a 17-char MAC, then ", "
+# (v7.1 fix: the old pattern demanded whitespace after the MAC, which real
+# comma-separated airodump output never contains — zero rows ever parsed).
+_ROW_RE = re.compile(r"^([0-9A-Fa-f:]{17})\s*,")
 
 
 def parse_airodump_csv(csv_text: str) -> List[Dict[str, Any]]:
@@ -38,11 +41,15 @@ def parse_airodump_csv(csv_text: str) -> List[Dict[str, Any]]:
         row_m = _ROW_RE.match(line)
         if not row_m:
             continue
-        bssid, power = row_m.group(1), int(row_m.group(2))
+        bssid = row_m.group(1)
         cols = [c.strip() for c in line.split(",")]
         # csv layout: BSSID, First time seen, Last time seen, channel, Speed,
         # Privacy, Cipher, Authentication, Power, # beacons, # IV, LAN IP,
-        # ID-length, ESSID, Key
+        # ID-length, ESSID, Key  → power is column 8 (0-indexed)
+        try:
+            power = int(cols[8])
+        except (IndexError, ValueError):
+            power = -100
         record: Dict[str, Any] = {"bssid": bssid, "power": power,
                                   "clients": 0, "wps": False}
         if len(cols) >= 14:
@@ -96,14 +103,25 @@ def scan_wireless(orchestrator, interface: Optional[str] = None,
     # 1. Ensure monitor mode (deterministic; idempotent when already active).
     runner.execute("monitor_mode_enable", {"interface": iface},
                    timeout=30, sandbox_output_dir=scan_dir)
-    # The monitor vhost often renames the interface; resolvers handle both
-    # names via capture_state — we keep the operator's name for the scan.
 
-    # 2. Sweep.
+    # 1b. Rebind to the monitor vhost (v7.1): airmon-style enables often
+    # RENAME the interface (wlan0 → wlan0mon). Sweeping the dead managed
+    # name was the classic first-run failure. Fall back to the operator's
+    # name when no monitor-typed interface appears.
+    iface_used = iface
+    try:
+        monitors = [it["name"] for it in list_interfaces() if it.get("monitor")]
+    except Exception:
+        monitors = []
+    if monitors and iface not in monitors:
+        iface_used = monitors[0]
+        logger.info("scan rebind: %s → monitor vhost %s", iface, iface_used)
+
+    # 2. Sweep — on the rebound (monitor) interface.
     prefix = os.path.join(scan_dir, "targets")
     result = runner.execute(
         "airodump_capture",
-        {"interface": iface, "channel": "0", "capture_file": prefix},
+        {"interface": iface_used, "channel": "0", "capture_file": prefix},
         timeout=max(5, duration),
         sandbox_output_dir=scan_dir)
 
@@ -123,7 +141,7 @@ def scan_wireless(orchestrator, interface: Optional[str] = None,
     if capture_state is not None and aps:
         best = max(aps, key=lambda a: a.get("power", -999))
         try:
-            capture_state.set(iface)
+            capture_state.set(iface_used)
             capture_state.set_scan(
                 channel=str(best.get("channel") or ""),
                 bssid=best.get("bssid") or "")
@@ -131,7 +149,8 @@ def scan_wireless(orchestrator, interface: Optional[str] = None,
             logger.debug("capture_state scan-hint write failed", exc_info=True)
 
     return {
-        "ok": True, "interface": iface, "duration": duration,
+        "ok": True, "interface": iface, "interface_used": iface_used,
+        "duration": duration,
         "targets": aps, "count": len(aps),
         "stdout_excerpt": (result.get("stdout") or "")[:500],
     }
