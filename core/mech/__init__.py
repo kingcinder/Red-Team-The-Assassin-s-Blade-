@@ -171,8 +171,13 @@ class MechUnit:
         return result
 
     def resume(self, plan_id: str):
-        """Resume a persisted plan from its last step boundary."""
-        from core.mech.state import PlanRunState
+        """Resume a persisted plan from its last step boundary.
+
+        Works across process restarts (v7.1): when the plan was compiled by
+        a dead process, it is rebuilt from its persisted plan.json report.
+        Terminal-state plans return unchanged (idempotent).
+        """
+        from core.mech.state import PlanRunState, PlanState
         if plan_id in self._run_states:
             run_state = self._run_states[plan_id]
         else:
@@ -181,11 +186,48 @@ class MechUnit:
             if run_state is None:
                 raise KeyError(f"no persisted plan state for '{plan_id}'")
             self._run_states[plan_id] = run_state
+        if run_state.state in (PlanState.DONE.value, PlanState.FAILED.value,
+                               PlanState.ABORTED.value):
+            return run_state  # idempotent — nothing to resume
         if plan_id not in self._plans:
-            raise KeyError(
-                f"plan '{plan_id}' is not loaded in this session; use "
-                f"compile(...) with plan_id to rebuild it before resuming")
+            # Crash recovery: rebuild from the persisted compile report.
+            intent_id = run_state.intent_id
+            try:
+                intent = self.get_intent(intent_id)
+            except KeyError:
+                raise KeyError(
+                    f"plan '{plan_id}' references intent '{intent_id}', "
+                    f"which is not present in {self.manifest_dir}")
+            from core.mech.compiler import CompiledPlan
+            self._plans[plan_id] = CompiledPlan.from_report(
+                run_state.plan_dir, intent)
         return self.run(self._plans[plan_id])
+
+    def list_plans(self) -> List[Dict[str, Any]]:
+        """Every persisted plan run in the sandbox, newest first (v7.1).
+
+        Powers cockpit reattach after a browser refresh and the CLI
+        `plans` verb — a running plan must always be findable."""
+        from core.mech.state import PlanRunState
+        out: List[Dict[str, Any]] = []
+        if not os.path.isdir(self.sandbox_root):
+            return out
+        for name in sorted(os.listdir(self.sandbox_root), reverse=True):
+            plan_dir = os.path.join(self.sandbox_root, name)
+            if not os.path.isfile(os.path.join(plan_dir, "state.json")):
+                continue
+            st = PlanRunState.load(plan_dir)
+            if st is not None:
+                out.append(st.summary())
+        return out
+
+    def get_plan_report(self, plan_id: str) -> Dict[str, Any]:
+        """The persisted compile report (plan.json) for one plan (v7.1)."""
+        from core.state_store import read_json
+        data = read_json(os.path.join(self.sandbox_root, plan_id, "plan.json"))
+        if not data:
+            raise KeyError(f"no persisted plan report for '{plan_id}'")
+        return data
 
     def abort(self, plan_id: str) -> Dict[str, Any]:
         """Cooperative abort — takes effect at the next step boundary."""

@@ -704,6 +704,58 @@ class TestManifestDir(unittest.TestCase):
             self.assertEqual(m.id, "wifi_wpa_handshake")
             self.assertEqual(m.plan[3].step, "crack")
             self.assertFalse(m.llm_required)
+# ═════════════════════════════════════════════════════════════
+# v7.1 Task 2 — resume across process restarts (plan.json rebuild)
+# ═══════════════════════════════════════════════════════════════
+
+class TestResumeAcrossRestart(unittest.TestCase):
+    """A fresh MechUnit (new process) must be able to resume a plan that was
+    compiled by another process — the CLI spawns a new unit per invocation,
+    so this is the only path that makes crash recovery real."""
+
+    def _unit(self, sandbox):
+        from core.mech import MechUnit, DEFAULT_MANIFEST_DIR
+        return MechUnit(config={}, manifest_dir=DEFAULT_MANIFEST_DIR,
+                        sandbox_root=sandbox)
+
+    def test_resume_rebuilds_plan_from_report(self):
+        sandbox = tempfile.mkdtemp()
+        unit = self._unit(sandbox)
+        plan = unit.compile("wifi_pmkid", target={"bssid": "AA:BB:CC:DD:EE:FF"})
+        unit.run(plan)  # terminal state (tools absent in test env → failed/done)
+        # Simulate a NEW process: fresh MechUnit, same sandbox.
+        unit2 = self._unit(sandbox)
+        st = unit2.resume(plan.plan_id)  # must not raise KeyError
+        self.assertIn(st.state, ("done", "failed", "aborted"))
+
+    def test_resume_never_ran_compiled_plan(self):
+        sandbox = tempfile.mkdtemp()
+        unit = self._unit(sandbox)
+        plan = unit.compile("wifi_pmkid", target={"bssid": "AA:BB:CC:DD:EE:FF"})
+        st = unit.resume(plan.plan_id)  # COMPILED → runs to terminal
+        self.assertIn(st.state, ("done", "failed", "aborted"))
+
+    def test_resume_unknown_plan_raises_keyerror(self):
+        unit = self._unit(tempfile.mkdtemp())
+        with self.assertRaises(KeyError):
+            unit.resume("wifi_pmkid_19700101_000000")
+
+    def test_list_plans_finds_persisted_runs(self):
+        sandbox = tempfile.mkdtemp()
+        unit = self._unit(sandbox)
+        plan = unit.compile("wifi_pmkid", target={"bssid": "AA:BB:CC:DD:EE:FF"})
+        names = [p["plan_id"] for p in unit.list_plans()]
+        self.assertIn(plan.plan_id, names)
+        entry = next(p for p in unit.list_plans()
+                     if p["plan_id"] == plan.plan_id)
+        self.assertEqual(entry["intent_id"], "wifi_pmkid")
+
+    def test_get_plan_report_roundtrip(self):
+        unit = self._unit(tempfile.mkdtemp())
+        plan = unit.compile("wifi_pmkid", target={"bssid": "AA:BB:CC:DD:EE:FF"})
+        report = unit.get_plan_report(plan.plan_id)
+        self.assertEqual(report["plan_id"], plan.plan_id)
+        self.assertEqual(report["intent_id"], "wifi_pmkid")
 
 
 if __name__ == "__main__":

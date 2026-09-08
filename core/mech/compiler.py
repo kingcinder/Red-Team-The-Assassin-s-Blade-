@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 from core.mech.intents import IntentManifest, StepSpec
 from core.mech.resolver import Resolver, ResolveContext, UnresolvedPlaceholder
 from core.mech.probes import ProbeResult, run_probe
-from core.state_store import atomic_write_json, safe_filename
+from core.state_store import atomic_write_json, read_json, safe_filename
 
 logger = logging.getLogger("redteam.mech.compiler")
 
@@ -113,6 +113,33 @@ class CompiledPlan:
         path = os.path.join(self.plan_dir, "plan.json")
         atomic_write_json(path, self.to_dict())
         return path
+
+    @classmethod
+    def from_report(cls, plan_dir: str, intent: IntentManifest) -> "CompiledPlan":
+        """Rebuild a CompiledPlan from its persisted plan.json (v7.1).
+
+        This is the crash-recovery seam: a NEW process can resume a plan
+        compiled by a dead one. Raises ValueError when no report exists.
+        probe_results/unresolved are not reconstructed (compile-time data;
+        a resumable plan had none that mattered — runnable was true).
+        """
+        data = read_json(os.path.join(plan_dir, "plan.json"))
+        if not data:
+            raise ValueError(f"no plan.json report in {plan_dir}")
+        steps = [CompiledStep(
+            step=s["step"], tool=s["tool"], args=dict(s.get("args", {})),
+            when=s.get("when"), gate=s.get("gate"), retries=s.get("retries", 0),
+            max_wait=s.get("max_wait"), on_timeout=s.get("on_timeout"),
+            on_fail=s.get("on_fail"), fallbacks=list(s.get("fallbacks", [])),
+            extracts=dict(s.get("extracts", {})),
+            resolution_log=list(s.get("resolution_log", [])))
+            for s in data.get("steps", [])]
+        return cls(plan_id=data["plan_id"], intent=intent,
+                   target=dict(data.get("target", {})), plan_dir=plan_dir,
+                   steps=steps, artifacts=dict(data.get("artifacts", {})),
+                   probe_results=[], unresolved=[],
+                   compiled_at=data.get("compiled_at", ""),
+                   resolution_log=list(data.get("resolution_log", [])))
 
 
 def _probe_manifest(manifest: IntentManifest) -> List[ProbeResult]:

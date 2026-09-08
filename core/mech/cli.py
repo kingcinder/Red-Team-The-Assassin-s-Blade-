@@ -18,6 +18,7 @@ Mech-Unit commands (deterministic attack runtime — no LLM):
   compile <intent_id> [--target K=V]   Compile only (preview + plan.json)
   resume <plan_id>              Resume a persisted plan from its last step
   status <plan_id>              Show plan run state summary
+  plans                         List every persisted plan run (recoverable)
   next-moves <plan_id>          VULN-GRAPH capitalization suggestions
 """
 
@@ -83,6 +84,10 @@ def run_mech_cli(config, mech_args) -> int:
             print("usage: --mech status <plan_id>")
             return 2
         _print(unit.status(rest[0]))
+        return 0
+
+    if command == "plans":
+        _print({"plans": unit.list_plans()})
         return 0
 
     if command == "next-moves":
