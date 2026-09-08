@@ -25,6 +25,20 @@ async function mechFetch(url, opts) {
     return body;
 }
 
+// Inline dismissible banner — replaces blocking alert() popups (v7.1).
+function mechBanner(msg, kind) {
+    const box = mechEl('mech-banner');
+    if (!box) { console.warn('mech:', msg); return; }
+    box.className = `mech-banner ${kind || 'info'}`;
+    box.innerHTML = `<span>${msg}</span> <button class="tab" onclick="mechHideBanner()">✕</button>`;
+    box.classList.remove('hidden');
+}
+
+function mechHideBanner() {
+    const box = mechEl('mech-banner');
+    if (box) box.classList.add('hidden');
+}
+
 // ── section 1: targets ───────────────────────────────────────────────
 async function mechScanTargets() {
     const box = mechEl('mech-targets');
@@ -109,7 +123,7 @@ function mechShowBlocked(intentId) {
     const card = mechState.intents.find(c => c.id === intentId);
     const missing = (card?.probes || []).filter(p => !p.ok)
         .map(p => `${p.reason} — fix: ${p.fix}`).join('; ');
-    alert(`Intent "${card?.operator_label}" is not available on this host:\n\n${missing || 'probe failed'}`);
+    mechBanner(`Intent "${card?.operator_label}" is not available on this host: ${missing || 'probe failed'}`, 'warn');
 }
 
 // ── section 3: run console ───────────────────────────────────────────
@@ -164,7 +178,17 @@ async function mechRunPlan() {
         await mechFetch(`/api/mech/plan/${mechState.currentPlan.plan_id}/run`, {method: 'POST'});
         mechSetPlanState('running');
     } catch (err) {
-        alert(`Run failed: ${err.message}`);
+        mechBanner(`Run failed: ${err.message}`, 'error');
+    }
+}
+
+async function mechResumePlan() {
+    if (!mechState.currentPlan) return;
+    try {
+        await mechFetch(`/api/mech/plan/${mechState.currentPlan.plan_id}/resume`, {method: 'POST'});
+        mechSetPlanState('running');
+    } catch (err) {
+        mechBanner(`Resume failed: ${err.message}`, 'error');
     }
 }
 
@@ -183,6 +207,55 @@ async function mechAbortPlan() {
 function mechSetPlanState(state) {
     mechState.planState = state;
     mechEl('mech-plan-state').textContent = `state: ${state}`;
+    // Busy-state: no double-run, pause/abort only while something is live.
+    const busy = ['running', 'pausing…', 'aborting…'].includes(state);
+    const runBtn = mechEl('mech-run-btn');
+    const pauseBtn = mechEl('mech-pause-btn');
+    const abortBtn = mechEl('mech-abort-btn');
+    if (runBtn) {
+        runBtn.disabled = busy;
+        const resumeMode = state === 'paused';
+        runBtn.textContent = resumeMode ? '▶ Resume' : '▶ Run';
+        runBtn.setAttribute('onclick', resumeMode ? 'mechResumePlan()' : 'mechRunPlan()');
+    }
+    if (pauseBtn) pauseBtn.disabled = !busy;
+    if (abortBtn) abortBtn.disabled = !busy;
+}
+
+// ── persisted plans: reattach after a refresh (v7.1) ────────────────
+async function mechLoadPlans() {
+    try {
+        const body = await mechFetch('/api/mech/plans');
+        mechRenderPlans(body.plans || []);
+    } catch (err) { /* quiet — the reattach list is advisory */ }
+}
+
+function mechRenderPlans(plans) {
+    const box = mechEl('mech-plans');
+    if (!box) return;
+    if (!plans.length) { box.innerHTML = ''; return; }
+    const badge = s => ({running: '🟢', paused: '🟡', done: '✅',
+                         failed: '❌', aborted: '⛔', compiled: '⚪'}[s] || '⚪');
+    box.innerHTML = '<h4>Plans on this host</h4>' + plans.slice(0, 8).map(p => `
+        <div class="mech-plan-row">
+            <span>${badge(p.state)} ${p.plan_id}</span>
+            <span class="muted">${p.intent_id} · ${p.steps_done}/${p.steps_total} steps</span>
+            <button class="tab" onclick="mechReattach('${p.plan_id}')">REATTACH</button>
+        </div>`).join('');
+}
+
+async function mechReattach(planId) {
+    try {
+        const plan = await mechFetch(`/api/mech/plan/${planId}`);
+        const st = await mechFetch(`/api/mech/plan/${planId}/status`).catch(() => null);
+        mechState.currentPlan = plan;
+        mechRenderPlanPreview(plan);
+        mechEl('mech-run-controls').classList.remove('hidden');
+        mechSetPlanState(st ? st.state : 'unknown');
+        mechLoadNextMoves();
+    } catch (err) {
+        mechBanner(`Reattach failed: ${err.message}`, 'error');
+    }
 }
 
 // ── SocketIO streaming (mech_* channels) ─────────────────────────────
@@ -242,11 +315,12 @@ function mechRenderNextMoves(moves) {
 document.addEventListener('DOMContentLoaded', () => {
     if (!mechEl('mech-console')) return;   // panel absent → no-op
     mechLoadIntents();
+    mechLoadPlans();
     const origShowTab = window.showResultsTab;
     if (origShowTab) {
         window.showResultsTab = function(tab) {
             origShowTab(tab);
-            if (tab === 'mech') mechLoadIntents();
+            if (tab === 'mech') { mechLoadIntents(); mechLoadPlans(); }
         };
     }
     if (window.socket) initMechSocket(window.socket);

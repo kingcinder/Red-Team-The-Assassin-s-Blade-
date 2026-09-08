@@ -2931,3 +2931,21 @@ body {
 .mech-run-controls button { min-width: 90px; }
 .mech-next-moves h4 { margin: 10px 0 6px; }
 .mech-move { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+
+/* ── v7.1: banner + plans list (reattach) ─────────────────────────── */
+.mech-banner {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; margin-bottom: 10px; border-radius: 6px;
+    font-size: 13px; border: 1px solid #b58900; background: #3d3800; color: #eee8d5;
+}
+.mech-banner.error { border-color: #dc322f; background: #3d1211; }
+.mech-banner.warn  { border-color: #b58900; background: #3d3800; }
+.mech-banner.info  { border-color: #268bd2; background: #0d2f3d; }
+.mech-banner.hidden { display: none; }
+.mech-plans h4 { margin: 4px 0 6px; font-size: 13px; color: #93a1a1; }
+.mech-plan-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 8px; font-size: 12px; border-bottom: 1px dashed #1c2b36;
+}
+.mech-plan-row span:first-child { flex: 1; }
+.mech-run-controls button:disabled { opacity: 0.4; cursor: not-allowed; }

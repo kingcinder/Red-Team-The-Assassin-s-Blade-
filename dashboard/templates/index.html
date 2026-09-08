@@ -176,6 +176,7 @@
                 </div>
                 <div class="results-content hidden" id="results-mech">
                     <div class="mech-console" id="mech-console">
+                        <div id="mech-banner" class="mech-banner hidden" role="alert"></div>
                         <div class="mech-section">
                             <h3>1 · Targets <button class="tab" onclick="mechScanTargets()">📡 Scan</button></h3>
                             <div id="mech-targets" class="mech-targets"><p class="muted">Click Scan to discover wireless targets (deterministic airodump sweep, no LLM).</p></div>
@@ -186,11 +187,12 @@
                         </div>
                         <div class="mech-section">
                             <h3>3 · Run Console</h3>
+                            <div id="mech-plans" class="mech-plans"></div>
                             <div id="mech-plan-preview" class="mech-plan-preview"><p class="muted">Select an attack intent to compile a plan preview.</p></div>
                             <div id="mech-run-controls" class="mech-run-controls hidden">
-                                <button onclick="mechRunPlan()">▶ Run</button>
-                                <button onclick="mechPausePlan()">⏸ Pause</button>
-                                <button onclick="mechAbortPlan()">⏹ Abort</button>
+                                <button id="mech-run-btn" onclick="mechRunPlan()">▶ Run</button>
+                                <button id="mech-pause-btn" onclick="mechPausePlan()">⏸ Pause</button>
+                                <button id="mech-abort-btn" onclick="mechAbortPlan()">⏹ Abort</button>
                                 <span id="mech-plan-state" class="muted"></span>
                             </div>
                             <div id="mech-steps" class="mech-steps"></div>
