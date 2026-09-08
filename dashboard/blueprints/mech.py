@@ -28,7 +28,8 @@ def register(ctx):
     config = ctx.config
 
     mech_cfg = config.get("mech", {}) if isinstance(config, dict) else {}
-    unit = MechUnit(
+    # Tests inject a stub unit via ctx.mech_unit; production builds the real one.
+    unit = getattr(ctx, "mech_unit", None) or MechUnit(
         config=config,
         manifest_dir=mech_cfg.get("manifest_dir"),
         sandbox_root=mech_cfg.get("sandbox_root"),
@@ -107,13 +108,27 @@ def register(ctx):
         return jsonify({"status": "started", "plan_id": plan_id})
 
     @app.route("/api/mech/plan/<plan_id>/pause", methods=["POST"])
+    def api_mech_pause(plan_id):
+        return jsonify(unit.pause(plan_id))
+
     @app.route("/api/mech/plan/<plan_id>/resume", methods=["POST"])
-    def api_mech_pause_resume(plan_id):
-        action = "pause" if request.path.endswith("/pause") else "resume"
-        result = unit.pause(plan_id) if action == "pause" else \
-            {"status": "resume_requested", "plan_id": plan_id}
-        # Cooperative resume: executor picks it up at the next boundary.
-        return jsonify(result)
+    def api_mech_resume(plan_id):
+        """Resume a persisted plan in a background thread (v7.1 fix).
+
+        The previous handler returned resume_requested without calling
+        anything — a no-op button. A plan is resumable when it is loaded in
+        this session OR persisted from a previous (possibly crashed) one.
+        """
+        if plan_id not in unit._plans:
+            try:
+                unit.get_plan_report(plan_id)  # crash-recovery path
+            except KeyError:
+                return jsonify({"error": f"unknown plan '{plan_id}'"}), 404
+        thread = threading.Thread(
+            target=unit.resume, args=(plan_id,),
+            name=f"mech-resume-{plan_id}", daemon=True)
+        thread.start()
+        return jsonify({"status": "started", "plan_id": plan_id})
 
     @app.route("/api/mech/plan/<plan_id>/abort", methods=["POST"])
     def api_mech_abort(plan_id):
@@ -122,6 +137,19 @@ def register(ctx):
     @app.route("/api/mech/plan/<plan_id>/status")
     def api_mech_status(plan_id):
         return jsonify(unit.status(plan_id))
+
+    @app.route("/api/mech/plan/<plan_id>")
+    def api_mech_plan_detail(plan_id):
+        """Full persisted compile report — cockpit reattach after refresh."""
+        try:
+            return jsonify(unit.get_plan_report(plan_id))
+        except KeyError:
+            return jsonify({"error": f"unknown plan '{plan_id}'"}), 404
+
+    @app.route("/api/mech/plans")
+    def api_mech_plans():
+        """Every persisted plan run, newest first (reattach list)."""
+        return jsonify({"plans": unit.list_plans()})
 
     @app.route("/api/mech/plan/<plan_id>/next-moves")
     def api_mech_next_moves(plan_id):
