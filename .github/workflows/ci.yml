@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Test (17 suites + compile + JS)
+    name: Test (51 suites + mech + compile + JS)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -38,6 +38,14 @@ jobs:
           done
           echo "ALL TEST SUITES PASSED"
 
+      - name: Run Mech-Unit suites
+        run: |
+          for t in tests/mech/test_*.py; do
+            echo "=== $t ==="
+            python3 "$t" || exit 1
+          done
+          echo "ALL MECH SUITES PASSED"
+
       - name: Python compile check
         run: |
           python3 -c "import py_compile,glob; [py_compile.compile(f,doraise=True) for f in glob.glob('core/*.py')+glob.glob('dashboard/*.py')+glob.glob('tools/*.py')+glob.glob('tests/*.py')+glob.glob('*.py')]"
@@ -46,6 +54,7 @@ jobs:
       - name: JS syntax check
         run: |
           node --check dashboard/static/js/cockpit.js
+          node --check dashboard/static/js/mech.js
           echo "JS OK"
 
       - name: Import smoke (every module loads)
