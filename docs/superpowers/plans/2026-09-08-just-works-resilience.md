@@ -31,7 +31,7 @@
 - Consumes: `HardenedToolRunner` results carrying `killed: True` on timeout-kill (existing hardening contract).
 - Produces: `mech_events.STEP_TIMEOUT = "step_timeout"` event (payload: plan_id, step, attempt); `_route_failure(..., timed_out: bool = False)` signature.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestTimeoutRouting(unittest.TestCase):
@@ -92,12 +92,12 @@ class TestTimeoutRouting(unittest.TestCase):
         self.assertEqual(r.n, 4)  # 3 timed-out attempts + 1 fallback
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python3 -m pytest tests/mech/test_executor.py::TestTimeoutRouting -q`
 Expected: FAIL (plan aborts / no timeout event).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `core/mech/events.py`: add `STEP_TIMEOUT = "step_timeout"` constant and include it in `ALL_EVENTS`.
 
@@ -106,12 +106,12 @@ In `core/mech/executor.py` `_run_step_with_routing`: track `last_timed_out = boo
 In `_route_failure(..., timed_out: bool = False)`: select
 `directive = step.on_timeout if (timed_out and step.on_timeout) else (step.on_fail or "abort")`; when the timeout directive is chosen, emit `mech_events.STEP_TIMEOUT` first. Fallbacks still run before the directive (existing order), except when directive is `abort`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest tests/mech/test_executor.py -q`
 Expected: PASS (all, including pre-existing).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add core/mech/executor.py core/mech/events.py tests/mech/test_executor.py
@@ -132,7 +132,7 @@ git commit -m "feat(mech): implement on_timeout directive — hung tools honor o
 - Consumes: `plan.json` written by `CompiledPlan.write_report()` (full `to_dict()`); `PlanRunState.load(plan_dir)`.
 - Produces: `CompiledPlan.from_report(plan_dir: str, intent: IntentManifest) -> CompiledPlan`; `MechUnit.list_plans() -> List[dict]` (summary per persisted plan); `MechUnit.get_plan_report(plan_id) -> dict`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestResumeAcrossRestart(unittest.TestCase):
@@ -164,12 +164,12 @@ class TestResumeAcrossRestart(unittest.TestCase):
 
 Note: `wifi_pmkid` steps will fail fast against the fake environment (tools absent → hardening blocks) — the test asserts resume mechanics, not attack success.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python3 -m pytest tests/mech/test_mech_core.py::TestResumeAcrossRestart -q`
 Expected: FAIL (KeyError "plan not loaded in this session").
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `CompiledPlan.from_report`:
 ```python
@@ -200,16 +200,16 @@ Add `MechUnit.list_plans()`: scan `sandbox_root` dirs containing `state.json`, r
 
 CLI: add `plans` verb → `_print({"plans": unit.list_plans()})`, and document in `MECH_HELP`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest tests/mech/test_mech_core.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Verify the CLI crash-recovery path end-to-end**
+- [x] **Step 5: Verify the CLI crash-recovery path end-to-end**
 
 Run: `python3 harness.py --mech compile wifi_pmkid --target bssid=AA:BB:CC:DD:EE:FF` then `python3 harness.py --mech plans` — the plan must appear (separate processes).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add core/mech/compiler.py core/mech/__init__.py core/mech/cli.py tests/mech/test_mech_core.py
@@ -228,7 +228,7 @@ git commit -m "feat(mech): resume works across process restarts via plan.json re
 - Consumes: `MechUnit.resume` (Task 2), `MechUnit.list_plans`, `MechUnit.get_plan_report`.
 - Produces: `POST /api/mech/plan/<plan_id>/resume` → `{"status": "started"}` (threaded run, like `/run`); `GET /api/mech/plans` → `{"plans": [...]}`; `GET /api/mech/plan/<plan_id>` → plan report dict.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 class TestMechResumeRoute(unittest.TestCase):
@@ -245,13 +245,13 @@ class TestMechResumeRoute(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
 ```
 
-- [ ] **Step 2: Run to verify failure** — route returns `resume_requested` without starting anything today.
+- [x] **Step 2: Run to verify failure** — route returns `resume_requested` without starting anything today.
 
-- [ ] **Step 3: Implement** — the resume route mirrors `/run`: 404 when `plan_id` unknown to the unit (check `unit._plans` OR a persisted `state.json`), then `threading.Thread(target=unit.resume, args=(plan_id,), daemon=True).start()` and return started. Add the two GET routes (404 via `KeyError` → 404 handler).
+- [x] **Step 3: Implement** — the resume route mirrors `/run`: 404 when `plan_id` unknown to the unit (check `unit._plans` OR a persisted `state.json`), then `threading.Thread(target=unit.resume, args=(plan_id,), daemon=True).start()` and return started. Add the two GET routes (404 via `KeyError` → 404 handler).
 
-- [ ] **Step 4: Run tests to verify they pass** — `python3 -m pytest tests/mech/test_mech_routes.py -q`.
+- [x] **Step 4: Run tests to verify they pass** — `python3 -m pytest tests/mech/test_mech_routes.py -q`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add dashboard/blueprints/mech.py tests/mech/test_mech_routes.py
@@ -270,10 +270,10 @@ git commit -m "fix(dashboard): resume route actually resumes; add plans list/det
 - Consumes: `GET /api/mech/plans`, `GET /api/mech/plan/<plan_id>`, `POST .../resume` (Task 3).
 - Produces: `mechLoadPlans()`, `mechReattach(planId)`, `mechBanner(msg, kind)`; run/pause/abort buttons disabled while a plan runs.
 
-- [ ] **Step 1: Implement `mechLoadPlans` + `mechReattach`** — render persisted plans with state badges; REATTACH fetches the plan report, sets `mechState.currentPlan`, re-renders the preview, and (if state is `running`) leaves controls disabled; if `paused`, shows an enabled RESUME button calling the fixed resume route. Auto-call `mechLoadPlans()` on boot and on every tab show.
-- [ ] **Step 2: Busy-state + banner** — `mechSetPlanState` toggles `disabled` on `#mech-run-btn/#mech-pause-btn/#mech-abort-btn`; replace both `alert(...)` calls with a dismissible inline `#mech-banner` div (`role="alert"`).
-- [ ] **Step 3: Verify in browser** — boot the dashboard, refresh mid-run: the plans list shows the running plan; REATTACH restores the console and live step streaming continues.
-- [ ] **Step 4: Commit**
+- [x] **Step 1: Implement `mechLoadPlans` + `mechReattach`** — render persisted plans with state badges; REATTACH fetches the plan report, sets `mechState.currentPlan`, re-renders the preview, and (if state is `running`) leaves controls disabled; if `paused`, shows an enabled RESUME button calling the fixed resume route. Auto-call `mechLoadPlans()` on boot and on every tab show.
+- [x] **Step 2: Busy-state + banner** — `mechSetPlanState` toggles `disabled` on `#mech-run-btn/#mech-pause-btn/#mech-abort-btn`; replace both `alert(...)` calls with a dismissible inline `#mech-banner` div (`role="alert"`).
+- [x] **Step 3: Verify in browser** — boot the dashboard, refresh mid-run: the plans list shows the running plan; REATTACH restores the console and live step streaming continues.
+- [x] **Step 4: Commit**
 
 ```bash
 git add dashboard/static/js/mech.js dashboard/templates/index.html
@@ -295,7 +295,7 @@ git commit -m "feat(cockpit): refresh-proof reattach, busy-state controls, inlin
 - Consumes: `PROBE_REGISTRY`, per-intent `unit.probe(id)`.
 - Produces: `probes.host_readiness() -> dict` (`{probes: [ProbeResult...], ok: bool}` — runs the parameterless probes: `wireless_adapter_monitor_capable`, `running_as_root`); `MechUnit.doctor() -> dict` (`{host: ..., intents: [{id, ready, missing, fix}...]}`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 class TestDoctor(unittest.TestCase):
@@ -309,9 +309,9 @@ class TestDoctor(unittest.TestCase):
             self.assertIn("missing", entry)
 ```
 
-- [ ] **Step 2: Run to verify failure**, then **Step 3: implement** the three pieces above. CLI prints a human report (host lines + per-intent `READY`/`blocked: <missing> (fix: <fix>)`); blueprint returns JSON.
-- [ ] **Step 4: Run tests to verify they pass** — `python3 -m pytest tests/mech/test_doctor.py -q`.
-- [ ] **Step 5: Commit**
+- [x] **Step 2: Run to verify failure**, then **Step 3: implement** the three pieces above. CLI prints a human report (host lines + per-intent `READY`/`blocked: <missing> (fix: <fix>)`); blueprint returns JSON.
+- [x] **Step 4: Run tests to verify they pass** — `python3 -m pytest tests/mech/test_doctor.py -q`.
+- [x] **Step 5: Commit**
 
 ```bash
 git add core/mech/probes.py core/mech/__init__.py core/mech/cli.py dashboard/blueprints/mech.py tests/mech/test_doctor.py
@@ -330,11 +330,11 @@ git commit -m "feat(mech): doctor — first-run host capability report + per-int
 - Consumes: `probes.list_interfaces()` (monitor-type detection via `/sys/class/net/<if>/type` ∈ {802, 803}).
 - Produces: scan response gains `"interface_used"`; `capture_state.set()` receives the monitor vhost when one appears.
 
-- [ ] **Step 1: Write the failing test** — stub runner records the interface passed to `airodump_capture`; stub `list_interfaces` to report `wlan0` managed + `wlan0mon` monitor after enable. Assert the scan used `wlan0mon` and returned `interface_used: "wlan0mon"`.
-- [ ] **Step 2: Run to verify failure** (today the original `wlan0` is used).
-- [ ] **Step 3: Implement** — after `monitor_mode_enable`, call `list_interfaces()`; pick the first monitor-typed interface; if found and different, switch the sweep to it and persist it via `capture_state.set`; fall back to the original name when none appears. Include `interface_used` in the response.
-- [ ] **Step 4: Run tests to verify they pass** — `python3 -m pytest tests/mech/test_targets.py -q`.
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write the failing test** — stub runner records the interface passed to `airodump_capture`; stub `list_interfaces` to report `wlan0` managed + `wlan0mon` monitor after enable. Assert the scan used `wlan0mon` and returned `interface_used: "wlan0mon"`.
+- [x] **Step 2: Run to verify failure** (today the original `wlan0` is used).
+- [x] **Step 3: Implement** — after `monitor_mode_enable`, call `list_interfaces()`; pick the first monitor-typed interface; if found and different, switch the sweep to it and persist it via `capture_state.set`; fall back to the original name when none appears. Include `interface_used` in the response.
+- [x] **Step 4: Run tests to verify they pass** — `python3 -m pytest tests/mech/test_targets.py -q`.
+- [x] **Step 5: Commit**
 
 ```bash
 git add core/mech/targets.py tests/mech/test_targets.py
@@ -353,7 +353,7 @@ git commit -m "fix(mech): target scan rebinds to the monitor vhost after airmon 
 - Consumes: existing `use_intent` reroute + inline-fallback machinery (no executor changes).
 - Produces: every deauth/capture step carries at least one fallback (`use_intent` reroute to a sibling intent, or a retry-tolerant inline tool); long captures get `on_timeout: warn`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 class TestManifestResilience(unittest.TestCase):
@@ -379,9 +379,9 @@ class TestManifestResilience(unittest.TestCase):
         self.assertIn("wifi_pmkid", reroutes)
 ```
 
-- [ ] **Step 2: Run to verify failure**, then **Step 3: edit the five manifests** — add `fallbacks` with `use_intent` reroutes (handshake→pmkid, pmkid→handshake, evil_twin→handshake, wps→handshake) and `on_timeout: warn` on long captures. Only reference intent ids that exist; every `tool:` name must already exist in `core/tool_registry.py`.
-- [ ] **Step 4: Verify** — `python3 scripts/validate_mech_manifests.py` and `python3 -m pytest tests/mech/ -q` green.
-- [ ] **Step 5: Commit**
+- [x] **Step 2: Run to verify failure**, then **Step 3: edit the five manifests** — add `fallbacks` with `use_intent` reroutes (handshake→pmkid, pmkid→handshake, evil_twin→handshake, wps→handshake) and `on_timeout: warn` on long captures. Only reference intent ids that exist; every `tool:` name must already exist in `core/tool_registry.py`.
+- [x] **Step 4: Verify** — `python3 scripts/validate_mech_manifests.py` and `python3 -m pytest tests/mech/ -q` green.
+- [x] **Step 5: Commit**
 
 ```bash
 git add attacks/ tests/mech/test_manifest_resilience.py
@@ -397,9 +397,9 @@ git commit -m "feat(attacks): every wireless chain degrades — use_intent rerou
 - Modify: `README.md` (novice quickstart: 3 commands — doctor, list, run)
 - Modify: `DEVELOPMENT.md` (decision register: timeout semantics, resume-from-report; header/timeline → v7.1.0)
 
-- [ ] **Step 1: Update the three docs** with the shipped behavior (no placeholders).
-- [ ] **Step 2: Full verification matrix** — `python3 -m pytest tests/ -q` (expect 441 + new green), `python3 scripts/validate_mech_manifests.py`, `python3 tests/smoke_imports.py`, dashboard boot check.
-- [ ] **Step 3: Commit**
+- [x] **Step 1: Update the three docs** with the shipped behavior (no placeholders).
+- [x] **Step 2: Full verification matrix** — `python3 -m pytest tests/ -q` (expect 441 + new green), `python3 scripts/validate_mech_manifests.py`, `python3 tests/smoke_imports.py`, dashboard boot check.
+- [x] **Step 3: Commit**
 
 ```bash
 git add API.md README.md DEVELOPMENT.md
