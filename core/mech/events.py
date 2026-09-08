@@ -23,6 +23,7 @@ STEP_FAILED = "step_failed"        # a step failed (before fallback/retry)
 STEP_SKIPPED = "step_skipped"      # when: condition false
 STEP_RETRY = "step_retry"          # a retry is scheduled
 STEP_FALLBACK = "step_fallback"    # a fallback replaces a failed step
+STEP_TIMEOUT = "step_timeout"      # a tool was killed on timeout (v7.1)
 FINDING = "finding"                # a finding was extracted
 NEXT_MOVES = "next_moves"          # VULN-GRAPH capitalization suggestions
 PLAN_COMPLETE = "plan_complete"
@@ -39,7 +40,8 @@ def socketio_channel(event: str) -> str:
 
 ALL_EVENTS = (
     PLAN_STATE, STEP_STARTED, STEP_COMPLETE, STEP_FAILED, STEP_SKIPPED,
-    STEP_RETRY, STEP_FALLBACK, FINDING, NEXT_MOVES, PLAN_COMPLETE, PLAN_ABORTED,
+    STEP_RETRY, STEP_FALLBACK, STEP_TIMEOUT, FINDING, NEXT_MOVES,
+    PLAN_COMPLETE, PLAN_ABORTED,
 )
 
 

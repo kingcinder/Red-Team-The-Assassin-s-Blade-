@@ -8,11 +8,15 @@ deliberately owns no subprocess logic — Decision Register #23.
 
 Failure routing (vocabulary pinned in intents.VALID_DIRECTIVES):
     gate failed / tool failed
-      → retries left?  → re-run the step
+      → retries left?  → re-run the step (skipped when on_timeout decides)
       → fallbacks?     → run fallback steps (inline tool or use_intent)
       → on_fail == "warn"  → mark FALLBACK/failure, continue plan
       → on_fail == "abort" → fail the plan
       → on_fail == "retry_then_fallback" → retry, then fallbacks, then fail
+    timeout (tool killed by hardening):
+      → on_timeout == "warn"   → mark failure, continue plan (no retry burn)
+      → on_timeout == "abort"  → fail the plan
+      → on_timeout absent/"retry_then_fallback" → on_fail routing as above
     gate succeeded → extracts run, findings are collected, plan continues
 
 Every state mutation persists via PlanRunState (atomic state.json) and
@@ -120,6 +124,7 @@ class PlanExecutor:
         """
         max_attempts = step.retries + 1
         last_error = ""
+        last_timed_out = False
 
         for attempt in range(1, max_attempts + 1):
             if run_state.state != PlanState.RUNNING.value:
@@ -144,6 +149,7 @@ class PlanExecutor:
                 return "continue"
 
             last_error = why
+            last_timed_out = bool(result.get("killed"))
             run_state.mark_step_failed(step.step, why,
                                        exit_code=result.get("exit_code"),
                                        duration=result.get("duration"))
@@ -153,20 +159,39 @@ class PlanExecutor:
                 "attempt": attempt})
 
             if attempt < max_attempts:
+                if last_timed_out and step.on_timeout in ("warn", "abort"):
+                    # A hung tool must not burn the remaining retries — the
+                    # operator's timeout directive decides NOW (v7.1). The
+                    # STEP_TIMEOUT event is emitted by _route_failure.
+                    break
                 self.bus.emit(mech_events.STEP_RETRY, {
                     "plan_id": plan.plan_id, "step": step.step,
                     "attempt": attempt + 1})
                 continue
 
-        # Retries exhausted → fallbacks, then on_fail directive
+        # Retries exhausted → fallbacks, then the timeout/on_fail directive
         return self._route_failure(plan, run_state, step, artifacts, facts,
-                                   last_error)
+                                   last_error, timed_out=last_timed_out)
 
     def _route_failure(self, plan: CompiledPlan, run_state: PlanRunState,
                        step: CompiledStep, artifacts: Dict[str, str],
-                       facts: Dict[str, Any], last_error: str) -> str:
-        """Retries exhausted: try fallbacks, then apply on_fail directive."""
-        if step.fallbacks:
+                       facts: Dict[str, Any], last_error: str,
+                       timed_out: bool = False) -> str:
+        """Retries exhausted: try fallbacks, then apply the routing directive.
+
+        Order (v7.0 semantics, preserved): fallbacks run BEFORE the directive.
+        v7.1 exception — a timeout with an explicit on_timeout of "warn" or
+        "abort" applies the directive FIRST and skips fallbacks: a hung tool
+        means the environment is stuck, so sibling fallbacks would hang too.
+        """
+        directive = step.on_fail or "abort"
+        timeout_decided = timed_out and step.on_timeout in ("warn", "abort")
+        if timeout_decided:
+            directive = step.on_timeout
+            self.bus.emit(mech_events.STEP_TIMEOUT, {
+                "plan_id": plan.plan_id, "step": step.step})
+
+        if not timeout_decided and step.fallbacks:
             for fb in step.fallbacks:
                 fb_name = fb.get("step", "")
                 if fb.get("use_intent"):
@@ -195,18 +220,21 @@ class PlanExecutor:
                         "plan_id": plan.plan_id, "step": step.step,
                         "fallback": fb_name})
                     return "continue"
-            # All fallbacks failed → fall through to directive
+            # All fallbacks failed → fall through to the directive (the
+            # timeout_decided abort was already returned above).
         elif step.step not in run_state.records or \
                 run_state.records[step.step].state != StepState.FALLBACK.value:
             pass  # no fallbacks declared; directive decides below
 
-        directive = step.on_fail or "abort"
-        if directive == "warn":
-            run_state.save()
-            return "continue"
-        run_state.fail(f"step '{step.step}' failed: {last_error}")
-        self._emit_state(run_state, "failed")
-        return "abort"
+        if directive == "abort":
+            run_state.fail(f"step '{step.step}' "
+                           f"{'timed out' if timed_out else 'failed'}: {last_error}")
+            self._emit_state(run_state, "failed")
+            return "abort"
+        # directive here is "warn" or "retry_then_fallback" — both mean:
+        # mark the failure, keep the plan alive.
+        run_state.save()
+        return "continue"
 
     def _run_fallback_step(self, plan: CompiledPlan, run_state: PlanRunState,
                            step: CompiledStep, fb: Dict[str, Any],

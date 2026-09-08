@@ -414,5 +414,63 @@ class TestStructuralGuarantees(unittest.TestCase):
                          {"warn", "abort", "retry_then_fallback"})
 
 
+# ═══════════════════════════════════════════════════════════════
+# 11. Timeout routing — on_timeout must be honored (v7.1 Task 1)
+# ═══════════════════════════════════════════════════════════════
+
+class TestTimeoutRouting(unittest.TestCase):
+    """A hung tool (hardening kills it → killed=True) must honor the
+    operator's on_timeout directive instead of burning retries and then
+    routing through on_fail."""
+
+    def _run(self, on_timeout, on_fail="abort", retries=0, fallbacks=None):
+        script = {"x": {"stdout": "", "stderr": "timed out", "exit_code": -9,
+                        "duration": 30.0, "blocked": False, "killed": True}}
+        bus = RecordingBus()
+        plan = make_plan(
+            [step("s", tool="x", on_timeout=on_timeout, on_fail=on_fail,
+                  retries=retries, fallbacks=fallbacks or [])],
+            sandbox=tempfile.mkdtemp())
+        st = PlanRunState(plan_id=plan.plan_id, intent_id=plan.intent.id,
+                          plan_dir=plan.plan_dir)
+        PlanExecutor(FakeRunner(script), bus=bus).run(plan, st)
+        return st, bus
+
+    def test_timeout_warn_completes_plan(self):
+        st, bus = self._run(on_timeout="warn")
+        self.assertEqual(st.state, PlanState.DONE.value)
+        self.assertEqual(st.records["s"].state, StepState.FAILED.value)
+        self.assertTrue(any(e == mech_events.STEP_TIMEOUT for e, _ in bus.events))
+
+    def test_timeout_absent_falls_back_to_on_fail(self):
+        st, bus = self._run(on_timeout=None, on_fail="abort")
+        self.assertEqual(st.state, PlanState.FAILED.value)
+        self.assertFalse(any(e == mech_events.STEP_TIMEOUT for e, _ in bus.events))
+
+    def test_timeout_abort_fails_plan_immediately(self):
+        st, bus = self._run(on_timeout="abort", on_fail="warn", retries=3)
+        self.assertEqual(st.state, PlanState.FAILED.value)
+        # abort-on-timeout must not burn the remaining retries
+        self.assertEqual(st.records["s"].attempts, 1)
+
+    def test_timeout_retry_then_fallback_runs_fallback(self):
+        fb = [{"step": "s_fb", "tool": "fb", "args": {}, "extracts": {}}]
+        script = {"x": {"stdout": "", "stderr": "timed out", "exit_code": -9,
+                        "duration": 30.0, "blocked": False, "killed": True},
+                  "fb": ok()}
+        plan = make_plan(
+            [step("s", tool="x", retries=2,
+                  on_timeout="retry_then_fallback", fallbacks=fb)],
+            sandbox=tempfile.mkdtemp())
+        st = PlanRunState(plan_id=plan.plan_id, intent_id=plan.intent.id,
+                          plan_dir=plan.plan_dir)
+        runner = FakeRunner(script)
+        PlanExecutor(runner, bus=RecordingBus()).run(plan, st)
+        self.assertEqual(st.state, PlanState.DONE.value)
+        # 3 timed-out attempts of x + 1 fallback invocation
+        x_calls = [c for c in runner.calls if c["tool"] == "x"]
+        self.assertEqual(len(x_calls), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
