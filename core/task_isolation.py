@@ -17,6 +17,24 @@ MAX_TOTAL_OUTPUT_MB = 50
 MAX_SINGLE_FILE_KB = 500
 
 
+def _reject_unsafe_name(name: str, what: str) -> None:
+    """Reject names that could escape the sandbox directory tree.
+
+    The sandbox is the trust boundary: a workflow/artifact/log name is
+    joined into paths under self.root and cleanup() rmtree's the root, so
+    separators, ``..``, or absolute paths must fail loudly rather than
+    write outside the sandbox. Callers that resolved a real template
+    upstream (resolve_template's realpath guard) are unaffected — valid
+    workflow stems never contain separators.
+    """
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"{what} must be a non-empty string")
+    if os.path.sep in name or (os.path.altsep and os.path.altsep in name):
+        raise ValueError(f"{what} must not contain path separators: {name!r}")
+    if name in ("..", ".") or name.startswith("/") or name.startswith(".."):
+        raise ValueError(f"{what} must be a plain name: {name!r}")
+
+
 class TaskSandbox:
     """
     Creates and manages an isolated task directory:
@@ -30,6 +48,7 @@ class TaskSandbox:
     """
 
     def __init__(self, workflow_name: str, base_dir: str = "tasks"):
+        _reject_unsafe_name(workflow_name, "workflow_name")
         self.workflow_name = workflow_name
         self.base_dir = os.path.abspath(base_dir)
         # Timestamp + random suffix → unique even for concurrent runs in the
@@ -82,6 +101,7 @@ class TaskSandbox:
 
     def save_artifact(self, name: str, data: bytes):
         """Save an artifact (payload, screenshot, downloaded file)."""
+        _reject_unsafe_name(name, "artifact name")
         self._check_total_size()
         path = os.path.join(self.root, "artifacts", name)
         with open(path, "wb") as f:
@@ -90,6 +110,7 @@ class TaskSandbox:
 
     def write_log(self, log_name: str, content: str):
         """Append to a log file in the logs/ directory."""
+        _reject_unsafe_name(log_name, "log name")
         path = os.path.join(self.root, "logs", f"{log_name}.log")
         with open(path, "a") as f:
             f.write(f"[{datetime.now().isoformat()}] {content}\n")

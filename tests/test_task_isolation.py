@@ -70,6 +70,38 @@ def test_artifact_and_log():
     assert os.path.exists(log_path)
 
 
+def test_unsafe_names_rejected():
+    """The sandbox is the trust boundary: names that could escape the
+    sandbox tree (separators, .., absolute paths) must fail loudly in the
+    constructor, save_artifact, and write_log."""
+    base = tempfile.mkdtemp()
+    bad_names = ["../escape", "a/b", "/etc/passwd", ".."]
+    if os.path.altsep:  # Windows-style secondary separator
+        bad_names.append("a\\b")
+    for bad in bad_names:
+        try:
+            TaskSandbox(bad, base_dir=base)
+            raise AssertionError(f"TaskSandbox accepted unsafe name {bad!r}")
+        except ValueError:
+            pass
+    sb = TaskSandbox("web_scan", base_dir=base)
+    sb.setup()
+    for bad in ("../escape.bin", "a/b.bin", ".."):
+        try:
+            sb.save_artifact(bad, b"x")
+            raise AssertionError(f"save_artifact accepted unsafe name {bad!r}")
+        except ValueError:
+            pass
+        try:
+            sb.write_log(bad, "x")
+            raise AssertionError(f"write_log accepted unsafe name {bad!r}")
+        except ValueError:
+            pass
+    # Legit names still work
+    sb.save_artifact("payload.bin", b"\x00")
+    sb.write_log("debug", "line")
+
+
 def test_size_guard():
     base = tempfile.mkdtemp()
     sb = TaskSandbox("web_scan", base_dir=base)
