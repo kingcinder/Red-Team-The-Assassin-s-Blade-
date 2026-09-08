@@ -101,3 +101,6 @@ temp/
 
 # Freebuff desktop state (never repo content)
 .freebuff/
+
+# added by serpent-circle (chain workspace)
+.serpent-circle/
