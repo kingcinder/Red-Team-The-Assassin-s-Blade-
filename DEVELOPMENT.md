@@ -3,6 +3,14 @@
 # The Road to v7.0 "Mech-Unit" — Every Feature, Every Decision
 # ═══════════════════════════════════════════════════════════════
 
+> **Current — v7.1.1 "Serpent Circle"** (2026-09-08): A hardening pass over
+> v7.1 — the parsed-manifest cache invalidates on disk edits (no stale
+> intent wall), cockpit panels escape AP-scan data (stored-XSS fix),
+> killed/failed tool runs are never cached as canonical, the task sandbox
+> rejects names that could escape it, CI now runs the Mech-Unit suites and
+> checks `mech.js`, and `docs/BACKLOG.md` (promised by the v7.0 manifest)
+> exists. Full record: the Serpent Circle chain workspace + these commits.
+
 > **Current — v7.1 "Just Works"**: A resilience pass over the v7.0 Mech-Unit —
 > `on_timeout` is now implemented (hung tools honor operator routing), resume
 > survives process restarts (plans rebuild from `plan.json`), the cockpit

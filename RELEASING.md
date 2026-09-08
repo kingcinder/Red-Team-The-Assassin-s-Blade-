@@ -27,7 +27,7 @@ verifiable end-to-end by the operator *without any network access*.
 ### 2. Quality gates (must all pass)
 
 ```bash
-# Full test suite — 17 standalone suites
+# Full test suite — 51 standalone suites
 for t in tests/test_*.py; do python3 "$t" || exit 1; done
 
 # Syntax gates
