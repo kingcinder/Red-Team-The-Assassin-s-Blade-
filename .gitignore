@@ -98,3 +98,6 @@ temp/
 *.tmp
 *.bak
 *.orig
+
+# Freebuff desktop state (never repo content)
+.freebuff/
