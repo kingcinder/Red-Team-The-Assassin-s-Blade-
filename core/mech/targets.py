@@ -125,6 +125,19 @@ def scan_wireless(orchestrator, interface: Optional[str] = None,
         timeout=max(5, duration),
         sandbox_output_dir=scan_dir)
 
+    # 2b. A blocked/failed sweep is a scan failure, NOT an empty scan — the
+    # TARGETS grid must show an error, not a successful "0 targets" result.
+    # (A healthy sweep that legitimately finds no APs still returns ok:True
+    # with count 0; only a run that could not execute is an error.)
+    if result.get("blocked") or result.get("exit_code", 0) != 0:
+        reason = result.get("block_reason") or result.get("stderr") or \
+            result.get("stdout") or "airodump sweep failed"
+        return {
+            "ok": False,
+            "interface": iface, "interface_used": iface_used,
+            "error": f"airodump sweep failed: {str(reason)[:300]}",
+        }
+
     # 3. Parse whichever artifact airodump produced.
     csv_path = None
     for candidate in (f"{prefix}-01.csv", f"{prefix}.csv"):

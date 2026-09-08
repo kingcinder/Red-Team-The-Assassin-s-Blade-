@@ -124,6 +124,52 @@ class TestScanRebind(unittest.TestCase):
         self.assertEqual(result["targets"][0]["bssid"], "AA:BB:CC:DD:EE:FF")
         self.assertEqual(result["targets"][0]["essid"], "TestNet")
 
+    def test_blocked_sweep_reports_failure_not_empty_scan(self):
+        """A blocked/failed airodump run is a scan error, never a fake
+        ok:True with 0 targets — the TARGETS grid must surface it."""
+        cs = CaptureStateStub()
+
+        class BlockedRunner:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, tool_name, args, timeout=300,
+                        sandbox_output_dir=None):
+                self.calls.append(tool_name)
+                if tool_name == "airodump_capture":
+                    return {"stdout": "", "stderr": "airodump-ng not installed",
+                            "exit_code": -1, "duration": 0.0, "blocked": True,
+                            "block_reason": "not_installed", "killed": False}
+                return {"stdout": "", "stderr": "", "exit_code": 0,
+                        "duration": 0.1, "blocked": False, "killed": False}
+
+        runner = BlockedRunner()
+        with self._patch_monitor_probe_ok(), \
+             mock.patch("core.mech.targets.list_interfaces", return_value=[]):
+            result = scan_wireless(_orch(cs, runner), interface="wlan0", duration=10)
+        self.assertFalse(result["ok"])
+        self.assertIn("not_installed", result["error"])
+        self.assertIn("airodump", result["error"])
+
+    def test_nonzero_sweep_reports_failure(self):
+        cs = CaptureStateStub()
+
+        class FailRunner:
+            def execute(self, tool_name, args, timeout=300,
+                        sandbox_output_dir=None):
+                if tool_name == "airodump_capture":
+                    return {"stdout": "", "stderr": "permission denied",
+                            "exit_code": 1, "duration": 0.1, "blocked": False,
+                            "killed": False}
+                return {"stdout": "", "stderr": "", "exit_code": 0,
+                        "duration": 0.1, "blocked": False, "killed": False}
+
+        with self._patch_monitor_probe_ok(), \
+             mock.patch("core.mech.targets.list_interfaces", return_value=[]):
+            result = scan_wireless(_orch(cs, FailRunner()), interface="wlan0",
+                                   duration=10)
+        self.assertFalse(result["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()
