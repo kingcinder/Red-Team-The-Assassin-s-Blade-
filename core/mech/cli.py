@@ -68,12 +68,10 @@ def run_mech_cli(config, mech_args) -> int:
         return 0
 
     if command == "run":
-        intent_id, target, extra = _split_run_args(rest)
-        return _cmd_run(unit, intent_id, target, extra, execute=True)
+        return _run_or_compile(unit, rest, execute=True)
 
     if command == "compile":
-        intent_id, target, extra = _split_run_args(rest)
-        return _cmd_run(unit, intent_id, target, extra, execute=False)
+        return _run_or_compile(unit, rest, execute=False)
 
     if command == "resume":
         if not rest:
@@ -114,14 +112,30 @@ def _split_run_args(rest):
     while i < len(rest):
         arg = rest[i]
         if arg == "--target":
+            if i + 1 >= len(rest):
+                raise ValueError("--target requires a value (K=V)")
             target.update(_parse_kv([rest[i + 1]]))
             i += 2
         elif arg == "--facts":
+            if i + 1 >= len(rest):
+                raise ValueError("--facts requires a value (K=V)")
             facts.update(_parse_kv([rest[i + 1]]))
             i += 2
         else:
             i += 1
     return intent_id, target, facts
+
+
+def _run_or_compile(unit, rest, execute: bool) -> int:
+    """Parse run/compile args defensively — a dangling --target/--facts must
+    print a usage error, never raise an IndexError traceback."""
+    try:
+        intent_id, target, extra = _split_run_args(rest)
+    except ValueError as exc:
+        print(f"usage error: {exc}")
+        print(f"  {MECH_HELP.splitlines()[1]}")
+        return 2
+    return _cmd_run(unit, intent_id, target, extra, execute=execute)
 
 
 def _cmd_doctor(unit) -> int:
