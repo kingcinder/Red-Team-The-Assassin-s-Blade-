@@ -196,6 +196,31 @@ def probe_names() -> List[str]:
     return sorted(PROBE_REGISTRY)
 
 
+# Parameterless probes that describe the HOST itself (v7.1 doctor) —
+# safe to run any time, no manifest context required.
+HOST_PROBES = ("wireless_adapter_monitor_capable", "running_as_root")
+
+
+def host_readiness() -> Dict:
+    """Run every host-level probe and summarize (v7.1 doctor).
+
+    Returns {ok: bool, probes: [ProbeResult.to_dict()]}. Never raises —
+    a crashing probe degrades to ok=False with the crash message, so the
+    doctor always produces a report.
+    """
+    results: List[Dict] = []
+    for name in HOST_PROBES:
+        try:
+            results.append(run_probe(name, []).to_dict())
+        except Exception as exc:  # belt and braces: run_probe already guards
+            logger.warning("host probe %s crashed: %s", name, exc)
+            results.append(ProbeResult(
+                probe=name, ok=False, missing=[name],
+                reason=f"probe crashed: {exc}",
+                fix="report this — probes must degrade, never crash").to_dict())
+    return {"ok": all(r["ok"] for r in results), "probes": results}
+
+
 def run_probe(name: str, params: Optional[List[str]] = None) -> ProbeResult:
     """Run one probe by name. Unknown probe names fail with a clear fix —
     a typo in a manifest must be visible on the intent wall, not silently ok."""

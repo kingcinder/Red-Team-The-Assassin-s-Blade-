@@ -84,6 +84,44 @@ class MechUnit:
         """Cockpit card payloads for every loaded intent."""
         return [m.to_dict() for m in self._load_intents().values()]
 
+    def doctor(self) -> Dict[str, Any]:
+        """First-run capability report (v7.1): host probes + per-intent
+        readiness with the exact missing items and their fixes.
+
+        The novice's entry point — answers "what can this box do, what do
+        I install first?" in one deterministic call. Never raises.
+        """
+        from core.mech.probes import host_readiness
+        intents: List[Dict[str, Any]] = []
+        try:
+            loaded = self._load_intents()
+        except ValueError as exc:
+            return {"host": host_readiness(), "intents": [],
+                    "error": f"manifest load failed: {exc}"}
+        for manifest in loaded.values():
+            missing: List[str] = []
+            fixes: List[str] = []
+            try:
+                results = self.probe(manifest.id)
+            except Exception as exc:  # a broken intent must not kill the report
+                missing.append(f"probe error: {exc}")
+                fixes.append("check the manifest preconditions")
+                results = []
+            for p in results:
+                if not p.get("ok"):
+                    missing.extend(p.get("missing", []) or [p.get("probe", "?")])
+                    if p.get("fix"):
+                        fixes.append(p["fix"])
+            intents.append({
+                "id": manifest.id,
+                "label": manifest.operator_label,
+                "category": manifest.category,
+                "ready": not missing,
+                "missing": missing,
+                "fix": "; ".join(dict.fromkeys(fixes)),
+            })
+        return {"host": host_readiness(), "intents": intents}
+
     def get_intent(self, intent_id: str):
         manifest = self._load_intents().get(intent_id)
         if manifest is None:

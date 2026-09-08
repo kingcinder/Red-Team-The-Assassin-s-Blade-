@@ -12,6 +12,7 @@ logger = logging.getLogger("redteam.mech.cli")
 
 MECH_HELP = """\
 Mech-Unit commands (deterministic attack runtime — no LLM):
+  doctor                        First-run report: what this host can run
   list                          Show all attack intents + probe status
   probe <intent_id>             Show precondition probe detail for one intent
   run <intent_id> --target K=V  Compile + execute an intent against a target
@@ -51,6 +52,9 @@ def run_mech_cli(config, mech_args) -> int:
 
     unit = MechUnit(config=config)
     command, rest = mech_args[0], mech_args[1:]
+
+    if command == "doctor":
+        return _cmd_doctor(unit)
 
     if command == "list":
         _print(_list_intents(unit))
@@ -118,6 +122,33 @@ def _split_run_args(rest):
         else:
             i += 1
     return intent_id, target, facts
+
+
+def _cmd_doctor(unit) -> int:
+    """Human-readable first-run report; JSON tail for scripts/cockpit."""
+    report = unit.doctor()
+    host = report.get("host", {})
+    print("═══ Mech-Unit doctor — host capability report ═══")
+    for p in host.get("probes", []):
+        mark = "✔" if p.get("ok") else "✘"
+        line = f"  {mark} {p.get('probe')}: {p.get('reason')}"
+        if not p.get("ok") and p.get("fix"):
+            line += f"\n      fix: {p['fix']}"
+        print(line)
+    print(f"HOST: {'READY' if host.get('ok') else 'PARTIAL — see fixes above'}")
+    print("\n═══ INTENTS ═══")
+    for entry in report.get("intents", []):
+        mark = "✔ READY" if entry["ready"] else "✘ blocked"
+        print(f"  {mark:<10} {entry['id']} — {entry['label']}")
+        if not entry["ready"]:
+            print(f"      missing: {', '.join(entry['missing'])}")
+            if entry.get("fix"):
+                print(f"      fix: {entry['fix']}")
+    ready = sum(1 for e in report.get("intents", []) if e["ready"])
+    print(f"\n{ready}/{len(report.get('intents', []))} intents ready on this host.")
+    print("Next: --mech list → --mech run <intent_id> --target bssid=AA:BB:…")
+    _print(report)  # machine-readable tail
+    return 0
 
 
 def _list_intents(unit) -> dict:

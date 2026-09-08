@@ -62,6 +62,11 @@ def register(ctx):
         except KeyError:
             return jsonify({"error": f"unknown intent '{intent_id}'"}), 404
 
+    @app.route("/api/mech/doctor")
+    def api_mech_doctor():
+        """First-run capability report: host probes + per-intent readiness."""
+        return jsonify(unit.doctor())
+
     # ═══════════════════════════════════════════════════
     # Routes — plan lifecycle
     # ═══════════════════════════════════════════════════
