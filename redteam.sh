@@ -125,6 +125,23 @@ report_drift() {
     return 0
 }
 
+# One-line stale-deps warning for `run` (silent when the marker is
+# absent or matches this checkout). Emitted to stderr: run() execs the
+# harness right after, and bash does not flush its stdout buffer across
+# exec when stdout is a pipe.
+drift_warning() {
+    local marker_commit marker_reqhash cur_commit cur_reqhash
+    [ -f "$MARKER" ] || return 0
+    marker_commit="$(sed -n 's/^commit=//p' "$MARKER" | head -1)"
+    marker_reqhash="$(sed -n 's/^requirements_sha256=//p' "$MARKER" | head -1)"
+    cur_commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    cur_reqhash="$(req_hash)"
+    if { [ -n "$marker_commit" ] && [ "$marker_commit" != unknown ] && [ "$cur_commit" != unknown ] && [ "$marker_commit" != "$cur_commit" ]; } || \
+       { [ -n "$marker_reqhash" ] && [ "$marker_reqhash" != unknown ] && [ "$cur_reqhash" != unknown ] && [ "$marker_reqhash" != "$cur_reqhash" ]; }; then
+        warn "installed deps predate this checkout (see .installed-version) — run: bash redteam.sh update" >&2
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════
 # install
 # ═══════════════════════════════════════════════════════════════
@@ -296,7 +313,107 @@ uninstall() {
 # ═══════════════════════════════════════════════════════════════
 run() {
     PICK_PYTHON
+    drift_warning
     exec "$PYTHON" harness.py "$@"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# doctor
+# ═══════════════════════════════════════════════════════════════
+doctor() {
+    local failures=0 pyver mcommit mtime shown
+    echo ""
+    echo -e "${BOLD}RedTeam Harness — lifecycle doctor${NC}"
+    echo "─────────────────────────────────────────────"
+
+    echo -e "${BOLD}[1/5] Python & core deps${NC}"
+    if PICK_PYTHON; then
+        pyver="$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null)"
+        ok "python: $PYTHON ($pyver)"
+        if "$PYTHON" -c 'import flask, flask_socketio, yaml, requests, jinja2, psutil, gevent, dateutil' >/dev/null 2>&1; then
+            ok "core runtime imports OK"
+        else
+            fail "core runtime imports FAIL — run: bash redteam.sh install"
+            failures=$((failures + 1))
+        fi
+    else
+        fail "no Python 3.10+ found — install Python, then run: bash redteam.sh install"
+        failures=$((failures + 1))
+    fi
+
+    echo -e "${BOLD}[2/5] Install marker (.installed-version)${NC}"
+    if [ -f "$MARKER" ]; then
+        mcommit="$(sed -n 's/^commit=//p' "$MARKER" | head -1)"
+        mtime="$(sed -n 's/^installed_at=//p' "$MARKER" | head -1)"
+        shown="${mcommit:0:12}"
+        [ -z "$shown" ] && shown="<unrecorded>"
+        ok "marker present: commit $shown, installed ${mtime:-<unknown>}"
+        report_drift
+    else
+        warn "no marker — deps not installed via redteam.sh yet (run: bash redteam.sh install)"
+    fi
+
+    echo -e "${BOLD}[3/5] Checkout${NC}"
+    if [ -d .git ]; then
+        ok "git: $(git branch --show-current 2>/dev/null) @ $(git rev-parse --short HEAD 2>/dev/null)"
+        if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+            warn "working tree has uncommitted changes"
+        else
+            ok "working tree clean"
+        fi
+    else
+        warn "not a git checkout (update/drift checks unavailable)"
+    fi
+
+    echo -e "${BOLD}[4/5] Tool readiness${NC}"
+    local t found=0 total=0 missing=""
+    for t in nmap masscan nikto sqlmap gobuster hydra john hashcat \
+             aircrack-ng airodump-ng aireplay-ng reaver hcxdumptool wifite \
+             tcpdump tshark bettercap kismet netexec msfconsole; do
+        total=$((total + 1))
+        if command -v "$t" >/dev/null 2>&1; then
+            found=$((found + 1))
+        else
+            missing="$missing $t"
+        fi
+    done
+    if [ "$found" -eq "$total" ]; then
+        ok "all $total probed security tools present"
+    else
+        warn "$found/$total probed security tools present"
+        info "missing:$missing"
+    fi
+
+    echo -e "${BOLD}[5/5] Environment${NC}"
+    local dirs_ok=1 d
+    for d in sessions output tasks; do
+        [ -d "$d" ] || dirs_ok=0
+    done
+    if [ "$dirs_ok" = 1 ]; then ok "runtime dirs present (sessions/ output/ tasks/)"; else warn "runtime dirs missing — run: bash redteam.sh install"; fi
+    if [ -f /etc/sudoers.d/redteam-harness ]; then
+        ok "scoped-sudo drop-in present (/etc/sudoers.d/redteam-harness)"
+    else
+        info "no scoped-sudo drop-in (optional — provision with: bash redteam.sh install --sudo)"
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        if curl -s --max-time 2 http://127.0.0.1:8080/v1/models >/dev/null 2>&1; then
+            ok "LLM backend: llama-server on :8080"
+        elif curl -s --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+            ok "LLM backend: Ollama on :11434"
+        else
+            info "no LLM backend detected (optional — Mech-Unit runs without one)"
+        fi
+    else
+        info "curl not found — skipping LLM backend check"
+    fi
+
+    echo "─────────────────────────────────────────────"
+    if [ "$failures" -eq 0 ]; then
+        ok "doctor: all critical checks passed — launch with: bash redteam.sh run"
+        return 0
+    fi
+    fail "doctor: $failures critical check(s) failed — fix with: bash redteam.sh install"
+    return 1
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -345,6 +462,10 @@ Verbs:
         --verify      also run install.sh --verify (air-gap readiness)
   update
       git pull --ff-only, then reinstall Python deps
+  doctor
+      One-screen health report: Python + core deps, install marker &
+      drift, checkout state, tool readiness, sudo drop-in, LLM backend.
+      Exits non-zero if a critical check fails.
   uninstall [--yes] [--keep-data]
       Stop harness processes, uninstall Python deps, remove runtime data
       (sessions/ output/ tasks/), unlink shortcuts, remove the scoped-sudo
@@ -357,6 +478,11 @@ Verbs:
       from anywhere (--remove unlinks them).
   help
       This text.
+
+  doctor
+      One-screen health report: Python + core deps, install marker &
+      drift, checkout state, tool readiness, sudo drop-in, LLM backend.
+      Exits non-zero if a critical check fails.
 
 Shortcut shims in the repo:
   ./redteam-install.sh  ./redteam-uninstall.sh  ./redteam-update.sh  ./redteam-run.sh
@@ -377,6 +503,7 @@ shift || true
 case "$VERB" in
     install)   install "$@" ;;
     update)    update ;;
+    doctor)    doctor ;;
     uninstall) uninstall "$@" ;;
     run)       run "$@" ;;
     shortcuts) shortcuts "${1:-}" ;;

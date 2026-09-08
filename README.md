@@ -149,6 +149,7 @@ bash redteam.sh run --cli                   # interactive CLI
 bash redteam.sh uninstall                   # stop processes, uninstall deps, remove runtime data
 bash redteam.sh uninstall --keep-data       # …but keep sessions/ output/ tasks/
 bash redteam.sh shortcuts                   # link shortcuts into ~/.local/bin (--remove unlinks)
+bash redteam.sh doctor                      # one-screen health report (Python, deps, marker, tools)
 bash redteam.sh help
 
 # Shortcut shims (work from the repo, or from anywhere once linked)
@@ -166,6 +167,9 @@ The `.cmd`/`.ps1` shims delegate to the same wrapper through Git Bash
 (auto-detected on PATH or in the standard Git install locations) and pass
 harness args straight through, e.g. `redteam-run.cmd --cli` or
 `powershell -File .\redteam-run.ps1 --mech doctor`.
+
+`run` prints a one-line warning when the installed deps predate the current
+checkout (`.installed-version`); `update` refreshes the marker.
 
 `uninstall` prompts before doing anything, never deletes the repo checkout itself, and
 will also remove the scoped-sudo drop-in and `~/.local/bin` links if you created them.
