@@ -43,6 +43,7 @@ plan:
       essid: "[\\t ](?!\\*)[^\\t ]{1,32}$"
       clients_seen: "([1-9][0-9]*) (?:stations|clients)"
     on_fail: abort
+    on_timeout: warn   # a hung sweep must not kill the engagement (v7.1)
 
   - step: deauth
     tool: aireplay_attack
@@ -68,6 +69,7 @@ plan:
     gate:
       output: "WPA handshake|handshake"
     on_fail: retry_then_fallback
+    on_timeout: warn   # capture stalled ≠ failure — the pmkid reroute already ran (v7.1)
     fallbacks:
       - step: pmkid_route2
         use_intent: wifi_pmkid

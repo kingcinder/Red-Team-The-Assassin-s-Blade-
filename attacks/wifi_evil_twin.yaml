@@ -57,6 +57,10 @@ plan:
     gate:
       output: "WPA handshake|handshake"
     on_fail: warn
+    on_timeout: warn   # a hung capture must not kill the plan (v7.1)
+    fallbacks:
+      - step: handshake_direct_route
+        use_intent: wifi_wpa_handshake
 
 artifacts:
   capture: "{{ plan_dir }}/capture-01.cap"

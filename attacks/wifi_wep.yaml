@@ -37,6 +37,7 @@ plan:
     extracts:
       ivs: "# Data: ([0-9]+)"
     on_fail: abort
+    on_timeout: warn   # a hung sweep must not kill the engagement (v7.1)
 
   - step: replay
     tool: aireplay_attack

@@ -40,6 +40,10 @@ plan:
     gate:
       output: "PMKID|EAPOL"
     on_fail: warn
+    on_timeout: warn   # passive capture can stall harmlessly — keep going (v7.1)
+    fallbacks:
+      - step: handshake_route
+        use_intent: wifi_wpa_handshake
 
   - step: convert
     tool: hcxpcapngtool_convert
