@@ -104,3 +104,6 @@ temp/
 
 # added by serpent-circle (chain workspace)
 .serpent-circle/
+
+# Serpent Circle run-1 archive (preserved chain record)
+.serpent-circle-20260908-run1/
