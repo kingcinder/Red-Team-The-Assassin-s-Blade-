@@ -3,6 +3,15 @@
 # The Road to v7.0 "Mech-Unit" — Every Feature, Every Decision
 # ═══════════════════════════════════════════════════════════════
 
+> **Current — v7.1.2 "Serpent Circle · Perf"** (2026-09-08): A performance
+> pass over v7.1.1 — the KnowledgeBase TF-IDF index builds lazily on first
+> use (construction 1013ms → ~0ms, i.e. dashboard boots no longer pay the
+> sklearn import when nothing queries the KB), and the findings scanner
+> literal-gates pure-alternation patterns (107ms → 69ms per scan at the
+> 100KB output cap; provably sound — the gate can only skip work, never a
+> match). Profile-driven: every other legacy hot path was measured and
+> left alone.
+
 > **Current — v7.1.1 "Serpent Circle"** (2026-09-08): A hardening pass over
 > v7.1 — the parsed-manifest cache invalidates on disk edits (no stale
 > intent wall), cockpit panels escape AP-scan data (stored-XSS fix),
