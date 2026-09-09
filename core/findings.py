@@ -182,11 +182,62 @@ REMEDIATION_MAP: Dict[str, List[str]] = {
 }
 
 
+# A qualifying gate pattern is a pure top-level alternation (?:a|b|c)
+# optionally wrapped in ^…$ — nothing else. _derive_gate_literals returns
+# None for anything else, so non-qualifying patterns always run unchanged.
+_ALTERNATION_RE = re.compile(r"^(?:\^)?\(\?:([^)]+)\)(?:\$)?$")
+# Escapes that are provably literal text; anything else disqualifies.
+_SAFE_ESCAPES = {
+    "\\" + ".": ".",
+    "\\" + "/": "/",
+    "\\" + "-": "-",
+    "\\" + ":": ":",
+}
+
+
+def _derive_gate_literals(pattern: str) -> Optional[List[str]]:
+    """Lowercase literal substrings required by a pure-alternation pattern.
+
+    For ``(?:A|B|C)`` with fully literal alternatives, every regex match
+    must contain one alternative as a literal substring — so the absence
+    of ALL literals in the text is a provable no-match, and callers may
+    skip the regex engine entirely (a necessary-condition gate: it can
+    only skip work, never a real match). Returns None when the pattern
+    does not qualify (always run the regex).
+    """
+    m = _ALTERNATION_RE.match(pattern.strip())
+    if not m:
+        return None
+    literals = []
+    for alt in m.group(1).split("|"):
+        alt = alt.strip()
+        out = []
+        i = 0
+        while i < len(alt):
+            ch = alt[i]
+            if ch == "\\":
+                esc = alt[i:i + 2]
+                if esc in _SAFE_ESCAPES:
+                    out.append(_SAFE_ESCAPES[esc])
+                    i += 2
+                    continue
+                return None  # unknown escape — literal-ness not provable
+            if ch in ".^$*+?{}[]()|":
+                return None  # regex metacharacter — not a plain literal
+            out.append(ch)
+            i += 1
+        if not out:
+            return None
+        literals.append("".join(out).lower())
+    return literals
+
+
 class FindingsExtractor:
     """Scans tool output and extracts severity-classified findings with context."""
 
     def __init__(self):
         self._compiled = []
+        self._gates: List[Optional[List[str]]] = []
         for severity, category, title, pattern, dedupe in FINDING_PATTERNS:
             try:
                 self._compiled.append((
@@ -194,8 +245,10 @@ class FindingsExtractor:
                     re.compile(pattern, re.IGNORECASE | re.MULTILINE),
                     re.compile(dedupe, re.IGNORECASE),
                 ))
+                self._gates.append(_derive_gate_literals(pattern))
             except re.error as e:
                 logger.warning(f"Bad finding pattern '{pattern}': {e}")
+                self._gates.append(None)
 
     # ────────────────────────────────────────────────────────────
     # CORE SCAN
@@ -219,7 +272,16 @@ class FindingsExtractor:
         findings: List[Dict] = []
         seen_keys: set = set()
 
-        for severity, category, title, regex, dedupe_re in self._compiled:
+        # One lowercase copy for every gated pattern (C-speed `in` checks);
+        # gated patterns whose literals are absent provably cannot match
+        # (see _derive_gate_literals) — skip the regex engine for them.
+        gates = self._gates
+        lowered = combined.lower() if any(g for g in gates) else ""
+
+        for idx, (severity, category, title, regex, dedupe_re) in enumerate(self._compiled):
+            lits = gates[idx]
+            if lits and not any(l in lowered for l in lits):
+                continue
             for m in regex.finditer(combined):
                 evidence = m.group(0).strip()[:200]
                 if len(evidence) < 3:
