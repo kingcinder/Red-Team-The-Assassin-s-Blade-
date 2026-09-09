@@ -276,5 +276,29 @@ def _test_integrity_manifest():
           set(_CVE_REQUIRED) <= set(_CVE_GROUNDING_REQUIRED),
           f"basic={_CVE_REQUIRED}, grounding={_CVE_GROUNDING_REQUIRED}")
 
+    # ── 11. Lazy index build (Serpent Circle run 2, perf) ──
+    print("\n[11] Lazy index build")
+    lazy = KnowledgeBase()
+    check("Index NOT built at construction",
+          lazy._corpus_keys == [] and lazy._vectorizer is None,
+          f"corpus={len(lazy._corpus_keys)} vectorizer={lazy._vectorizer is not None}")
+    res = lazy.search("remote code execution", top_k=3)
+    check("First search() builds the index",
+          len(lazy._corpus_keys) > 0 and lazy._vectorizer is not None,
+          f"corpus={len(lazy._corpus_keys)}")
+    check("Search returns ranked results after lazy build",
+          len(res) > 0 and all("score" in r for r in res))
+    lazy2 = KnowledgeBase()
+    stats2 = lazy2.get_stats()
+    check("get_stats() triggers the build and reports the real index",
+          stats2["corpus_entries"] > 0 and stats2["index_ready"] is True,
+          f"entries={stats2['corpus_entries']}")
+    import time as _time
+    t0 = _time.perf_counter()
+    lazy.search("log4j", top_k=3)
+    check("Second search() does not rebuild (flag holds)",
+          _time.perf_counter() - t0 < 0.5,
+          "rebuild would take ~1s (sklearn fit)")
+
 
 # Insert before the final summary line

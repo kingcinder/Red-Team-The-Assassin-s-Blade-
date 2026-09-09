@@ -179,13 +179,28 @@ class KnowledgeBase:
         # {"cves": [...], "techniques": {...}} merged over embedded data.
         if data_path and os.path.isfile(data_path):
             self._load_external(data_path)
-        self._build_index()  # ALWAYS build — even if the external load failed
+        # Index is built LAZILY on first use (_ensure_index): the sklearn
+        # import + TF-IDF fit costs ~1s and was previously paid in __init__
+        # — i.e. on every dashboard boot even when nothing ever queries the
+        # KB. First search()/get_context_block()/get_stats() triggers it.
+        self._index_built = False
         if not self._external_loaded:
             self._external_error = (self._external_error or
                                     ("data_path not found: " + data_path
                                      if data_path else "no data_path configured"))
 
     # ── Indexing ──
+    def _ensure_index(self) -> None:
+        """Build the TF-IDF index on first use instead of at construction.
+
+        Idempotent (the flag skips a redundant rebuild; a racing double
+        build is harmless — _build_index runs entirely under the lock).
+        """
+        if self._index_built:
+            return
+        self._build_index()
+        self._index_built = True
+
     def _load_external(self, data_path: str) -> None:
         try:
             with open(data_path) as f:
@@ -248,6 +263,7 @@ class KnowledgeBase:
             else:
                 self._vectorizer = None
                 self._vectors = None
+        self._index_built = True  # keep the lazy-build flag consistent
 
     # ── Lookups ──
     def lookup_cve(self, cve_id: str) -> Optional[Dict[str, Any]]:
@@ -285,6 +301,7 @@ class KnowledgeBase:
         Exact CVE/ATT&CK identifiers embedded in the query are boosted to the
         top of the ranking (an exact ID is always the right answer).
         """
+        self._ensure_index()
         query = (query or "").strip()
         if not query:
             return []
@@ -463,6 +480,7 @@ class KnowledgeBase:
         compact knowledge block. All content is passed through
         sanitize_for_llm (defense-in-depth against injection via findings).
         """
+        self._ensure_index()
         parts = []
         # 1. Signature-grounded CVEs from findings
         cve_ids = set()
@@ -515,6 +533,7 @@ class KnowledgeBase:
     def get_stats(self) -> Dict[str, Any]:
         """Knowledge base statistics for the dashboard / status endpoint."""
         _ensure_derived()
+        self._ensure_index()  # report the REAL index, not the pre-lazy state
         return {
             "cves": len(self._cves),
             "techniques": len(self._techniques),
