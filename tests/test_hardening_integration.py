@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from core.tool_registry import ToolRegistry
+from core.tool_registry import ToolRegistry, ToolDefinition
 from core.hardening import HardenedToolRunner
 
 
