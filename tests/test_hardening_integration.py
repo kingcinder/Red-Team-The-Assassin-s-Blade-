@@ -21,6 +21,14 @@ def test_runner_audit_log_grows_on_execute():
 
     initial_count = len(runner.get_audit_log())
 
+    # Register a hermetic stub tool (always installed, no external deps)
+    # so the test does not depend on CI environment tool availability.
+    stub = ToolDefinition(name="test_stub", category="test",
+                          description="hermetic stub", binary="true")
+    stub.installed = True
+    registry._tools["test_stub"] = stub
+    runner.execute("test_stub", {})
+
     # Execute a non-existent tool — should be blocked but still audit-logged
     # (the runner returns early with "unknown_tool" but does NOT audit-log it;
     #  execute a known but non-installed tool instead)
