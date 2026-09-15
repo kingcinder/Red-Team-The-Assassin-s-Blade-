@@ -92,9 +92,14 @@ def _resolve_wordlist(value) -> str:
         return ""
     if os.path.exists(requested):
         return os.path.abspath(requested)
+    # Anchor repo-relative candidates to the repo root: the runner executes
+    # tools with cwd=sandbox_output_dir, so bare relative candidates would
+    # miss the file for the same reason the original path did. lab.txt is
+    # the wordlist that actually ships in this repo (rockyou.txt does not).
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidates = [
-        "./wordlists/rockyou.txt",
-        "wordlists/rockyou.txt",
+        os.path.join(repo_root, "wordlists", "lab.txt"),
+        os.path.join(repo_root, "wordlists", "rockyou.txt"),
         "/usr/share/wordlists/rockyou.txt",
         "/usr/share/wordlists/dirb/common.txt",
         "/usr/share/wordlists/rockyou.txt.gz",
