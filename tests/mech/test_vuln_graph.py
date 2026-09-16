@@ -178,24 +178,37 @@ class TestCrossDomainSeeding(unittest.TestCase):
     """P3.5: a finding-seeded compile carries prior facts into the plan."""
 
     def test_seeded_facts_reach_resolvers(self):
+        from unittest import mock
         from core.mech import MechUnit
         from core.mech.resolver import ResolveContext
+        from core.mech.probes import ProbeResult
+
+        def _ok_probe(name, params):
+            return ProbeResult(probe=name, ok=True,
+                               reason="mocked for seeding test", fix="",
+                               detail={})
+
         unit = MechUnit(config={}, manifest_dir=DEFAULT_MANIFEST_DIR)
-        # Compile the SMB relay with credentials 'discovered' upstream —
-        # the resolver context must carry them (cross-domain hand-off).
-        ctx = unit._resolve_context(
-            target={"host": "10.0.0.5", "username": "svc-backup",
-                    "password": "P@ss"},
-            facts={"creds_source": "responder_poison"})
-        self.assertEqual(ctx.target["host"], "10.0.0.5")
-        self.assertEqual(ctx.facts["creds_source"], "responder_poison")
-        plan = unit.compile(
-            "smb_credential_relay",
-            target={"host": "10.0.0.5", "username": "svc-backup",
-                    "password": "P@ss"})
-        self.assertTrue(plan.runnable)
-        validate_args = plan.steps[0].args
-        self.assertEqual(validate_args["username"], "svc-backup")
+        # Compile is incidental here (the test is about fact hand-off), but
+        # smb_credential_relay has a hard tools_present precondition that
+        # CI machines don't satisfy. Satisfy every probe for this compile.
+        with mock.patch("core.mech.compiler.run_probe",
+                        side_effect=_ok_probe):
+            # Compile the SMB relay with credentials 'discovered' upstream —
+            # the resolver context must carry them (cross-domain hand-off).
+            ctx = unit._resolve_context(
+                target={"host": "10.0.0.5", "username": "svc-backup",
+                        "password": "P@ss"},
+                facts={"creds_source": "responder_poison"})
+            self.assertEqual(ctx.target["host"], "10.0.0.5")
+            self.assertEqual(ctx.facts["creds_source"], "responder_poison")
+            plan = unit.compile(
+                "smb_credential_relay",
+                target={"host": "10.0.0.5", "username": "svc-backup",
+                        "password": "P@ss"})
+            self.assertTrue(plan.runnable)
+            validate_args = plan.steps[0].args
+            self.assertEqual(validate_args["username"], "svc-backup")
 
 
 if __name__ == "__main__":

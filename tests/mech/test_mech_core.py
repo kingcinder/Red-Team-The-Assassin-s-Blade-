@@ -748,6 +748,26 @@ class TestResumeAcrossRestart(unittest.TestCase):
     compiled by another process — the CLI spawns a new unit per invocation,
     so this is the only path that makes crash recovery real."""
 
+    def setUp(self):
+        # Resume mechanics are hardware-independent, but the wifi_pmkid
+        # manifest has hard preconditions (monitor-mode wifi adapter,
+        # hcxdumptool/hcxpcapngtool/hashcat) that CI machines don't satisfy.
+        # Satisfy every probe so compile() exercises the resume path, not
+        # the environment.
+        from core.mech.probes import ProbeResult
+
+        def _ok_probe(name, params):
+            return ProbeResult(probe=name, ok=True,
+                               reason="mocked for resume tests", fix="",
+                               detail={})
+
+        self._probe_patcher = mock.patch("core.mech.compiler.run_probe",
+                                         side_effect=_ok_probe)
+        self._probe_patcher.start()
+
+    def tearDown(self):
+        self._probe_patcher.stop()
+
     def _unit(self, sandbox):
         from core.mech import MechUnit, DEFAULT_MANIFEST_DIR
         return MechUnit(config={}, manifest_dir=DEFAULT_MANIFEST_DIR,
