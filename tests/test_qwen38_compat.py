@@ -7,9 +7,14 @@ Validates:
 - Repeat penalty applied to llama-server payload
 """
 import json
+import os
+import sys
+
 import pytest
 import yaml
 from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from core.orchestrator import Orchestrator
 from core.prompt_builder import PromptBuilder, _BASE_SYSTEM_PROMPT
