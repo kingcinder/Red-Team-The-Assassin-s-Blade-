@@ -27,6 +27,37 @@ logger = logging.getLogger("redteam.mech.probes")
 
 _SYS_NET = "/sys/class/net"
 
+# ── consolidated tool registry (v7.1.x) ──────────────────────────────
+# Symlink farm at /home/cody/redteam-tools/bin (see that folder's README):
+# every installed tool reachable under one parent folder. PATH wins; the
+# registry is the fallback so probes and the resolver keep working when
+# the harness runs with a minimal PATH (systemd timers, cron, IDE
+# runners) — a doctor must never lie about capability because of env.
+REGISTRY_BIN_DIR = "/home/cody/redteam-tools/bin"
+
+
+def registry_bin_dir() -> str:
+    """The consolidated registry's bin dir (seam for tests)."""
+    return REGISTRY_BIN_DIR
+
+
+def registry_which(binary: str) -> Optional[str]:
+    """Resolve a binary: PATH first, then the tool registry. Never raises.
+
+    Returns the path that should be executed, or None when the binary is
+    genuinely absent from both.
+    """
+    found = shutil.which(binary)
+    if found:
+        return found
+    try:
+        candidate = os.path.join(registry_bin_dir(), binary)
+    except Exception:  # pragma: no cover — registry_bin_dir is a constant
+        return None
+    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return candidate
+    return None
+
 
 @dataclass
 class ProbeResult:
@@ -116,18 +147,28 @@ def probe_tools_present(params: List[str]) -> ProbeResult:
             probe="tools_present", ok=False, missing=["probe 'with' list"],
             reason="tools_present probe declared without a 'with' list",
             fix="add 'with: [tool1, tool2]' to the precondition")
-    missing = [t for t in params if shutil.which(t) is None]
+    via: List[str] = []
+    checked: List[str] = []
+    missing: List[str] = []
+    for t in params:
+        found = registry_which(t)
+        if found is None:
+            missing.append(t)
+        else:
+            checked.append(t)
+            via.append("registry" if found.startswith(registry_bin_dir())
+                       else "PATH")
     if missing:
         return ProbeResult(
             probe="tools_present", ok=False, missing=missing,
             reason=f"missing binaries: {', '.join(missing)}",
             fix=f"install: sudo apt install {' '.join(missing)} (or run "
                 f"install_kali_tools.sh)",
-            detail={"checked": list(params)})
+            detail={"checked": checked, "via": via})
     return ProbeResult(
         probe="tools_present", ok=True,
         reason=f"all {len(params)} required binaries present",
-        detail={"checked": list(params)})
+        detail={"checked": checked, "via": via})
 
 
 def probe_wordlist_available(params: List[str]) -> ProbeResult:

@@ -237,7 +237,16 @@ class Resolver:
 
 def shutil_which(binary: str) -> Optional[str]:
     import shutil
-    return shutil.which(binary)
+    found = shutil.which(binary)
+    if found:
+        return found
+    # Registry fallback (v7.1.x): minimal-PATH launches (systemd, cron,
+    # IDE runners) still resolve tools via /home/cody/redteam-tools/bin.
+    try:
+        from core.mech.probes import registry_which
+        return registry_which(binary)
+    except Exception:
+        return None
 
 
 def resolve_manifest_placeholders(text: str, resolver: "Resolver",
