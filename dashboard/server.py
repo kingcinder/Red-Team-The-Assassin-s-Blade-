@@ -26,6 +26,7 @@ from dashboard.blueprints import (
     replay as bp_replay,
     memory_kb as bp_memory_kb,
     mech as bp_mech,
+    ligolo as bp_ligolo,
 )
 
 logger = logging.getLogger("redteam.dashboard")
@@ -39,6 +40,7 @@ _BLUEPRINTS = (
     bp_replay,
     bp_memory_kb,
     bp_mech,
+    bp_ligolo,
 )
 
 def create_app(config=None):

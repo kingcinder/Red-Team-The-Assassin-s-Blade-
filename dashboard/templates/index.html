@@ -166,6 +166,7 @@
                     <button class="tab" onclick="showResultsTab('mission')">🛰️ Mission</button>
                     <button class="tab" onclick="showResultsTab('models')">🤖 Models</button>
                     <button class="tab" onclick="showResultsTab('mech')">🤖 Mech-Unit</button>
+                    <button class="tab" onclick="showResultsTab('pivot')">🧭 Pivot</button>
                     </div>
                 </div>
                 <div class="results-content" id="results-live">
@@ -197,6 +198,31 @@
                             </div>
                             <div id="mech-steps" class="mech-steps"></div>
                             <div id="mech-next-moves" class="mech-next-moves"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="results-content hidden" id="results-pivot">
+                    <div class="mech-console">
+                        <div id="ligolo-banner" class="mech-banner hidden" role="alert"></div>
+                        <div class="mech-section">
+                            <h3>1 · Tunnel Daemon
+                                <button id="ligolo-start-btn" onclick="ligoloDaemonStart()">▶ Start</button>
+                                <button id="ligolo-stop-btn" onclick="ligoloDaemonStop()">⏹ Stop</button>
+                                <span id="ligolo-daemon-state" class="muted"></span>
+                            </h3>
+                            <p class="muted">Runs the ligolo-ng proxy daemon locally (agent listener 11601, API 11602, generated credentials).</p>
+                        </div>
+                        <div class="mech-section">
+                            <h3>2 · Agent Sessions <button class="tab" onclick="ligoloRefresh()">⟳ Refresh</button></h3>
+                            <div id="ligolo-agents" class="mech-targets"><p class="muted">Start the daemon, then run an agent on a target (agent -connect &lt;host&gt;:11601 -ignore-cert).</p></div>
+                        </div>
+                        <div class="mech-section">
+                            <h3>3 · Tunnel &amp; Routes</h3>
+                            <div id="ligolo-tunnels" class="mech-steps"></div>
+                            <div class="mech-run-controls">
+                                <input id="ligolo-route-input" placeholder="10.10.10.0/24" style="flex:1">
+                                <button onclick="ligoloAddRoute()">Add route</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -633,5 +659,6 @@
 
     <script src="/static/js/cockpit.js"></script>
     <script src="/static/js/mech.js"></script>
+    <script src="/static/js/ligolo.js"></script>
 </body>
 </html>

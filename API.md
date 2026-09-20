@@ -862,3 +862,27 @@ warn routing (pinned by `tests/mech/test_manifest_resilience.py`).
 | Safety | `/api/safety` | — |
 | Cache/Tactics | `/api/cache/*`, `/api/tactics/suggest` | `execute_tactical` |
 | Mech-Unit (v7.0) | `/api/mech/*` | `mech_*` bus events |
+
+---
+
+## 17 · Ligolo Pivot Control (`/api/ligolo/*`, v7.2)
+
+Cockpit control surface for the ligolo-ng daemon (pivot tunnels). The
+dashboard proxies ligolo's REST API (`core/mech/ligolo_api.py`); the daemon
+manager writes ligolo's config (generated argon2id credentials + JWT secret,
+never logged), spawns `ligolo -daemon -selfcert`, and owns the lifecycle.
+
+| Route | Body | Effect |
+|---|---|---|
+| `GET /api/ligolo/status` | — | daemon state + live agent map (or `agents_error`) |
+| `POST /api/ligolo/daemon/start` | `{agent_laddr?, api_port?}` | spawn daemon (defaults: `0.0.0.0:11601` agent listener, `127.0.0.1:11602` API) |
+| `POST /api/ligolo/daemon/stop` | — | terminate daemon, clear credentials |
+| `GET /api/ligolo/agents` | — | connected agent sessions |
+| `POST /api/ligolo/tunnel/start` | `{agent_id, interface?}` | start TUN tunnel (TUN creation needs root — run elevated) |
+| `POST /api/ligolo/tunnel/stop` | `{agent_id}` | stop tunnel |
+| `POST /api/ligolo/route` | `{interface, route}` | add subnet route to the TUN |
+| `DELETE /api/ligolo/route` | `{interface, route}` | remove route |
+
+All responses: `{ok: true, ...}` or `{ok: false, error}` (HTTP 502 when the
+ligolo API itself errors). Cockpit panel: 🧭 Pivot tab (`static/js/ligolo.js`).
+Tests: `tests/mech/test_ligolo_api.py`, `tests/mech/test_ligolo_routes.py`.
