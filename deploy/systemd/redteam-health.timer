@@ -1,0 +1,11 @@
+[Unit]
+Description=Run RedTeam Harness health check daily
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=redteam-health.service
+
+[Install]
+WantedBy=timers.target

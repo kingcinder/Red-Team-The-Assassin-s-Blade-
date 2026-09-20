@@ -1,0 +1,11 @@
+{
+ "findings": {
+  "python-dependency::/home/cody/Documents/the oracle tts/.venv/bin": {
+   "category": "python-dependency",
+   "id": "PYENV-PIP-CHECK-home-cody-Documents-the oracle tts-.venv-bin",
+   "severity": "medium",
+   "what": "Python environment reports dependency metadata problems."
+  }
+ },
+ "updated_at": "2026-09-20T16:24:19+00:00"
+}

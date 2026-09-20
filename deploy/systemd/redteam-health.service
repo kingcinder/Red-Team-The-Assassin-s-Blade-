@@ -1,0 +1,11 @@
+[Unit]
+Description=RedTeam Harness system health check (discovery scan + baseline diff)
+Documentation=file:///home/cody/Documents/redteam-harness/docs/superpowers/reports/2026-09-20-phase2-remediation.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/cody/Documents/redteam-harness/scripts/health_check.py
+# Operational failures (scanner crash) must be visible in journal
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=1800
