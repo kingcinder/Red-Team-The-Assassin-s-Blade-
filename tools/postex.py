@@ -29,7 +29,7 @@ class PostExTools(BaseTool):
              "args_template": {"command": "sekurlsa::logonpasswords"}},
             {"name": "BloodHound AD Map", "description": "Active Directory attack path analysis",
              "tool": "bloodhound_analyze",
-             "args_template": {"neo4j_url": "bolt://localhost:7687"}},
+             "args_template": {"domain": "DOMAIN", "username": "USER", "password": "PASSWORD", "collection_method": "All"}},
             {"name": "Proxychains Tunnel", "description": "Route any command through proxy chains",
              "tool": "proxychains_tunnel",
              "args_template": {"binary": "nmap", "args": "-sT -Pn TARGET"}},

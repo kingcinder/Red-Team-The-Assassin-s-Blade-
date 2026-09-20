@@ -54,7 +54,10 @@ steps:
     tool: "bloodhound_analyze"
     description: "Collect AD attack path data for BloodHound analysis"
     args:
-      neo4j_url: "bolt://localhost:7687"
+      domain: "{{domain}}"
+      username: "{{user}}"
+      password: "{{password}}"
+      collection_method: "All"
     expected_output: null
     timeout: 300
     gate: false
