@@ -20,9 +20,16 @@ from core.mech.probes import registry_which, registry_bin_dir, probe_tools_prese
 
 class TestRegistryWhich(unittest.TestCase):
     def test_registry_dir_shape(self):
-        d = registry_bin_dir()
-        self.assertTrue(d.endswith("redteam-tools/bin"))
-        self.assertTrue(os.path.isdir(d))
+        # Host-independent: the default registry path is codypc-local
+        # (/home/cody/redteam-tools/bin) and does not exist on CI runners.
+        # Point the documented test seam at a temp dir with the shape.
+        with tempfile.TemporaryDirectory() as tmp:
+            shaped = os.path.join(tmp, "redteam-tools", "bin")
+            os.makedirs(shaped)
+            with mock.patch("core.mech.probes.REGISTRY_BIN_DIR", shaped):
+                d = registry_bin_dir()
+                self.assertTrue(d.endswith("redteam-tools/bin"))
+                self.assertTrue(os.path.isdir(d))
 
     def test_finds_system_tool_via_path_first(self):
         # sh is on PATH everywhere; PATH hit must win over the registry.
