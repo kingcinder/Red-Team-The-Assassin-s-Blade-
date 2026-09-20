@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-09-20T17:00:11.251463+00:00",
+  "repo_root": "/home/cody/Documents/redteam-harness",
+  "home": "/home/cody",
+  "read_only": true,
+  "findings": [
+    {
+      "id": "PYENV-PIP-CHECK-home-cody-Documents-the oracle tts-.venv-bin",
+      "category": "python-dependency",
+      "severity": "medium",
+      "confidence": "medium",
+      "what": "Python environment reports dependency metadata problems.",
+      "when": "2026-09-20T17:00:00.703918+00:00",
+      "where": "/home/cody/Documents/the oracle tts/.venv/bin",
+      "why": "Installed package metadata does not form a clean dependency set.",
+      "how": "Run: /home/cody/Documents/the oracle tts/.venv/bin/pip check",
+      "evidence": "chatterbox-tts 0.1.6 has requirement gradio==5.44.1, but you have gradio 6.8.0.\nchatterbox-tts 0.1.6 has requirement numpy<1.26.0,>=1.24.0, but you have numpy 1.26.4.\n",
+      "status": "new",
+      "recommended_correction": "Resolve or isolate the conflicting environment dependencies."
+    }
+  ]
+}
