@@ -127,7 +127,12 @@ git tag -s v5.8.0 -m "RedTeam Harness v5.8.0 — <summary>"
 
 Publish the signing key fingerprint here after first use:
 
-> **Release signing key**: `(set after first signed release — see gpg --list-keys --fingerprint)`
+> **Release signing key**: `B9C7A888 E3D312CE 844924BC CA232E2A 6F397793`
+> RSA4096, sign-only, `RedTeam Harness <redteam@harness.local>` — generated
+> 2026-09-19 for automated release signing (no passphrase; a local-box
+> tradeoff for unattended `git tag -s`). Operators verify with:
+> `gpg --recv-keys CA232E2A6F397793` (once published to a keyserver) or by
+> importing the key from the release bundle.
 
 ### 6. Tag, push, and publish
 
