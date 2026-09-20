@@ -1,0 +1,891 @@
+{
+ "counts": {
+  "0": 3,
+  "1": 60,
+  "multi": 97
+ },
+ "results": [
+  {
+   "tool": "amass_enum",
+   "param": "domain",
+   "sample": "localhost",
+   "argv": [
+    "/home/cody/redteam-tools/bin/amass",
+    "enum",
+    "-d",
+    "localhost"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/redteam-tools/bin/amass",
+   "verdict": "OK",
+   "evidence": "Configuration error: No root domain names were provided"
+  },
+  {
+   "tool": "beef_hook",
+   "param": "target",
+   "sample": "127.0.0.1",
+   "argv": [
+    "/home/cody/.local/bin/beef-xss",
+    "127.0.0.1"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/beef-xss",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "burpsuite_proxy",
+   "param": "mode",
+   "sample": "help",
+   "argv": [
+    "/home/cody/.local/bin/burpsuite",
+    "help"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/burpsuite",
+   "verdict": "OK",
+   "evidence": "Error: Unable to access jarfile /tmp/audit-single-param-8xcl45rq/.local/opt/burpsuite/burpsuite.jar"
+  },
+  {
+   "tool": "check_tool_status",
+   "param": "tool_name",
+   "sample": "smoketest-arg",
+   "argv": [
+    "",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "",
+   "verdict": "INTERNAL-INTERCEPTED",
+   "evidence": "Python interceptor owns execution; no shell binary probe"
+  },
+  {
+   "tool": "chntpw_dump",
+   "param": "sam_file",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/usr/sbin/chntpw",
+    "smoketest-arg"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/usr/sbin/chntpw",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "dex2jar_convert",
+   "param": "dex",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/home/cody/.local/bin/dex2jar",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/dex2jar",
+   "verdict": "OK",
+   "evidence": "dex2jar smoketest-arg -> ./smoketest-arg-dex2jar.jar ; java.nio.file.NoSuchFileException: smoketest-arg ; \tat java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:92) ; \tat java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:106) ; \tat java.base/sun.nio"
+  },
+  {
+   "tool": "dnswalk_enum",
+   "param": "domain",
+   "sample": "localhost",
+   "argv": [
+    "/usr/bin/dnswalk",
+    "localhost"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/dnswalk",
+   "verdict": "OK",
+   "evidence": "Old package separator \"'\" deprecated at /usr/bin/dnswalk line 242. ; Old package separator \"'\" deprecated at /usr/bin/dnswalk line 257. ; Usage: dnswalk domain ; domain MUST end with a '.'"
+  },
+  {
+   "tool": "dnsx_probe",
+   "param": "domain",
+   "sample": "localhost",
+   "argv": [
+    "/home/cody/redteam-tools/bin/dnsx",
+    "localhost"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/redteam-tools/bin/dnsx",
+   "verdict": "OK",
+   "evidence": " ;       _             __  __ ;    __| | _ __   ___ \\ \\/ / ;   / _' || '_ \\ / __| \\  /  ;  | (_| || | | |\\__ \\ /  \\  ;   \\__,_||_| |_||___//_/\\_\\ ;  ; \t\tprojectdiscovery.io ;  ; [\u001b[34mINF\u001b[0m] Current dnsx version 1.2.3 (\u001b[91moutdated\u001b[0m) [probe wrote 1 scratch file(s)]"
+  },
+  {
+   "tool": "enum4linux_enum",
+   "param": "target",
+   "sample": "127.0.0.1",
+   "argv": [
+    "/home/cody/.local/bin/enum4linux",
+    "127.0.0.1"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/enum4linux",
+   "verdict": "HANG-REVIEW",
+   "evidence": "no exit within 8s"
+  },
+  {
+   "tool": "exiftool_osint",
+   "param": "file",
+   "sample": "/dev/null",
+   "argv": [
+    "/usr/bin/exiftool",
+    "/dev/null"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/exiftool",
+   "verdict": "OK",
+   "evidence": "ExifTool Version Number         : 12.76 ; File Name                       : null ; Directory                       : /dev ; File Size                       : 0 bytes ; File Modification Date/Time     : 2026:09:20 03:26:05-07:00 ; File Access Date/Time           : 2026:09:20 03:26:05-07:00 ; File Ino"
+  },
+  {
+   "tool": "exiftool_read",
+   "param": "file",
+   "sample": "/dev/null",
+   "argv": [
+    "/usr/bin/exiftool",
+    "/dev/null"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/exiftool",
+   "verdict": "OK",
+   "evidence": "ExifTool Version Number         : 12.76 ; File Name                       : null ; Directory                       : /dev ; File Size                       : 0 bytes ; File Modification Date/Time     : 2026:09:20 03:26:05-07:00 ; File Access Date/Time           : 2026:09:20 03:26:05-07:00 ; File Ino"
+  },
+  {
+   "tool": "gau_fetch",
+   "param": "domain",
+   "sample": "localhost",
+   "argv": [
+    "/home/cody/redteam-tools/bin/gau",
+    "localhost"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/redteam-tools/bin/gau",
+   "verdict": "HANG-REVIEW",
+   "evidence": "no exit within 8s"
+  },
+  {
+   "tool": "gophish_setup",
+   "param": "config",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/home/cody/.local/bin/gophish",
+    "--config",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/gophish",
+   "verdict": "BROKEN-WRAPPER",
+   "evidence": "/home/cody/.local/bin/gophish: line 2: cd: /tmp/audit-single-param-6qvdj8w1/.local/opt/gophish: No such file or directory"
+  },
+  {
+   "tool": "gospider_crawl",
+   "param": "url",
+   "sample": "http://127.0.0.1:9/",
+   "argv": [
+    "/home/cody/redteam-tools/bin/gospider",
+    "-u",
+    "http://127.0.0.1:9/"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/redteam-tools/bin/gospider",
+   "verdict": "REVIEW-AMBIGUOUS",
+   "evidence": "rc=1, no output"
+  },
+  {
+   "tool": "grype_scan",
+   "param": "image",
+   "sample": "localhost/nonexistent:image",
+   "argv": [
+    "/home/cody/.local/bin/grype",
+    "localhost/nonexistent:image"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/grype",
+   "verdict": "HANG-REVIEW",
+   "evidence": "no exit within 8s"
+  },
+  {
+   "tool": "hakrawler_crawl",
+   "param": "url",
+   "sample": "http://127.0.0.1:9/",
+   "argv": [
+    "/home/cody/redteam-tools/bin/hakrawler",
+    "http://127.0.0.1:9/"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/redteam-tools/bin/hakrawler",
+   "verdict": "OK",
+   "evidence": "No urls detected. Hint: cat urls.txt | hakrawler"
+  },
+  {
+   "tool": "hashid_identify",
+   "param": "hash",
+   "sample": "5d41402abc4b2a76b9719d911017c592",
+   "argv": [
+    "/usr/bin/hashid",
+    "5d41402abc4b2a76b9719d911017c592"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/hashid",
+   "verdict": "OK",
+   "evidence": "Analyzing '5d41402abc4b2a76b9719d911017c592' ; [+] MD2  ; [+] MD5  ; [+] MD4  ; [+] Double MD5  ; [+] LM  ; [+] RIPEMD-128  ; [+] Haval-128  ; [+] Tiger-128  ; [+] Skein-256(128)  ; [+] Skein-512(128)  ; [+] Lotus Notes/Domino 5  ; [+] Skype  ; [+] Snefru-128  ; [+] NTLM  ; [+] Domain Cached Credent"
+  },
+  {
+   "tool": "hexeditor_edit",
+   "param": "file",
+   "sample": "/dev/null",
+   "argv": [
+    "/usr/bin/hexedit",
+    "/dev/null"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/hexedit",
+   "verdict": "HANG-REVIEW",
+   "evidence": "no exit within 8s"
+  },
+  {
+   "tool": "holehe_check",
+   "param": "email",
+   "sample": "probe@localhost",
+   "argv": [
+    "/home/cody/.local/bin/holehe",
+    "probe@localhost"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/holehe",
+   "verdict": "BROKEN-WRAPPER",
+   "evidence": "Traceback (most recent call last): ;   File \"/home/cody/.local/bin/holehe\", line 5, in <module> ;     from holehe.core import main ; ModuleNotFoundError: No module named 'holehe'"
+  },
+  {
+   "tool": "hostname_set",
+   "param": "name",
+   "sample": "smoketest-arg",
+   "argv": [
+    "sudo",
+    "hostnamectl",
+    "set-hostname",
+    "smoketest-arg"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/usr/bin/hostnamectl",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "iface_down",
+   "param": "interface",
+   "sample": "lo",
+   "argv": [
+    "sudo",
+    "ip",
+    "link",
+    "set",
+    "lo",
+    "down"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/usr/sbin/ip",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "iface_up",
+   "param": "interface",
+   "sample": "lo",
+   "argv": [
+    "sudo",
+    "ip",
+    "link",
+    "set",
+    "lo",
+    "up"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/usr/sbin/ip",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "install_all_missing",
+   "param": "max_tools",
+   "sample": "smoketest-arg",
+   "argv": [
+    "",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "",
+   "verdict": "INTERNAL-INTERCEPTED",
+   "evidence": "Python interceptor owns execution; no shell binary probe"
+  },
+  {
+   "tool": "install_tool",
+   "param": "tool_name",
+   "sample": "smoketest-arg",
+   "argv": [
+    "",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "",
+   "verdict": "INTERNAL-INTERCEPTED",
+   "evidence": "Python interceptor owns execution; no shell binary probe"
+  },
+  {
+   "tool": "interface_discovery",
+   "param": "show",
+   "sample": "smoketest-arg",
+   "argv": [
+    "ip",
+    "-j",
+    "link",
+    "show"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/sbin/ip",
+   "verdict": "OK",
+   "evidence": "[{\"ifindex\":1,\"ifname\":\"lo\",\"flags\":[\"LOOPBACK\",\"UP\",\"LOWER_UP\"],\"mtu\":65536,\"qdisc\":\"noqueue\",\"operstate\":\"UNKNOWN\",\"linkmode\":\"DEFAULT\",\"group\":\"default\",\"txqlen\":1000,\"link_type\":\"loopback\",\"address\":\"00:00:00:00:00:00\",\"broadcast\":\"00:00:00:00:00:00\"},{\"ifindex\":2,\"ifname\":\"enp4s0\",\"flags\":[\"NO-"
+  },
+  {
+   "tool": "katana_crawl",
+   "param": "url",
+   "sample": "http://127.0.0.1:9/",
+   "argv": [
+    "/home/cody/redteam-tools/bin/katana",
+    "http://127.0.0.1:9/"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/redteam-tools/bin/katana",
+   "verdict": "OK",
+   "evidence": " ;    __        __                 ;   / /_____ _/ /____ ____  ___ _ ;  /  '_/ _  / __/ _  / _ \\/ _  / ; /_/\\_\\\\_,_/\\__/\\_,_/_//_/\\_,_/\t\t\t\t\t\t\t  ;  ; \t\tprojectdiscovery.io ;  ; [\u001b[34mINF\u001b[0m] Current katana version v1.7.0 (\u001b[92mlatest\u001b[0m) ; [\u001b[31mERR\u001b[0m] could not create runner: cause=\"no inputs sp [probe wrote 2 scratch file(s)]"
+  },
+  {
+   "tool": "ldd_analyze",
+   "param": "binary",
+   "sample": "/bin/true",
+   "argv": [
+    "/usr/bin/ldd",
+    "/bin/true"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/ldd",
+   "verdict": "OK",
+   "evidence": "\tlinux-vdso.so.1 (0x00007ffe6f7c6000) ; \tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000073ee9c400000) ; \t/lib64/ld-linux-x86-64.so.2 (0x000073ee9c7d1000)"
+  },
+  {
+   "tool": "ligolo_tunnel",
+   "param": "server",
+   "sample": "127.0.0.1:11601",
+   "argv": [
+    "/home/cody/redteam-tools/bin/ligolo",
+    "-selfcert",
+    "-laddr",
+    "127.0.0.1:11601",
+    "-daemon",
+    "-api-laddr",
+    "127.0.0.1:11602"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/home/cody/redteam-tools/bin/ligolo",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "linpeas_run",
+   "param": "output",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/home/cody/.local/bin/linpeas",
+    "smoketest-arg"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/linpeas",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "linux_exploit_suggester",
+   "param": "kernel",
+   "sample": "5.15.0",
+   "argv": [
+    "/home/cody/.local/bin/linux-exploit-suggester",
+    "-k",
+    "5.15.0"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/linux-exploit-suggester",
+   "verdict": "OK",
+   "evidence": " ; \u001b[1;37mAvailable information:\u001b[0m ;  ; Kernel version: \u001b[1;32m5.15.0\u001b[0m ; Architecture: \u001b[91;1mN/A\u001b[0m ; Distribution: \u001b[91;1mN/A\u001b[0m ; Distribution version: \u001b[91;1mN/A\u001b[0m ; Additional checks (CONFIG_*, sysctl entries, custom Bash commands): \u001b[91;1mN/A\u001b[0m ; Package listing: \u001b[91;1mN/A\u001b[0m ;  ;"
+  },
+  {
+   "tool": "linux_smart_enum",
+   "param": "level",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/home/cody/.local/bin/lse",
+    "smoketest-arg"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/lse",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "lynis_audit",
+   "param": "audit_type",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/usr/sbin/lynis",
+    "smoketest-arg"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/usr/sbin/lynis",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "mimikatz_dump",
+   "param": "command",
+   "sample": "id",
+   "argv": [
+    "/home/cody/.local/bin/mimikatz",
+    "id"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/mimikatz",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "minicom_serial",
+   "param": "device",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/usr/bin/minicom",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/minicom",
+   "verdict": "OK",
+   "evidence": "minicom: cannot open /dev/modem: No such file or directory"
+  },
+  {
+   "tool": "mitm6_attack",
+   "param": "domain",
+   "sample": "localhost",
+   "argv": [
+    "/home/cody/.local/bin/mitm6",
+    "localhost"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/mitm6",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "monitor_mode_disable",
+   "param": "interface",
+   "sample": "lo",
+   "argv": [
+    "sudo",
+    "airmon-ng",
+    "stop",
+    "lo"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/sbin/airmon-ng",
+   "verdict": "SKIP-PRIVILEGED",
+   "evidence": "exact argv requires sudo; no privileged probe"
+  },
+  {
+   "tool": "monitor_mode_enable",
+   "param": "interface",
+   "sample": "lo",
+   "argv": [
+    "sudo",
+    "airmon-ng",
+    "start",
+    "lo"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/sbin/airmon-ng",
+   "verdict": "SKIP-PRIVILEGED",
+   "evidence": "exact argv requires sudo; no privileged probe"
+  },
+  {
+   "tool": "msf_resource",
+   "param": "resource",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/usr/bin/msfconsole",
+    "-r",
+    "smoketest-arg",
+    "-q"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/usr/bin/msfconsole",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "nbtscan_scan",
+   "param": "target",
+   "sample": "127.0.0.1",
+   "argv": [
+    "/usr/bin/nbtscan",
+    "127.0.0.1"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/usr/bin/nbtscan",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "onesixtyone_scan",
+   "param": "target",
+   "sample": "127.0.0.1",
+   "argv": [
+    "/usr/bin/onesixtyone",
+    "127.0.0.1"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/onesixtyone",
+   "verdict": "OK",
+   "evidence": "Scanning 1 hosts, 2 communities"
+  },
+  {
+   "tool": "ophcrack_crack",
+   "param": "hash_file",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/usr/bin/ophcrack",
+    "-l",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/ophcrack",
+   "verdict": "HANG-REVIEW",
+   "evidence": "no exit within 8s"
+  },
+  {
+   "tool": "photorec_recover",
+   "param": "device",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/usr/bin/photorec",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/photorec",
+   "verdict": "OK",
+   "evidence": "PhotoRec 7.1, Data Recovery Utility, July 2019 ; Christophe GRENIER <grenier@cgsecurity.org> ; https://www.cgsecurity.org ;  ; Unable to open file or device smoketest-arg: No such file or directory"
+  },
+  {
+   "tool": "process_list",
+   "param": "full",
+   "sample": "smoketest-arg",
+   "argv": [
+    "ps",
+    "-ef"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/ps",
+   "verdict": "OK",
+   "evidence": "UID          PID    PPID  C STIME TTY          TIME CMD ; root           1       0  0 03:25 ?        00:00:08 /sbin/init splash ; root           2       0  0 03:25 ?        00:00:00 [kthreadd] ; root           3       2  0 03:25 ?        00:00:00 [pool_workqueue_release] ; root           4       2  "
+  },
+  {
+   "tool": "recon_ng_gather",
+   "param": "workspace",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/home/cody/.local/bin/recon-ng",
+    "-w",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/recon-ng",
+   "verdict": "OK",
+   "evidence": "/home/cody/.local/bin/recon-ng: line 2: /tmp/audit-single-param-4xo_qb49/.local/opt/recon-ng-venv/bin/python: No such file or directory"
+  },
+  {
+   "tool": "rsmangler_mangle",
+   "param": "wordlist",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/home/cody/.local/bin/rsmangler",
+    "--file",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/rsmangler",
+   "verdict": "OK",
+   "evidence": "The specified file does not exist"
+  },
+  {
+   "tool": "searchsploit_exploit",
+   "param": "query",
+   "sample": "smoketest",
+   "argv": [
+    "/usr/local/bin/searchsploit",
+    "smoketest"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/local/bin/searchsploit",
+   "verdict": "OK",
+   "evidence": "Exploits: No Results ; Shellcodes: No Results ; Papers: No Results"
+  },
+  {
+   "tool": "searchsploit_search",
+   "param": "query",
+   "sample": "smoketest",
+   "argv": [
+    "/usr/local/bin/searchsploit",
+    "smoketest"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/local/bin/searchsploit",
+   "verdict": "OK",
+   "evidence": "Exploits: No Results ; Shellcodes: No Results ; Papers: No Results"
+  },
+  {
+   "tool": "setoolkit_attack",
+   "param": "attack",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/home/cody/.local/bin/setoolkit",
+    "smoketest-arg"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/setoolkit",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "sherlock_search",
+   "param": "username",
+   "sample": "smoketest",
+   "argv": [
+    "/home/cody/.local/bin/sherlock",
+    "smoketest"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/sherlock",
+   "verdict": "BROKEN-WRAPPER",
+   "evidence": "Traceback (most recent call last): ;   File \"/home/cody/.local/bin/sherlock\", line 5, in <module> ;     from sherlock_project.sherlock import main ; ModuleNotFoundError: No module named 'sherlock_project'"
+  },
+  {
+   "tool": "smbmap_enum",
+   "param": "target",
+   "sample": "127.0.0.1",
+   "argv": [
+    "/usr/bin/smbmap",
+    "127.0.0.1"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/usr/bin/smbmap",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  },
+  {
+   "tool": "subfinder_enum",
+   "param": "domain",
+   "sample": "localhost",
+   "argv": [
+    "/home/cody/redteam-tools/bin/subfinder",
+    "localhost"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/redteam-tools/bin/subfinder",
+   "verdict": "OK",
+   "evidence": " ;                __    _____           __          ;    _______  __/ /_  / __(_)___  ____/ /__  _____ ;   / ___/ / / / __ \\/ /_/ / __ \\/ __  / _ \\/ ___/ ;  (__  ) /_/ / /_/ / __/ / / / / /_/ /  __/ /     ; /____/\\__,_/_.___/_/ /_/_/ /_/\\__,_/\\___/_/ ;  ; \t\tprojectdiscovery.io ;  ; [\u001b[34mINF\u001b[0m] Cu [probe wrote 2 scratch file(s)]"
+  },
+  {
+   "tool": "system_info",
+   "param": "section",
+   "sample": "smoketest-arg",
+   "argv": [
+    "uname",
+    "-a"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/uname",
+   "verdict": "OK",
+   "evidence": "Linux codypc 6.8.0-138-generic #138-Ubuntu SMP PREEMPT_DYNAMIC Fri Jul 31 22:41:49 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux"
+  },
+  {
+   "tool": "testdisk_recover",
+   "param": "device",
+   "sample": "smoketest-arg",
+   "argv": [
+    "/usr/bin/testdisk",
+    "smoketest-arg"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/testdisk",
+   "verdict": "OK",
+   "evidence": "TestDisk 7.1, Data Recovery Utility, July 2019 ; Christophe GRENIER <grenier@cgsecurity.org> ; https://www.cgsecurity.org ;  ; Unable to open file or device smoketest-arg: No such file or directory"
+  },
+  {
+   "tool": "torify_tunnel",
+   "param": "binary",
+   "sample": "/bin/true",
+   "argv": [
+    "/usr/bin/torify",
+    "/bin/true"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/torify",
+   "verdict": "OK",
+   "evidence": "(exit 0, silent)"
+  },
+  {
+   "tool": "trivy_scan",
+   "param": "image",
+   "sample": "localhost/nonexistent:image",
+   "argv": [
+    "/home/cody/.local/bin/trivy",
+    "image",
+    "localhost/nonexistent:image"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/.local/bin/trivy",
+   "verdict": "HANG-REVIEW",
+   "evidence": "no exit within 8s"
+  },
+  {
+   "tool": "waf_detect",
+   "param": "target",
+   "sample": "127.0.0.1",
+   "argv": [
+    "/usr/bin/wafw00f",
+    "127.0.0.1"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/wafw00f",
+   "verdict": "OK",
+   "evidence": " ;                 \u001b[1;97m______ ;                \u001b[1;97m/      \\ ;               \u001b[1;97m(  W00f! ) ;                \u001b[1;97m\\  ____/ ;                \u001b[1;97m,,    \u001b[1;92m__            \u001b[1;93m404 Hack Not Found ;            \u001b[1;96m|`-.__   \u001b[1;92m/ /                     \u001b[1;91m __     __ ;           "
+  },
+  {
+   "tool": "waybackurls_fetch",
+   "param": "domain",
+   "sample": "localhost",
+   "argv": [
+    "/home/cody/redteam-tools/bin/waybackurls",
+    "localhost"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/home/cody/redteam-tools/bin/waybackurls",
+   "verdict": "OK",
+   "evidence": "(exit 0, silent)"
+  },
+  {
+   "tool": "whois_lookup",
+   "param": "target",
+   "sample": "127.0.0.1",
+   "argv": [
+    "/usr/bin/whois",
+    "127.0.0.1"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/whois",
+   "verdict": "OK",
+   "evidence": " ; # ; # ARIN WHOIS data and services are subject to the Terms of Use ; # available at: https://www.arin.net/resources/registry/whois/tou/ ; # ; # If you see inaccuracies in the results, please report at ; # https://www.arin.net/resources/registry/whois/inaccuracy_reporting/ ; # ; # Copyright 1997-2"
+  },
+  {
+   "tool": "wireshark_gui",
+   "param": "file",
+   "sample": "/dev/null",
+   "argv": [
+    "/usr/bin/wireshark",
+    "/dev/null"
+   ],
+   "destructive": false,
+   "installed": true,
+   "realpath": "/usr/bin/wireshark",
+   "verdict": "HANG-REVIEW",
+   "evidence": "no exit within 8s"
+  },
+  {
+   "tool": "zap_scan",
+   "param": "target",
+   "sample": "127.0.0.1",
+   "argv": [
+    "/snap/bin/zaproxy",
+    "127.0.0.1"
+   ],
+   "destructive": true,
+   "installed": true,
+   "realpath": "/snap/bin/zaproxy",
+   "verdict": "SKIP-DESTRUCTIVE",
+   "evidence": "destructive-flagged; no exec probe"
+  }
+ ],
+ "tally": {
+  "OK": 28,
+  "SKIP-DESTRUCTIVE": 16,
+  "INTERNAL-INTERCEPTED": 3,
+  "HANG-REVIEW": 7,
+  "BROKEN-WRAPPER": 3,
+  "REVIEW-AMBIGUOUS": 1,
+  "SKIP-PRIVILEGED": 2
+ },
+ "method": "executed exact ToolRegistry._build_command argv"
+}
