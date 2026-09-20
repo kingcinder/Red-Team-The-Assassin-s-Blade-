@@ -17,6 +17,7 @@ import os
 import re
 import ast
 import json
+import shutil
 
 # Ensure we can import from the harness root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -211,7 +212,7 @@ def build_manifest():
                 "binary": binary,
                 "tool_name": binary,
                 "category": "config_only",
-                "installed_on_host": os.path.which(binary) is not None,
+                "installed_on_host": shutil.which(binary) is not None,
                 "has_installer_recipe": recipe is not None,
                 "install_method": recipe.get("method") if recipe else None,
                 "install_package": recipe.get("package") or recipe.get("repo") if recipe else None,

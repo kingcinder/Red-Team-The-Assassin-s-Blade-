@@ -7,11 +7,11 @@
   },
   "python_dependencies": {
     "summary": {
-      "requirements_txt_packages": 9,
-      "wheels_bundle_packages": 28,
-      "third_party_imports": 6,
+      "requirements_txt_packages": 10,
+      "wheels_bundle_packages": 35,
+      "third_party_imports": 9,
       "wheel_coverage_ok": 6,
-      "wheel_coverage_missing": 3,
+      "wheel_coverage_missing": 4,
       "all_wheels_present": false
     },
     "packages": [
@@ -40,8 +40,8 @@
         "requirement": "gevent>=23.9",
         "in_requirements_txt": true,
         "in_wheels_bundle": true,
-        "wheel_version": "26.8.0",
-        "wheel_filename": "gevent-26.8.0-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "wheel_version": "26.9.0",
+        "wheel_filename": "gevent-26.9.0-cp312-cp312-manylinux_2_28_x86_64.whl",
         "imported_in_code": false,
         "status": "ok"
       },
@@ -106,12 +106,22 @@
         "status": "ok"
       },
       {
+        "package": "scikit-learn",
+        "requirement": "scikit-learn>=1.3  # required by the offline KB TF-IDF index (core/knowledge_base.py); test_knowledge_base.py asserts index_ready",
+        "in_requirements_txt": true,
+        "in_wheels_bundle": false,
+        "wheel_version": null,
+        "wheel_filename": null,
+        "imported_in_code": false,
+        "status": "MISSING_FROM_WHEELS"
+      },
+      {
         "package": "bidict",
         "requirement": null,
         "in_requirements_txt": false,
         "in_wheels_bundle": true,
-        "wheel_version": "0.24.0",
-        "wheel_filename": "bidict-0.24.0-py3-none-any.whl",
+        "wheel_version": "0.24.1",
+        "wheel_filename": "bidict-0.24.1-py3-none-any.whl",
         "imported_in_code": false,
         "status": "transitive_dependency"
       },
@@ -150,8 +160,18 @@
         "requirement": null,
         "in_requirements_txt": false,
         "in_wheels_bundle": true,
-        "wheel_version": "8.4.2",
-        "wheel_filename": "click-8.4.2-py3-none-any.whl",
+        "wheel_version": "8.5.0",
+        "wheel_filename": "click-8.5.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "cloudpickle",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "3.1.2",
+        "wheel_filename": "cloudpickle-3.1.2-py3-none-any.whl",
         "imported_in_code": false,
         "status": "transitive_dependency"
       },
@@ -180,8 +200,8 @@
         "requirement": null,
         "in_requirements_txt": false,
         "in_wheels_bundle": true,
-        "wheel_version": "3.5.5",
-        "wheel_filename": "greenlet-3.5.5-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+        "wheel_version": "3.5.6",
+        "wheel_filename": "greenlet-3.5.6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
         "imported_in_code": false,
         "status": "transitive_dependency"
       },
@@ -200,8 +220,8 @@
         "requirement": null,
         "in_requirements_txt": false,
         "in_wheels_bundle": true,
-        "wheel_version": "3.19",
-        "wheel_filename": "idna-3.19-py3-none-any.whl",
+        "wheel_version": "3.20",
+        "wheel_filename": "idna-3.20-py3-none-any.whl",
         "imported_in_code": false,
         "status": "transitive_dependency"
       },
@@ -216,6 +236,16 @@
         "status": "transitive_dependency"
       },
       {
+        "package": "joblib",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "1.6.0",
+        "wheel_filename": "joblib-1.6.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
         "package": "markupsafe",
         "requirement": null,
         "in_requirements_txt": false,
@@ -223,6 +253,26 @@
         "wheel_version": "3.0.3",
         "wheel_filename": "markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
         "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "narwhals",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "2.26.0",
+        "wheel_filename": "narwhals-2.26.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "numpy",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "2.5.3",
+        "wheel_filename": "numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "imported_in_code": true,
         "status": "transitive_dependency"
       },
       {
@@ -240,8 +290,8 @@
         "requirement": null,
         "in_requirements_txt": false,
         "in_wheels_bundle": true,
-        "wheel_version": "4.13.5",
-        "wheel_filename": "python_engineio-4.13.5-py3-none-any.whl",
+        "wheel_version": "4.14.0",
+        "wheel_filename": "python_engineio-4.14.0-py3-none-any.whl",
         "imported_in_code": false,
         "status": "transitive_dependency"
       },
@@ -250,8 +300,28 @@
         "requirement": null,
         "in_requirements_txt": false,
         "in_wheels_bundle": true,
-        "wheel_version": "5.16.4",
-        "wheel_filename": "python_socketio-5.16.4-py3-none-any.whl",
+        "wheel_version": "5.17.0",
+        "wheel_filename": "python_socketio-5.17.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "scikit_learn",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "1.9.1",
+        "wheel_filename": "scikit_learn-1.9.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
+        "package": "scipy",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "1.18.1",
+        "wheel_filename": "scipy-1.18.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
         "imported_in_code": false,
         "status": "transitive_dependency"
       },
@@ -276,12 +346,22 @@
         "status": "transitive_dependency"
       },
       {
+        "package": "threadpoolctl",
+        "requirement": null,
+        "in_requirements_txt": false,
+        "in_wheels_bundle": true,
+        "wheel_version": "3.7.0",
+        "wheel_filename": "threadpoolctl-3.7.0-py3-none-any.whl",
+        "imported_in_code": false,
+        "status": "transitive_dependency"
+      },
+      {
         "package": "urllib3",
         "requirement": null,
         "in_requirements_txt": false,
         "in_wheels_bundle": true,
-        "wheel_version": "2.7.0",
-        "wheel_filename": "urllib3-2.7.0-py3-none-any.whl",
+        "wheel_version": "2.8.0",
+        "wheel_filename": "urllib3-2.8.0-py3-none-any.whl",
         "imported_in_code": false,
         "status": "transitive_dependency"
       },
@@ -329,11 +409,11 @@
   },
   "kali_tools": {
     "summary": {
-      "total_tracked": 129,
-      "installed_on_host": 96,
-      "missing_from_host": 33,
-      "auto_installable": 16,
-      "manual_install_required": 17
+      "total_tracked": 146,
+      "installed_on_host": 145,
+      "missing_from_host": 1,
+      "auto_installable": 0,
+      "manual_install_required": 1
     },
     "tools": [
       {
@@ -370,6 +450,17 @@
         "status": "installed"
       },
       {
+        "binary": "airmon-ng",
+        "tool_name": "airmon_check",
+        "category": "wireless",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
+      },
+      {
         "binary": "airodump-ng",
         "tool_name": "airodump_capture",
         "category": "wireless",
@@ -384,12 +475,12 @@
         "binary": "amass",
         "tool_name": "amass_enum",
         "category": "recon",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "owasp-amass/amass/v4",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "apktool",
@@ -417,12 +508,12 @@
         "binary": "beef-xss",
         "tool_name": "beef_hook",
         "category": "social",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "bettercap",
@@ -447,37 +538,37 @@
         "status": "installed"
       },
       {
-        "binary": "bloodhound",
+        "binary": "bloodhound-python",
         "tool_name": "bloodhound_analyze",
         "category": "postex",
         "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
-        "in_config_yaml": true,
+        "in_config_yaml": false,
         "status": "installed"
       },
       {
         "binary": "bulk_extractor",
         "tool_name": "bulk_extractor",
         "category": "forensics",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "apt",
         "install_package": "bulk-extractor",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "burpsuite",
         "tool_name": "burpsuite_proxy",
         "category": "web",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "certipy",
@@ -505,23 +596,23 @@
         "binary": "check_tool_status",
         "tool_name": "check_tool_status",
         "category": "utility",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": false,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "chisel",
         "tool_name": "chisel_tunnel",
         "category": "exploit",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "jpillora/chisel",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "chntpw",
@@ -593,12 +684,12 @@
         "binary": "dex2jar",
         "tool_name": "dex2jar_convert",
         "category": "reversing",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "dig",
@@ -648,12 +739,12 @@
         "binary": "dnsx",
         "tool_name": "dnsx_probe",
         "category": "recon",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "projectdiscovery/dnsx/cmd/dnsx",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "dsniff",
@@ -692,12 +783,12 @@
         "binary": "evil-winrm",
         "tool_name": "evil_winrm",
         "category": "exploit",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "pip",
         "install_package": "evil-winrm",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "exiftool",
@@ -736,12 +827,45 @@
         "binary": "ffuf",
         "tool_name": "ffuf_fuzz",
         "category": "web",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "ffuf/ffuf/v2",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
+      },
+      {
+        "binary": "chmod",
+        "tool_name": "file_chmod",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
+      },
+      {
+        "binary": "chown",
+        "tool_name": "file_chown",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
+      },
+      {
+        "binary": "iptables",
+        "tool_name": "firewall_rule",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
       },
       {
         "binary": "flashrom",
@@ -769,12 +893,12 @@
         "binary": "gau",
         "tool_name": "gau_fetch",
         "category": "web",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "lc/gau/v2/cmd/gau",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "gdb",
@@ -791,12 +915,12 @@
         "binary": "analyzeHeadless",
         "tool_name": "ghidra_headless",
         "category": "reversing",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "gobuster",
@@ -813,23 +937,23 @@
         "binary": "gophish",
         "tool_name": "gophish_setup",
         "category": "social",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "gospider",
         "tool_name": "gospider_crawl",
         "category": "web",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "jaeles-project/gospider",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "grype",
@@ -846,12 +970,12 @@
         "binary": "hakrawler",
         "tool_name": "hakrawler_crawl",
         "category": "web",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "hakluke/hakrawler",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "hashcat",
@@ -876,15 +1000,37 @@
         "status": "installed"
       },
       {
-        "binary": "hexeditor",
+        "binary": "hcxdumptool",
+        "tool_name": "hcxdumptool_capture",
+        "category": "wireless",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "hcxdumptool",
+        "in_config_yaml": false,
+        "status": "installed"
+      },
+      {
+        "binary": "hcxpcapngtool",
+        "tool_name": "hcxpcapngtool_convert",
+        "category": "wireless",
+        "installed_on_host": true,
+        "has_installer_recipe": true,
+        "install_method": "apt",
+        "install_package": "hcxtools",
+        "in_config_yaml": false,
+        "status": "installed"
+      },
+      {
+        "binary": "hexedit",
         "tool_name": "hexeditor_edit",
         "category": "utility",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
-        "in_config_yaml": true,
-        "status": "manual_install_required"
+        "in_config_yaml": false,
+        "status": "installed"
       },
       {
         "binary": "holehe",
@@ -895,6 +1041,17 @@
         "install_method": "pip",
         "install_package": "holehe",
         "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "hostnamectl",
+        "tool_name": "hostname_set",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
         "status": "installed"
       },
       {
@@ -931,6 +1088,17 @@
         "status": "installed"
       },
       {
+        "binary": "ip",
+        "tool_name": "iface_addr",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
+      },
+      {
         "binary": "impacket",
         "tool_name": "impacket_tools",
         "category": "exploit",
@@ -945,23 +1113,23 @@
         "binary": "install_all_missing",
         "tool_name": "install_all_missing",
         "category": "utility",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": false,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "install_tool",
         "tool_name": "install_tool",
         "category": "utility",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": false,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "jadx",
@@ -989,23 +1157,34 @@
         "binary": "katana",
         "tool_name": "katana_crawl",
         "category": "web",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "projectdiscovery/katana/cmd/katana",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
+      },
+      {
+        "binary": "sysctl",
+        "tool_name": "kernel_sysctl",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
       },
       {
         "binary": "kismet",
         "tool_name": "kismet_scan",
         "category": "wireless",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "ldd",
@@ -1066,12 +1245,12 @@
         "binary": "list_missing_tools",
         "tool_name": "list_missing_tools",
         "category": "utility",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": false,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "ltrace",
@@ -1110,12 +1289,12 @@
         "binary": "mimikatz",
         "tool_name": "mimikatz_dump",
         "category": "postex",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "minicom",
@@ -1165,12 +1344,12 @@
         "binary": "naabu",
         "tool_name": "naabu_scan",
         "category": "recon",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "projectdiscovery/naabu/v2/cmd/naabu",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "nbtscan",
@@ -1220,12 +1399,12 @@
         "binary": "nuclei",
         "tool_name": "nuclei_scan",
         "category": "vuln",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "projectdiscovery/nuclei/v3/cmd/nuclei",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "objdump",
@@ -1261,6 +1440,17 @@
         "status": "installed"
       },
       {
+        "binary": "apt-get",
+        "tool_name": "package_manager",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
+      },
+      {
         "binary": "pdfcrack",
         "tool_name": "pdfcrack_crack",
         "category": "password",
@@ -1280,6 +1470,28 @@
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "kill",
+        "tool_name": "process_kill",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
+      },
+      {
+        "binary": "ps",
+        "tool_name": "process_list",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
         "status": "installed"
       },
       {
@@ -1330,12 +1542,12 @@
         "binary": "recon-ng",
         "tool_name": "recon_ng_gather",
         "category": "osint",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "responder",
@@ -1346,6 +1558,17 @@
         "install_method": "git",
         "install_package": "SpiderLabs/Responder",
         "in_config_yaml": true,
+        "status": "installed"
+      },
+      {
+        "binary": "rfkill",
+        "tool_name": "rfkill_status",
+        "category": "wireless",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
         "status": "installed"
       },
       {
@@ -1382,15 +1605,26 @@
         "status": "installed"
       },
       {
+        "binary": "systemctl",
+        "tool_name": "service_control",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
+      },
+      {
         "binary": "setoolkit",
         "tool_name": "setoolkit_attack",
         "category": "social",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "git",
         "install_package": "trustedsec/social-engineer-toolkit",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "sherlock",
@@ -1539,12 +1773,23 @@
         "binary": "subfinder",
         "tool_name": "subfinder_enum",
         "category": "recon",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "projectdiscovery/subfinder/v2/cmd/subfinder",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
+      },
+      {
+        "binary": "uname",
+        "tool_name": "system_info",
+        "category": "system",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": false,
+        "status": "installed"
       },
       {
         "binary": "tcpdump",
@@ -1572,23 +1817,23 @@
         "binary": "theHarvester",
         "tool_name": "theharvester_gather",
         "category": "osint",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "pip",
         "install_package": "theHarvester",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "torify",
         "tool_name": "torify_tunnel",
         "category": "postex",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "trivy",
@@ -1616,12 +1861,12 @@
         "binary": "volatility",
         "tool_name": "volatility_analyze",
         "category": "forensics",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "wafw00f",
@@ -1638,12 +1883,12 @@
         "binary": "waybackurls",
         "tool_name": "waybackurls_fetch",
         "category": "web",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": true,
         "install_method": "go",
         "install_package": "tomnomnom/waybackurls",
         "in_config_yaml": true,
-        "status": "installable"
+        "status": "installed"
       },
       {
         "binary": "wfuzz",
@@ -1693,12 +1938,12 @@
         "binary": "wifite",
         "tool_name": "wifite_auto",
         "category": "wireless",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "wireshark",
@@ -1715,12 +1960,12 @@
         "binary": "wpscan",
         "tool_name": "wpscan_enum",
         "category": "vuln",
-        "installed_on_host": false,
+        "installed_on_host": true,
         "has_installer_recipe": false,
         "install_method": null,
         "install_package": null,
         "in_config_yaml": true,
-        "status": "manual_install_required"
+        "status": "installed"
       },
       {
         "binary": "yara",
@@ -1754,13 +1999,35 @@
         "install_package": "zmap",
         "in_config_yaml": true,
         "status": "installed"
+      },
+      {
+        "binary": "bloodhound",
+        "tool_name": "bloodhound",
+        "category": "config_only",
+        "installed_on_host": true,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "config_only"
+      },
+      {
+        "binary": "hexeditor",
+        "tool_name": "hexeditor",
+        "category": "config_only",
+        "installed_on_host": false,
+        "has_installer_recipe": false,
+        "install_method": null,
+        "install_package": null,
+        "in_config_yaml": true,
+        "status": "config_only"
       }
     ]
   },
   "installer_recipes": {
     "summary": {
-      "total_recipes": 80,
-      "apt_recipes": 45,
+      "total_recipes": 82,
+      "apt_recipes": 47,
       "pip_recipes": 11,
       "go_recipes": 13,
       "github_release_recipes": 4,
@@ -1911,6 +2178,14 @@
       "hashid": {
         "method": "pip",
         "package": "hashid"
+      },
+      "hcxdumptool": {
+        "method": "apt",
+        "package": "hcxdumptool"
+      },
+      "hcxpcapngtool": {
+        "method": "apt",
+        "package": "hcxtools"
       },
       "holehe": {
         "method": "pip",
@@ -2120,8 +2395,8 @@
   },
   "offline_bundle": {
     "wheels_dir": "wheels/",
-    "wheel_count": 28,
-    "total_wheel_size_mb": 5.6,
+    "wheel_count": 35,
+    "total_wheel_size_mb": 64.8,
     "install_command": "pip install --no-index --find-links=wheels/ -r requirements.txt"
   }
 }
