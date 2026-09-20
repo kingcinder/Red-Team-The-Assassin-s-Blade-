@@ -230,6 +230,7 @@ def _build_command(output_dir, tool, args) -> list:
     if name == "rfkill_status":   return ["rfkill", "list"]
     if name == "airmon_check":    return ["sudo", "airmon-ng", "check"]
     if name == "socat_relay":      return _build_socat(output_dir, args, binary)
+    if name == "ligolo_tunnel":    return _build_ligolo(output_dir, args, binary)
     if name == "interface_discovery": return ["ip", "-j", "link", "show"]
     if name == "hashid_identify":  return [binary, args.get("hash","")]
     # ── tools taking positional args (no --flags needed) ──
@@ -624,6 +625,24 @@ def _build_socat(output_dir, args, binary):
     if args.get("connect_addr"): cmd.append(args["connect_addr"])
     if args.get("exec_cmd"): cmd.extend(["EXEC:", args["exec_cmd"]])
     return cmd
+
+def _build_ligolo(output_dir, args, binary):
+    """ligolo-ng proxy listener (ligolo_tunnel).
+
+    ``server`` is the listen address the target's agent dials back to
+    (the ATTACKER_IP:11601 of the Pivoting Pipeline). The proxy runs
+    headless in -daemon mode: the interactive REPL would hang under the
+    runner, and on first run it blocks on an "Enable Ligolo-ng WebUI?"
+    prompt before the REPL even starts (verified live — burns the whole
+    step timeout). -selfcert lets targets join with
+    ``agent -connect <server> -ignore-cert``.
+
+    The API port is pinned to 11602: ligolo's default API bind is
+    127.0.0.1:8080, which collides with this harness's own dashboard.
+    """
+    server = str(args.get("server") or "0.0.0.0:11601")
+    return [binary, "-selfcert", "-laddr", server, "-daemon",
+            "-api-laddr", "127.0.0.1:11602"]
 
 # ── simple positional helpers for tools that take bare args (no --flags) ──
 def _simple_positional(output_dir, binary, args, key_order):

@@ -23,6 +23,21 @@ def test_tcpdump_preserves_selected_interface_and_filter():
     assert cmd == ['sudo', 'tcpdump', '-i', 'wlp5s0', '-c', '3', 'tcp port 80']
 
 
+def test_ligolo_tunnel_builds_daemon_invocation_not_positional():
+    """ligolo_tunnel must emit a headless daemon proxy, not a positional arg.
+
+    The old single-param generic path built `ligolo 127.0.0.1:11601` —
+    ligolo takes no positional args, so it blocked on its first-run
+    "Enable Ligolo-ng WebUI?" prompt until the step timeout killed it
+    (verified live, exit 124). The daemon invocation is what the smoke
+    test proved works end to end (agent joins, session established).
+    """
+    t = tool('ligolo_tunnel', 'ligolo', {'server': {'type': 'string'}})
+    cmd = _build_command('/tmp/out', t, {'server': '10.0.0.5:11601'})
+    assert cmd == ['ligolo', '-selfcert', '-laddr', '10.0.0.5:11601',
+                   '-daemon', '-api-laddr', '127.0.0.1:11602']
+
+
 def test_nmap_unprivileged_rewrite_only_rewrites_standalone_flag(monkeypatch):
     monkeypatch.setattr(os, 'geteuid', lambda: 1000)
     t = tool('nmap_scan', 'nmap', {})
