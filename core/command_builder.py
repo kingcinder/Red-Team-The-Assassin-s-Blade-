@@ -231,6 +231,15 @@ def _build_command(output_dir, tool, args) -> list:
     if name == "airmon_check":    return ["sudo", "airmon-ng", "check"]
     if name == "socat_relay":      return _build_socat(output_dir, args, binary)
     if name == "ligolo_tunnel":    return _build_ligolo(output_dir, args, binary)
+    if name == "amass_enum":       return _build_amass(output_dir, args, binary)
+    if name == "trivy_scan":       return _build_trivy(output_dir, args, binary)
+    if name == "recon_ng_gather":  return _build_recon_ng(output_dir, args, binary)
+    if name == "linux_exploit_suggester": return _build_les(output_dir, args, binary)
+    if name == "gospider_crawl":   return _build_gospider(output_dir, args, binary)
+    if name == "gophish_setup":    return _build_gophish(output_dir, args, binary)
+    if name == "ophcrack_crack":   return _build_ophcrack(output_dir, args, binary)
+    if name == "bloodhound_analyze": return _build_bloodhound(output_dir, args, binary)
+    if name == "rsmangler_mangle": return _build_rsmangler(output_dir, args, binary)
     if name == "interface_discovery": return ["ip", "-j", "link", "show"]
     if name == "hashid_identify":  return [binary, args.get("hash","")]
     # ── tools taking positional args (no --flags needed) ──
@@ -240,9 +249,9 @@ def _build_command(output_dir, tool, args) -> list:
         return _simple_positional(output_dir, binary, args, ["query"])
     if name in ("enum4linux_enum", "nbtscan_scan", "smbmap_enum", "snmpwalk_enum", "onesixtyone_scan"):
         return _simple_positional(output_dir, binary, args, ["target"])
-    if name in ("theharvester_gather", "amass_enum", "subfinder_enum", "dnsx_probe",
+    if name in ("theharvester_gather", "subfinder_enum", "dnsx_probe",
                  "dnswalk_enum", "naabu_scan", "gau_fetch", "waybackurls_fetch",
-                 "katana_crawl", "gospider_crawl", "hakrawler_crawl"):
+                 "katana_crawl", "hakrawler_crawl"):
         return _simple_positional(output_dir, binary, args, ["domain","url","target"])
     if name == "whatweb_scan":
         return _build_whatweb(output_dir, args, binary)
@@ -643,6 +652,79 @@ def _build_ligolo(output_dir, args, binary):
     server = str(args.get("server") or "0.0.0.0:11601")
     return [binary, "-selfcert", "-laddr", server, "-daemon",
             "-api-laddr", "127.0.0.1:11602"]
+
+def _build_amass(output_dir, args, binary):
+    return [binary, "enum", "-d", str(args.get("domain", ""))]
+
+
+def _build_trivy(output_dir, args, binary):
+    return [binary, "image", str(args.get("image", ""))]
+
+
+def _build_recon_ng(output_dir, args, binary):
+    return [binary, "-w", str(args.get("workspace", ""))]
+
+
+def _build_les(output_dir, args, binary):
+    return [binary, "-k", str(args.get("kernel", ""))]
+
+
+def _build_gospider(output_dir, args, binary):
+    return [binary, "-u", str(args.get("url", ""))]
+
+
+def _build_gophish(output_dir, args, binary):
+    return [binary, "--config", str(args.get("config", ""))]
+
+
+def _build_ophcrack(output_dir, args, binary):
+    return [binary, "-l", str(args.get("hash_file", ""))]
+
+
+def _build_rsmangler(output_dir, args, binary):
+    """RSMangler consumes its input wordlist through --file/-f."""
+    cmd = [binary, "--file", str(args.get("wordlist", ""))]
+    if args.get("output"):
+        cmd.extend(["--output", str(args["output"])])
+    return cmd
+
+
+def _build_bloodhound(output_dir, args, binary):
+    """Build the BloodHound Python collector invocation.
+
+    The registry used to expose ``neo4j_url`` and pass it positionally. The
+    collector does not connect to Neo4j and accepts no positional URL; it
+    needs domain/credentials and a collection method instead.
+    """
+    domain = args.get("domain")
+    username = args.get("username")
+    if not domain or not username:
+        raise ValueError(
+            "bloodhound_analyze requires collector credentials and domain; "
+            "neo4j_url is not a collector argument"
+        )
+    cmd = [binary, "-d", str(domain), "-u", str(username)]
+    password = args.get("password")
+    if password:
+        cmd.extend(["-p", str(password)])
+    else:
+        cmd.append("-no-pass")
+    cmd.extend(["-c", str(args.get("collection_method") or "All")])
+    optional = (("nameserver", "-ns"), ("dc", "-dc"),
+                ("gc", "-gc"), ("workers", "-w"),
+                ("computerfile", "--computerfile"),
+                ("cachefile", "--cachefile"),
+                ("output_prefix", "-op"))
+    for key, flag in optional:
+        value = args.get(key)
+        if value is not None and value != "":
+            cmd.extend([flag, str(value)])
+    if args.get("zip"):
+        cmd.append("--zip")
+    if args.get("dns_tcp"):
+        cmd.append("--dns-tcp")
+    return cmd
+
 
 # ── simple positional helpers for tools that take bare args (no --flags) ──
 def _simple_positional(output_dir, binary, args, key_order):

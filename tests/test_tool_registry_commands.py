@@ -38,6 +38,74 @@ def test_ligolo_tunnel_builds_daemon_invocation_not_positional():
                    '-daemon', '-api-laddr', '127.0.0.1:11602']
 
 
+def test_amass_enum_uses_enum_subcommand_and_domain_flag():
+    cmd = _build_command('/tmp/out', tool('amass_enum', 'amass', {
+        'domain': {'type': 'string'},
+    }), {'domain': 'localhost'})
+    assert cmd == ['amass', 'enum', '-d', 'localhost']
+
+
+def test_trivy_scan_uses_image_subcommand():
+    cmd = _build_command('/tmp/out', tool('trivy_scan', 'trivy', {
+        'image': {'type': 'string'},
+    }), {'image': 'localhost/nonexistent:image'})
+    assert cmd == ['trivy', 'image', 'localhost/nonexistent:image']
+
+
+def test_recon_ng_gather_uses_workspace_flag():
+    cmd = _build_command('/tmp/out', tool('recon_ng_gather', 'recon-ng', {
+        'workspace': {'type': 'string'},
+    }), {'workspace': 'smoketest'})
+    assert cmd == ['recon-ng', '-w', 'smoketest']
+
+
+def test_linux_exploit_suggester_uses_kernel_flag():
+    cmd = _build_command('/tmp/out', tool('linux_exploit_suggester', 'linux-exploit-suggester', {
+        'kernel': {'type': 'string'},
+    }), {'kernel': '5.15.0'})
+    assert cmd == ['linux-exploit-suggester', '-k', '5.15.0']
+
+
+def test_gospider_crawl_uses_url_flag():
+    cmd = _build_command('/tmp/out', tool('gospider_crawl', 'gospider', {
+        'url': {'type': 'string'},
+    }), {'url': 'http://127.0.0.1:9/'})
+    assert cmd == ['gospider', '-u', 'http://127.0.0.1:9/']
+
+
+def test_gophish_setup_uses_config_flag():
+    cmd = _build_command('/tmp/out', tool('gophish_setup', 'gophish', {
+        'config': {'type': 'string'},
+    }), {'config': '/dev/null'})
+    assert cmd == ['gophish', '--config', '/dev/null']
+
+
+def test_ophcrack_crack_uses_list_flag():
+    cmd = _build_command('/tmp/out', tool('ophcrack_crack', 'ophcrack', {
+        'hash_file': {'type': 'string'},
+    }), {'hash_file': '/dev/null'})
+    assert cmd == ['ophcrack', '-l', '/dev/null']
+
+
+def test_rsmangler_uses_file_flag():
+    cmd = _build_command('/tmp/out', tool('rsmangler_mangle', 'rsmangler', {
+        'wordlist': {'type': 'string'},
+    }), {'wordlist': '/tmp/words.txt'})
+    assert cmd == ['rsmangler', '--file', '/tmp/words.txt']
+
+
+def test_bloodhound_rejects_legacy_neo4j_positional_contract():
+    t = tool('bloodhound_analyze', 'bloodhound-python', {
+        'neo4j_url': {'type': 'string'},
+    })
+    try:
+        _build_command('/tmp/out', t, {'neo4j_url': 'bolt://127.0.0.1:7687'})
+    except ValueError as exc:
+        assert 'collector' in str(exc).lower()
+    else:
+        raise AssertionError('legacy Neo4j URL must not become a positional argv')
+
+
 def test_nmap_unprivileged_rewrite_only_rewrites_standalone_flag(monkeypatch):
     monkeypatch.setattr(os, 'geteuid', lambda: 1000)
     t = tool('nmap_scan', 'nmap', {})

@@ -627,8 +627,20 @@ class ToolRegistry:
             "Mimikatz — extract plaintext passwords, hashes, PINs, kerberos tickets.","mimikatz",
             {"command":{"type":"string","description":"Mimikatz command (sekurlsa::logonpasswords,…)","required":True}}, timeout=60, destructive=True))
         self._register(ToolDefinition("bloodhound_analyze", cat,
-            "Active Directory attack path analysis via Neo4j graph.","bloodhound",
-            {"neo4j_url":{"type":"string","description":"Neo4j URL","required":True}}, timeout=30))
+            "Collect Active Directory attack-path data with the BloodHound Python collector.","bloodhound-python",
+            {"domain":{"type":"string","description":"Active Directory domain","required":True},
+             "username":{"type":"string","description":"Domain username","required":True},
+             "password":{"type":"string","description":"Domain password"},
+             "collection_method":{"type":"string","description":"BloodHound collection method (All, DCOnly, Default, ... )"},
+             "nameserver":{"type":"string","description":"DNS nameserver"},
+             "dc":{"type":"string","description":"Domain controller hostname or IP"},
+             "gc":{"type":"string","description":"Global catalog hostname or IP"},
+             "workers":{"type":"integer","description":"Worker count"},
+             "computerfile":{"type":"string","description":"Computer input file"},
+             "cachefile":{"type":"string","description":"Cache file"},
+             "output_prefix":{"type":"string","description":"Output filename prefix"},
+             "zip":{"type":"boolean","description":"Write BloodHound ZIP output"},
+             "dns_tcp":{"type":"boolean","description":"Use TCP for DNS"}}, timeout=30))
         self._register(ToolDefinition("proxychains_tunnel", cat,
             "Force any TCP connection through proxy chains (Tor/SOCKS).","proxychains",
             {"binary":{"type":"string","description":"Command to proxy","required":True},
