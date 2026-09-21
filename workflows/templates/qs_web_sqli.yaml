@@ -1,0 +1,35 @@
+name: "Web App Test — Injection Pass"
+description: "Deeper web assessment branch: surface probing followed by automated SQL injection testing of the target's parameters. The evidence source for the SQL Injection Exploitation Chain."
+category: web
+attack_vector: "Parameter fuzzing → SQL injection discovery → data extraction"
+variables:
+  url:
+    required: true
+    description: "Target URL with parameter (e.g. http://target.com/item.php?id=1)"
+cutting_edge: false
+references: ["OWASP WSTG v4.2 — Testing for SQL Injection", "sqlmap documentation"]
+
+steps:
+  - name: http_probe
+    tool: httpx_probe
+    description: "Confirm the target is live and fingerprint it"
+    args:
+      targets: "{{url}}"
+      tech_detect: true
+    expected_output: '\[\d{3}\].*(http|https)|http'
+    timeout: 120
+    gate: false
+    retries: 1
+
+  - name: sqli_test
+    tool: sqlmap_scan
+    description: "Automated SQL injection testing of the target URL"
+    args:
+      url: "{{url}}"
+      level: 2
+      risk: 2
+      batch: true
+    expected_output: "injectable|parameter|might be injectable|all tested"
+    timeout: 900
+    gate: true
+    retries: 1

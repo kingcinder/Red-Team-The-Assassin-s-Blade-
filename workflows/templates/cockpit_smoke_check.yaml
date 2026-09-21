@@ -1,0 +1,42 @@
+name: "Cockpit Smoke Check"
+description: "Sub-second hermetic cockpit health check: system fact collection and process listing with strict output gates. Used by the automated dashboard smoke test to prove the template engine, hardened runner, and gate logic work end-to-end with zero LLM."
+category: recon
+attack_vector: "Local system introspection (no network effect)"
+variables:
+  target:
+    required: false
+    default: "localhost"
+    description: "Label only — the smoke check runs local read-only tools"
+cutting_edge: false
+references: ["RedTeam Harness automated smoke suite"]
+
+steps:
+  - name: sys_info
+    tool: system_info
+    description: "Collect kernel/OS facts"
+    args: {}
+    expected_output: "Linux|Hostname|kernel"
+    timeout: 30
+    gate: true
+    retries: 1
+
+  - name: process_listing
+    tool: process_list
+    description: "Snapshot the process table"
+    args: {}
+    expected_output: "PID|CMD|root"
+    timeout: 30
+    gate: false
+    retries: 1
+    extracts:
+      - var: init_pid
+        regex: '^\s*(\d+)\s'
+
+  - name: init_label
+    tool: system_info
+    description: "Re-run fact collection to consume the extracted PID and prove chain values flow"
+    args: {}
+    expected_output: "Linux|Hostname|kernel"
+    timeout: 30
+    gate: false
+    retries: 1

@@ -1,0 +1,74 @@
+name: "Network Recon — Deep Service Enumeration"
+description: "Thorough reconnaissance branch: host sweep, full-range port scan, then version detection, banner grabbing, and NSE vulnerability scripting against every open service. Slower than the quick sweep; produces the evidence a web or exploit chain needs."
+category: recon
+attack_vector: "Active discovery → full service fingerprinting → vulnerability triage"
+variables:
+  target:
+    required: true
+    description: "Target subnet or host (e.g. 192.168.1.0/24)"
+  ports:
+    required: false
+    default: "1-65535"
+    description: "Port range to scan"
+cutting_edge: false
+references: ["PTES Recon phase", "Nmap NSE documentation"]
+
+steps:
+  - name: host_discovery
+    tool: host_discovery
+    description: "Discover live hosts in the target range"
+    args:
+      target: "{{target}}"
+      method: "ping"
+    expected_output: "up|Nmap scan report|Host is up"
+    timeout: 300
+    gate: false
+    retries: 2
+
+  - name: port_scan
+    tool: nmap_scan
+    description: "Full-range port scan on the target"
+    args:
+      target: "{{target}}"
+      ports: "{{ports}}"
+      scan_type: "-sS -Pn -T4"
+    expected_output: "open|closed|Nmap done"
+    timeout: 900
+    gate: true
+    retries: 1
+    extracts:
+      - var: open_ports
+        regex: '([\d\.]+)/tcp\s+open'
+
+  - name: service_enum
+    tool: service_enum
+    description: "Version-detect every open service"
+    args:
+      target: "{{target}}"
+      ports: "{{ports}}"
+    expected_output: "tcp.*open|Nmap done"
+    timeout: 900
+    gate: false
+    retries: 1
+
+  - name: banner_grab
+    tool: banner_grab
+    description: "Grab service banners for fingerprinting"
+    args:
+      target: "{{target}}"
+      ports: "{{ports}}"
+    expected_output: null
+    timeout: 180
+    gate: false
+    retries: 1
+
+  - name: vuln_scripts
+    tool: nmap_vuln_scan
+    description: "NSE vulnerability scripts against discovered services"
+    args:
+      target: "{{target}}"
+      script: "vuln"
+    expected_output: "VULNERABLE|CVE-|vuln|error|No results"
+    timeout: 900
+    gate: false
+    retries: 1

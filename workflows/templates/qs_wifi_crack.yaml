@@ -1,0 +1,26 @@
+name: "WiFi Attack — WPA Cracking"
+description: "Wireless branch two: crack a captured WPA handshake against a wordlist with aircrack-ng. Expects a .cap file from 'WiFi Attack — Handshake Capture' (or any prior capture)."
+category: wireless
+attack_vector: "Offline dictionary attack against captured WPA handshakes"
+variables:
+  capture_file:
+    required: true
+    description: "Path to the capture containing the handshake (e.g. /tmp/qs_capture-01.cap)"
+  wordlist:
+    required: false
+    default: "/usr/share/wordlists/rockyou.txt"
+    description: "Wordlist for the dictionary attack"
+cutting_edge: false
+references: ["Aircrack-ng suite documentation"]
+
+steps:
+  - name: wpa_crack
+    tool: aircrack_crack
+    description: "Dictionary attack against the captured handshake"
+    args:
+      capture_file: "{{capture_file}}"
+      wordlist: "{{wordlist}}"
+    expected_output: "KEY FOUND|passphrase|not found"
+    timeout: 1800
+    gate: true
+    retries: 1

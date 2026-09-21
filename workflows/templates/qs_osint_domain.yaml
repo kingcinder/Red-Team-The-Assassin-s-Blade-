@@ -1,0 +1,35 @@
+name: "OSINT — Domain Footprint"
+description: "Passive-leaning OSINT branch: subdomain enumeration plus link-spider discovery for the target domain. Maps the external surface without touching the targets directly."
+category: osint
+attack_vector: "Passive/semi-passive external footprinting"
+variables:
+  domain:
+    required: true
+    description: "Target domain (e.g. example.com)"
+cutting_edge: false
+references: ["OSINT Framework", "amass documentation"]
+
+steps:
+  - name: subdomain_enum
+    tool: subdomain_enum
+    description: "Enumerate subdomains via DNS brute force"
+    args:
+      target: "{{domain}}"
+    expected_output: "[a-z]|domain|host"
+    timeout: 600
+    gate: false
+    retries: 1
+    extracts:
+      - var: subdomain
+        regex: "([a-zA-Z0-9._-]+\\.{{domain}})"
+
+  - name: spider_links
+    tool: gospider_crawl
+    description: "Spider the domain for linked assets and endpoints"
+    args:
+      url: "https://{{domain}}"
+      depth: 2
+    expected_output: "http|link|url"
+    timeout: 600
+    gate: true
+    retries: 1

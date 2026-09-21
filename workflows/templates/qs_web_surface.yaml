@@ -1,0 +1,36 @@
+name: "Web App Test — Surface Scan"
+description: "Fast web assessment branch: HTTP probing with technology detection plus a common-CMS directory pass. Use to map what a web target exposes before deeper injection testing."
+category: web
+attack_vector: "Web surface mapping → directory discovery → tech fingerprinting"
+variables:
+  url:
+    required: true
+    description: "Target URL (e.g. http://192.168.1.10)"
+cutting_edge: false
+references: ["OWASP WSTG v4.2 — Information Gathering"]
+
+steps:
+  - name: http_probe
+    tool: httpx_probe
+    description: "Probe the target for live HTTP services and tech stack"
+    args:
+      targets: "{{url}}"
+      tech_detect: true
+    expected_output: '\[\d{3}\].*(http|https)|http'
+    timeout: 120
+    gate: false
+    retries: 1
+    extracts:
+      - var: web_targets
+        regex: '(https?://[\w\.\-\/]+)'
+
+  - name: dir_common
+    tool: gobuster_dir
+    description: "Enumerate common directories and files"
+    args:
+      url: "{{url}}"
+      wordlist: "/usr/share/wordlists/dirb/common.txt"
+    expected_output: "Status|Found|error"
+    timeout: 600
+    gate: true
+    retries: 1

@@ -1,0 +1,41 @@
+name: "Network Recon — Quick Sweep"
+description: "Fast external-facing network reconnaissance branch: live-host sweep plus a top-ports scan of discovered hosts. Use for a first look at a subnet before deeper enumeration."
+category: recon
+attack_vector: "Active network discovery → service surface mapping"
+variables:
+  target:
+    required: true
+    description: "Target subnet or host (e.g. 192.168.1.0/24)"
+  ports:
+    required: false
+    default: "1-1000"
+    description: "Port range for the service scan"
+cutting_edge: false
+references: ["PTES Recon phase", "Nmap host discovery guide"]
+
+steps:
+  - name: host_discovery
+    tool: host_discovery
+    description: "Discover live hosts in the target range"
+    args:
+      target: "{{target}}"
+      method: "ping"
+    expected_output: "up|Nmap scan report|Host is up"
+    timeout: 300
+    gate: false
+    retries: 2
+
+  - name: port_scan
+    tool: nmap_scan
+    description: "Scan the requested port range on the target"
+    args:
+      target: "{{target}}"
+      ports: "{{ports}}"
+      scan_type: "-sS -Pn -T4"
+    expected_output: "open|closed|host down|Nmap done"
+    timeout: 600
+    gate: true
+    retries: 2
+    extracts:
+      - var: open_ports
+        regex: '([\d\.]+)/tcp\s+open'

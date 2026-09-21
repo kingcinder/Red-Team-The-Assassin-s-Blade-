@@ -1,0 +1,59 @@
+name: "WiFi Attack — Handshake Capture"
+description: "Wireless branch one: enter monitor mode on the selected adapter, sweep for nearby APs and clients, then capture WPA handshakes for the chosen network. Output feeds the WPA cracking branch."
+category: wireless
+attack_vector: "Monitor-mode capture → WPA handshake harvesting"
+variables:
+  interface:
+    required: true
+    description: "Physical wireless interface (e.g. wlan0) — monitor mode will be enabled"
+  bssid:
+    required: false
+    default: ""
+    description: "Target AP BSSID (leave empty to capture all)"
+  channel:
+    required: false
+    default: "0"
+    description: "Channel to lock (0 = hop all channels)"
+  capture_file:
+    required: false
+    default: "qs_capture"
+    description: "Capture prefix — airodump writes <prefix>-01.cap"
+cutting_edge: false
+references: ["Aircrack-ng suite documentation"]
+
+steps:
+  - name: monitor_on
+    tool: monitor_mode_enable
+    description: "Enable monitor mode on the selected adapter"
+    args:
+      interface: "{{interface}}"
+    expected_output: "monitor mode|mon|enabled"
+    timeout: 60
+    gate: true
+    retries: 1
+
+  - name: ap_sweep
+    tool: airodump_capture
+    description: "Sweep APs and clients, writing a capture file"
+    args:
+      interface: "{{interface}}"
+      channel: "{{channel}}"
+      capture_file: "{{capture_file}}"
+      bssid: "{{bssid}}"
+    expected_output: "WPA|handshake|BSSID|Station"
+    timeout: 300
+    gate: false
+    retries: 1
+    extracts:
+      - var: capture_cap
+        regex: "({{capture_file}}[-\\d]*\\.cap)"
+
+  - name: monitor_off
+    tool: monitor_mode_disable
+    description: "Restore the adapter to managed mode"
+    args:
+      interface: "{{interface}}"
+    expected_output: "managed|disconnected|mode"
+    timeout: 60
+    gate: false
+    retries: 1

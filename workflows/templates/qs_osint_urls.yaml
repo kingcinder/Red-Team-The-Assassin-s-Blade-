@@ -1,0 +1,32 @@
+name: "OSINT — Historical URL Harvest"
+description: "OSINT branch two: pull historical URLs from the Wayback Machine (gau) plus live link discovery for the target domain — the source list for content-discovery and parameter mining."
+category: osint
+attack_vector: "Archive and link mining for historical URLs"
+variables:
+  domain:
+    required: true
+    description: "Target domain (e.g. example.com)"
+cutting_edge: false
+references: ["gau (lxndrblz)/waybackurls usage"]
+
+steps:
+  - name: wayback_pull
+    tool: gau_fetch
+    description: "Fetch known URLs from archive sources"
+    args:
+      target: "{{domain}}"
+    expected_output: "http|url|error"
+    timeout: 600
+    gate: false
+    retries: 1
+
+  - name: live_links
+    tool: gospider_crawl
+    description: "Spider the live site for current links"
+    args:
+      url: "https://{{domain}}"
+      depth: 1
+    expected_output: "http|link|url"
+    timeout: 600
+    gate: true
+    retries: 1
