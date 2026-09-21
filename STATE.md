@@ -2,8 +2,9 @@
 
 Self-designated state file: what is done, what is next, what is deferred.
 Searched (never edited) by the Omega convergence loop; authoritative context
-for both of its halves. Last updated: 2026-09-20, after the serpent-circle
-quick-start prompt-trees campaign (branch picker + hermetic smoke E2E).
+for both of its halves. Last updated: 2026-09-21, after the workflow-emit
+backfill was merged via PR #1 (merge commit `091d152`, branch deleted
+locally + on origin).
 
 ## DONE
 
@@ -72,21 +73,41 @@ quick-start prompt-trees campaign (branch picker + hermetic smoke E2E).
   `all_wheels_present: true`; proven by a clean venv installing
   requirements.txt with `--no-index --find-links=wheels/` only.
 
-**Verification state at this manifest's date**
-- Full suite: **570 passed**; `MANIFEST.json` current (39 wheels, 0 missing);
-  `SHA256SUMS` regenerated (163 source files + 39 wheels) + Good signature
-  (machine-local, deliberately gitignored per `.gitignore`).
+**Workflow emit channel (backfill, merged via PR #1)**
+- `WorkflowStateMachine` called `self._emit(...)` in its LLM narrative paths
+  (executive summary, technical deep dive) but no `_emit` existed — latent
+  `AttributeError` mid-report whenever an LLM was attached. Backfilled: an
+  optional constructor `callbacks` registry (orchestrator registry shape),
+  a safe `_emit` mirroring `Orchestrator._emit` (missing registry / unknown
+  event / raising listener never break the run), and the orchestrator
+  passing its own registry through so narrative events ride the channel the
+  dashboard already listens on. `MultiTargetScheduler` gained the same safe
+  `_emit` for its single-callback path (constructor API unchanged).
+- Delivered through the full PR chain: PR #1 (base main), both CI "Test"
+  runs green (51 suites + mech + compile + JS), merged with the default
+  merge method → `091d152`; feature branch deleted locally and on origin.
+- Guarded by `tests/test_workflow_emit_channel.py` (4 tests: narrative
+  dispatch to a registered callback, raising-listener isolation, safe no-op
+  on standalone machines, orchestrator registry sharing end-to-end).
+
+**Verification state at this manifest's date (HEAD `091d152`)**
+- Full suite: **574 passed**; `MANIFEST.json` up to date (39 wheels, 0
+  missing); `SHA256SUMS` current (165 source files + 39 wheels),
+  `sha256sum -c` clean + Good signature (machine-local, deliberately
+  gitignored per `.gitignore`).
+- `main` == `origin/main` (0/0 divergence); working tree clean.
 - Whole-system discovery scan: **0 findings** (1 baseline-accepted, see Deferred).
-- Recovery anchor for this campaign: `recovery/2026-09-20-pre-quick-start-trees`
-  (pushed to origin before any mutation, per serpent-circle doctrine).
+- Recovery anchor for the previous campaign:
+  `recovery/2026-09-20-pre-quick-start-trees` (kept on origin).
 
 ## NEXT
 
-1. **Push pending commits to origin** — the serpent-circle campaign commits
-   (`98b9b0b`, `d9d96d4`, `7a16811`) once Omega certifies them; blocked on
-   explicit operator go-ahead.
-2. **Convergence certification** — run the Omega loop on the final state of
-   this campaign (both halves GREEN on the same HEAD).
+1. **Optional Omega certification pass** — certify the post-merge state of
+   `main` (`091d152`) so both halves GREEN-stamp the PR-merged tree (the
+   prior certification predates the backfill).
+2. **Live-LLM narrative verification** — the emit channel is proven with a
+   fake LLM in tests; one session with a real backend attached would confirm
+   `on_llm_thinking` events land in the live cockpit stream.
 
 ## DEFERRED (logged, intentionally not actioned)
 
@@ -107,7 +128,7 @@ quick-start prompt-trees campaign (branch picker + hermetic smoke E2E).
 ## HOW TO RE-VERIFY
 
 ```bash
-python3 -m pytest -q tests/                 # full suite (570 expected)
+python3 -m pytest -q tests/                 # full suite (574 expected)
 python3 scripts/discover_system_bugs.py --repo-root .   # scan (0 new findings)
 python3 scripts/health_check.py             # baseline diff, exit-code contract
 python3 scripts/generate_manifest.py --verify
