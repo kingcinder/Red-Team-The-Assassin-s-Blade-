@@ -125,14 +125,16 @@
                             <h3>🎯 RedTeam Harness v4.0 — Assassin's Blade</h3>
                             <p>Parallel execution · Smart caching · Context management · Best-of-N reasoning · Tactical engine · Drift hardening · Target prioritization · 27 workflow templates · Auto-findings · Correlation · Auto-remediation · 100% offline</p>
                     <div class="quick-start">
-                        <!-- LLM-free quick starts: each opens the Run Workflow modal
-                             with its template preselected — the operator fills variables
-                             and presses Run. No LLM involved at any step. -->
-                        <button onclick="launchQuickWorkflow('Network Reconnaissance', 'target')">🔍 Network Recon</button>
-                        <button onclick="launchQuickWorkflow('Web Application Assessment', 'url')">🌐 Web App Test</button>
-                        <button onclick="launchQuickWorkflow('Wireless WPA/WPA2 Attack Chain', 'interface')">📡 WiFi Attack</button>
-                        <button onclick="launchQuickWorkflow('OSINT & External Footprinting', 'domain')">🕵️ OSINT</button>
-                        <button onclick="launchQuickWorkflow('Kerberoasting Chain', 'target')">💥 AD Attack</button>
+                        <!-- LLM-free quick starts: each button opens a branch menu
+                             (two concrete workflows per objective); picking a branch
+                             opens the Run Workflow modal with that template preselected
+                             and its required-variable form ready to fill in. No LLM
+                             involved at any step. -->
+                        <button onclick="openQuickStartBranch('recon')">🔍 Network Recon</button>
+                        <button onclick="openQuickStartBranch('web')">🌐 Web App Test</button>
+                        <button onclick="openQuickStartBranch('wifi')">📡 WiFi Attack</button>
+                        <button onclick="openQuickStartBranch('osint')">🕵️ OSINT</button>
+                        <button onclick="openQuickStartBranch('ad')">💥 AD Attack</button>
                         <button onclick="openWorkflowModal()">🚀 Run Workflow</button>
                     </div>
                         </div>
@@ -622,6 +624,26 @@
     </div>
 
     <!-- Workflow Modal -->
+    <!-- Quick-start branch picker: choosing an objective (Network Recon,
+         Web App Test, ...) shows its two concrete LLM-free workflow branches
+         with variables-to-fill; a click launches the workflow modal. -->
+    <div class="modal-overlay hidden" id="quickstart-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="qs-branch-title">🎯 Quick Start</h2>
+                <button class="btn-icon" onclick="closeQuickStartBranch()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p class="muted" id="qs-branch-desc"></p>
+                <div id="qs-branch-list"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-danger" onclick="closeQuickStartBranch()">Cancel</button>
+                <button class="btn-primary" onclick="closeQuickStartBranch(); openWorkflowModal()">Browse All Workflows…</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay hidden" id="workflow-modal">
         <div class="modal">
             <div class="modal-header">

@@ -1116,6 +1116,38 @@ body {
     margin-bottom: 8px;
 }
 
+/* Quick-start branch picker — two concrete workflow cards per objective */
+.qs-branch {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    text-align: left;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.qs-branch:hover {
+    border-color: var(--accent-green);
+    background: rgba(0, 200, 83, 0.05);
+}
+
+.qs-branch-name {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.qs-branch-why {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
 .modal-actions {
     display: flex;
     justify-content: flex-end;

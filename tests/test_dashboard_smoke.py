@@ -53,10 +53,14 @@ def test_cockpit_page_serves_with_llm_free_quick_starts(client):
     resp = client.get("/")
     assert resp.status_code == 200, f"GET / returned {resp.status_code}"
     html = resp.get_data(as_text=True)
-    # The GUI the operator actually receives must carry the LLM-free wiring.
-    assert "launchQuickWorkflow(" in html, (
-        "quick-start buttons must open the workflow modal, not the LLM chat")
+    # The GUI the operator actually receives must carry the LLM-free wiring:
+    # quick-start buttons open the branch picker (openQuickStartBranch), the
+    # picker modal exists, and nothing in the quick-start block sends a
+    # prompt to the LLM chat.
+    assert "openQuickStartBranch(" in html, (
+        "quick-start buttons must open the branch picker, not the LLM chat")
     assert "sendQuickPrompt(" not in html.split('class="quick-start"')[1].split("</div>")[0]
+    assert 'id="quickstart-modal"' in html
     assert 'id="llm-banner"' in html
 
 
@@ -135,46 +139,59 @@ def test_socket_send_task_error_uses_gui_contract(app):
 def test_workflow_run_end_to_end_no_llm(client):
     """POST /api/workflows/run must execute a real template.
 
-    Uses the Recon Scan template with multi-flag scan_type ("-sS -Pn -T4")
-    — the exact shape that used to abort every GUI workflow at its first
-    gate ("Scantype   not supported"). Target is loopback; the run must
-    reach a terminal status without any LLM.
+    Two runs prove both the fast path and the regression path:
+
+    1. Cockpit Smoke Check — a sub-second hermetic template (system_info +
+       process_list, gated steps + a chain-value extract). Proves the full
+       engine loop (template resolve → hardened runner → gates → extracts
+       → summary) reaches completion with zero LLM and zero network.
+
+    2. Network Recon — Quick Sweep with multi-flag scan_type ("-sS -Pn
+       -T4") against loopback — the exact shape that used to abort every
+       GUI workflow at its first gate ("Scantype   not supported"). Only
+       runs when nmap exists (CI parity with the rest of the suite).
     """
+    # ── Run 1: hermetic smoke workflow (always runs, sub-second) ──
     resp = client.post("/api/workflows/run", json={
-        "workflow": "Recon Scan",
-        "variables": {"target": "127.0.0.1", "ports": "1-200"},
-    })
+        "workflow": "Cockpit Smoke Check", "variables": {}})
     assert resp.status_code == 200, f"workflow run returned {resp.status_code}"
     result = resp.get_json()
+    # NOTE: a successful summary carries "error": None — check truthiness.
+    assert not result.get("error"), f"smoke workflow errored: {result.get('error')}"
+    assert result.get("status") == "complete", (
+        f"hermetic smoke workflow did not complete: {result.get('status')}")
+    assert result.get("completed_steps") == result.get("total_steps") == 3
 
-    if "error" in result:
-        pytest.fail(f"workflow run errored: {result['error']}")
-
-    status = result.get("status")
     steps = result.get("steps", [])
-    assert status in ("completed", "partial", "failed"), \
-        f"non-terminal workflow status: {status}"
-
-    # host_discovery (ping scan on loopback) must succeed.
-    host_disc = next((s for s in steps if s.get("name") == "host_discovery"), None)
-    assert host_disc is not None, f"steps missing host_discovery: {result}"
-    assert host_disc.get("status") == "success", \
-        f"host_discovery did not succeed: {host_disc}"
-
-    # THE regression: port_scan with scan_type "-sS -Pn -T4" must not fail
-    # on argv construction (nmap "Scantype   not supported" = exit 255).
-    port_scan = next((s for s in steps if s.get("name") == "port_scan"), None)
-    assert port_scan is not None
-    if port_scan.get("status") != "success":
-        err = str(port_scan.get("error", ""))
-        assert "Scantype" not in err and "not supported" not in err, (
-            f"multi-flag scan_type argv regression: {err}")
-
-    # No step may fail with an LLM connection error — workflows are LLM-free.
     for s in steps:
-        err = str(s.get("error", ""))
+        assert s.get("status") == "success", f"step {s.get('step')} failed: {s}"
+
+    # No step may reference an LLM — workflows are LLM-free by design.
+    for s in steps:
+        err = str(s.get("exec_result", {}).get("stderr", ""))
         assert "Cannot connect to LLM" not in err and "Cannot stream" not in err, (
-            f"step {s.get('name')} leaked an LLM dependency: {err}")
+            f"step {s.get('step')} leaked an LLM dependency: {err}")
+
+    # ── Run 2: the multi-flag scan_type regression (needs real nmap) ──
+    import shutil
+    if not shutil.which("nmap"):
+        pytest.skip("nmap not installed — argv-shape regression covered by "
+                    "tests/test_tool_registry_commands.py")
+
+    resp = client.post("/api/workflows/run", json={
+        "workflow": "Network Recon — Quick Sweep",
+        "variables": {"target": "127.0.0.1", "ports": "1-200"},
+    })
+    assert resp.status_code == 200
+    result = resp.get_json()
+    assert not result.get("error"), f"sweep errored: {result.get('error')}"
+
+    steps = result.get("steps", [])
+    port_scan = next((s for s in steps if s.get("step") == "port_scan"), None)
+    assert port_scan is not None, "steps missing port_scan"
+    exec_err = str(port_scan.get("exec_result", {}).get("stderr", ""))
+    assert "Scantype" not in exec_err and "not supported" not in exec_err, (
+        f"multi-flag scan_type argv regression: {exec_err}")
 
 
 if __name__ == "__main__":

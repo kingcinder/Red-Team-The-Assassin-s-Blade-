@@ -1673,6 +1673,104 @@ function launchQuickWorkflow(workflowName, focusVar) {
     });
 }
 
+// ── Quick-start branch trees ─────────────────────────────────────────
+// Each quick-start objective has TWO concrete LLM-free workflow branches.
+// The button opens a picker; picking a branch opens the Run Workflow modal
+// preselected, with the first required variable focused — templates to be
+// filled in, no prompt sent to any LLM.
+const QUICK_START_TREES = {
+    recon: {
+        title: '🔍 Network Recon',
+        desc: 'Pick how deep to go — both branches run entirely on the local toolchain:',
+        branches: [
+            { workflow: 'Network Recon — Quick Sweep',
+              focus: 'target',
+              why: 'Fast first look: live-host sweep + top-ports scan of the subnet.' },
+            { workflow: 'Network Recon — Deep Service Enumeration',
+              focus: 'target',
+              why: 'Thorough: full-range scan + version detection, banners, NSE vuln scripts.' },
+        ],
+    },
+    web: {
+        title: '🌐 Web App Test',
+        desc: 'Pick the assessment depth — both branches run entirely on the local toolchain:',
+        branches: [
+            { workflow: 'Web App Test — Surface Scan',
+              focus: 'url',
+              why: 'Map what the target exposes: HTTP probing, tech detection, directory pass.' },
+            { workflow: 'Web App Test — Injection Pass',
+              focus: 'url',
+              why: 'Deeper: surface probe + automated SQL injection testing of parameters.' },
+        ],
+    },
+    wifi: {
+        title: '📡 WiFi Attack',
+        desc: 'Pick the wireless phase — capture first, or crack an existing capture:',
+        branches: [
+            { workflow: 'WiFi Attack — Handshake Capture',
+              focus: 'interface',
+              why: 'Monitor mode + AP sweep + WPA handshake capture on the selected adapter.' },
+            { workflow: 'WiFi Attack — WPA Cracking',
+              focus: 'capture_file',
+              why: 'Dictionary attack on a captured handshake (.cap) with your wordlist.' },
+        ],
+    },
+    osint: {
+        title: '🕵️ OSINT',
+        desc: 'Pick the collection style — both branches run entirely on the local toolchain:',
+        branches: [
+            { workflow: 'OSINT — Domain Footprint',
+              focus: 'domain',
+              why: 'Subdomain enumeration + link spidering of the live domain.' },
+            { workflow: 'OSINT — Historical URL Harvest',
+              focus: 'domain',
+              why: 'Wayback/archive URL pull + current-link discovery for the domain.' },
+        ],
+    },
+    ad: {
+        title: '💥 AD Attack',
+        desc: 'Pick the Active Directory entry point — credentials or not:',
+        branches: [
+            { workflow: 'AD Attack — Unauthenticated Enum',
+              focus: 'target',
+              why: 'No creds needed: null-session SMB/RID enumeration + AS-REP hunt.' },
+            { workflow: 'AD Attack — Kerberoast',
+              focus: 'target',
+              why: 'With valid creds: request SPN tickets, then crack them offline.' },
+        ],
+    },
+};
+
+function openQuickStartBranch(treeKey) {
+    const tree = QUICK_START_TREES[treeKey];
+    if (!tree) return;
+    const modal = document.getElementById('quickstart-modal');
+    document.getElementById('qs-branch-title').textContent = tree.title;
+    document.getElementById('qs-branch-desc').textContent = tree.desc;
+    const list = document.getElementById('qs-branch-list');
+    list.innerHTML = '';
+    // Build with real event listeners, NOT inline handler attributes:
+    // branch names contain double quotes once embedded as string literals,
+    // which would terminate the attribute and leave every branch button dead
+    // (found in live GUI audit).
+    tree.branches.forEach((b) => {
+        const btn = document.createElement('button');
+        btn.className = 'qs-branch';
+        btn.innerHTML = `<span class="qs-branch-name">${escapeHtml(b.workflow)}</span>` +
+            `<span class="qs-branch-why">${escapeHtml(b.why)}</span>`;
+        btn.addEventListener('click', () => {
+            closeQuickStartBranch();
+            launchQuickWorkflow(b.workflow, b.focus);
+        });
+        list.appendChild(btn);
+    });
+    modal.classList.remove('hidden');
+}
+
+function closeQuickStartBranch() {
+    document.getElementById('quickstart-modal').classList.add('hidden');
+}
+
 function closeWorkflowModal() {
     document.getElementById('workflow-modal').classList.add('hidden');
 }
