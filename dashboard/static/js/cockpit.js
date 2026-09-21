@@ -1642,6 +1642,37 @@ function openWorkflowModal() {
     document.getElementById('wf-select').addEventListener('change', onWorkflowSelect);
 }
 
+// LLM-free quick starts: open the Run Workflow modal with the template
+// preselected. The quick-action buttons route here instead of the LLM chat —
+// template-driven workflows run entirely on the local toolchain.
+const QUICK_START_PLACEHOLDERS = {
+    'target':    'e.g. 192.168.1.0/24',
+    'url':       'e.g. http://192.168.1.10',
+    'interface': 'e.g. wlan0',
+    'domain':    'e.g. example.com',
+};
+
+function launchQuickWorkflow(workflowName, focusVar) {
+    openWorkflowModal();
+    const select = document.getElementById('wf-select');
+    if (![...select.options].some(o => o.value === workflowName)) {
+        // Registry not loaded yet (very fast double-click at boot) — load,
+        // then re-apply the preselection.
+        loadWorkflows().then(() => launchQuickWorkflow(workflowName, focusVar));
+        return;
+    }
+    select.value = workflowName;
+    onWorkflowSelect().then(() => {
+        const inp = focusVar && document.getElementById(`wf-var-${focusVar}`);
+        if (inp) {
+            if (!inp.value && QUICK_START_PLACEHOLDERS[focusVar]) {
+                inp.placeholder = QUICK_START_PLACEHOLDERS[focusVar];
+            }
+            inp.focus();
+        }
+    });
+}
+
 function closeWorkflowModal() {
     document.getElementById('workflow-modal').classList.add('hidden');
 }

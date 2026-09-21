@@ -26,6 +26,17 @@ HARNESS_ROOT = os.path.join(os.path.dirname(__file__), "..")
 MANIFEST_PATH = os.path.join(HARNESS_ROOT, "MANIFEST.json")
 
 
+def _canonical_pkg(name: str) -> str:
+    """PEP 503 canonical package name: runs of -, _, . collapse to '-', lowercased.
+
+    Wheel filenames escape non-alphanumerics to '_' (flask_socketio-...whl)
+    while requirements.txt keeps the display spelling (flask-socketio) — the
+    two are the same distribution and must join. Without this normalization
+    the manifest reported four fully-present wheels as MISSING.
+    """
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def parse_requirements(req_path):
     """Parse requirements.txt into {pkg_lower: {spec, raw}}."""
     reqs = {}
@@ -49,7 +60,7 @@ def scan_wheels(wheels_dir):
         if fn.endswith(".whl"):
             parts = fn.split("-")
             if len(parts) >= 2:
-                pkg = parts[0].lower()
+                pkg = _canonical_pkg(parts[0])
                 ver = parts[1]
                 wheels[pkg] = {"version": ver, "filename": fn}
     return wheels
@@ -155,7 +166,7 @@ def build_manifest():
     python_deps = []
     seen_pkgs = set()
     for pkg, info in sorted(reqs.items()):
-        wheel = wheels.get(pkg)
+        wheel = wheels.get(_canonical_pkg(pkg))
         entry = {
             "package": pkg,
             "requirement": info["raw"],
@@ -167,7 +178,7 @@ def build_manifest():
             "status": "ok" if wheel else "MISSING_FROM_WHEELS",
         }
         python_deps.append(entry)
-        seen_pkgs.add(pkg)
+        seen_pkgs.add(_canonical_pkg(pkg))
 
     for pkg, info in sorted(wheels.items()):
         if pkg not in seen_pkgs:

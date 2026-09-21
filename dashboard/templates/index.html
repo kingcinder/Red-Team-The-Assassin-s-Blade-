@@ -125,11 +125,14 @@
                             <h3>🎯 RedTeam Harness v4.0 — Assassin's Blade</h3>
                             <p>Parallel execution · Smart caching · Context management · Best-of-N reasoning · Tactical engine · Drift hardening · Target prioritization · 27 workflow templates · Auto-findings · Correlation · Auto-remediation · 100% offline</p>
                     <div class="quick-start">
-                        <button onclick="sendQuickPrompt('Scan 192.168.1.0/24 for open ports and identify all services')">🔍 Network Recon</button>
-                        <button onclick="sendQuickPrompt('Perform a full web application assessment on http://target.com')">🌐 Web App Test</button>
-                        <button onclick="sendQuickPrompt('Run WiFi scanning and capture WPA handshake on the selected interface')">📡 WiFi Attack</button>
-                        <button onclick="sendQuickPrompt('Perform DNS enumeration and OSINT gathering on example.com')">🕵️ OSINT</button>
-                        <button onclick="sendQuickPrompt('Dump Active Directory info with BloodHound and Kerberoast with impacket')">💥 AD Attack</button>
+                        <!-- LLM-free quick starts: each opens the Run Workflow modal
+                             with its template preselected — the operator fills variables
+                             and presses Run. No LLM involved at any step. -->
+                        <button onclick="launchQuickWorkflow('Network Reconnaissance', 'target')">🔍 Network Recon</button>
+                        <button onclick="launchQuickWorkflow('Web Application Assessment', 'url')">🌐 Web App Test</button>
+                        <button onclick="launchQuickWorkflow('Wireless WPA/WPA2 Attack Chain', 'interface')">📡 WiFi Attack</button>
+                        <button onclick="launchQuickWorkflow('OSINT & External Footprinting', 'domain')">🕵️ OSINT</button>
+                        <button onclick="launchQuickWorkflow('Kerberoasting Chain', 'target')">💥 AD Attack</button>
                         <button onclick="openWorkflowModal()">🚀 Run Workflow</button>
                     </div>
                         </div>

@@ -57,3 +57,31 @@ def test_manifest_output_is_json_serializable(tmp_path):
     out.write_text(json.dumps(manifest, indent=2))
     reloaded = json.loads(out.read_text())
     assert reloaded["_meta"]["generated_by"] == "scripts/generate_manifest.py"
+
+
+def test_wheel_matching_is_pep503_canonical():
+    """requirements↔wheels must join on PEP 503 canonical names.
+
+    Wheel filenames escape -/_ to '_' (flask_socketio-…whl) while
+    requirements.txt keeps 'flask-socketio' — the generator used to compare
+    the raw spellings and reported four fully-present wheels as
+    MISSING_FROM_WHEELS.
+    """
+    assert gm._canonical_pkg("flask-socketio") == gm._canonical_pkg("flask_socketio")
+    assert gm._canonical_pkg("scikit-learn") == gm._canonical_pkg("scikit_learn")
+    assert gm._canonical_pkg("python-dateutil") == gm._canonical_pkg("python_dateutil")
+    assert gm._canonical_pkg("gevent-websocket") == gm._canonical_pkg("gevent_websocket")
+    assert gm._canonical_pkg("Argon2.CFFI") == "argon2-cffi"
+
+    # End-to-end: every requirements.txt package with a wheel on disk must
+    # be marked ok (no hyphen/underscore false alarms).
+    manifest = gm.build_manifest()
+    deps = manifest["python_dependencies"]["packages"]
+    false_alarms = [
+        d["package"] for d in deps
+        if d["status"] == "MISSING_FROM_WHEELS"
+        and any(w.startswith(d["package"].replace("-", "_"))
+                for w in os.listdir(gm.os.path.join(gm.HARNESS_ROOT, "wheels"))
+                if w.endswith(".whl"))
+    ]
+    assert not false_alarms, f"wheels present but flagged missing: {false_alarms}"
