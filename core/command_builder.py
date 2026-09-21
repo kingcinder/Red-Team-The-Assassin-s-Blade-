@@ -356,7 +356,10 @@ def _build_nmap(output_dir, name, args, binary):
         cmd.extend(["--script","dns-brute"])
     else:
         st = _unprivileged_scan_type(args.get("scan_type","-sV"))
-        if st: cmd.append(st)
+        # scan_type may carry several flags ("-sS -Pn -T4"); nmap rejects a
+        # single argv token containing spaces ("Scantype   not supported"),
+        # so split it into real argv tokens.
+        if st: cmd.extend(st.split())
         cmd.extend(["-oN", f"{output_dir}/nmap_{target.replace('/','_').replace('.','_')}.txt"])
     ports = args.get("ports","")
     if ports and ports != "-": cmd.extend(["-p",ports])

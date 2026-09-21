@@ -47,7 +47,7 @@
         <span class="llm-banner-icon">🚫</span>
         <div class="llm-banner-text">
             <strong>No LLM backend detected.</strong>
-            <span id="llm-banner-detail">llama-server does not appear to be running. Start it (e.g. via launch-gguf.sh / llama-server) BEFORE using the AI-driven cockpit, then this banner clears automatically.</span>
+            <span id="llm-banner-detail">No LLM backend reachable. The cockpit still works LLM-free: Run Workflow, tool palette, Campaigns, Mech-Unit, Pivot. AI chat needs llama-server running (e.g. via launch-gguf.sh) — start it, then this banner clears on Re-check.</span>
         </div>
         <button class="btn-primary btn-sm" onclick="recheckLLM()">🔄 Re-check</button>
     </div>

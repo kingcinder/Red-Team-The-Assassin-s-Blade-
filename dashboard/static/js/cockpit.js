@@ -20,6 +20,7 @@ let tacticalExecuting = new Set();
 let selectedCaptureInterface = '';
 let captureInterfaces = [];  // full inventory list for the WiFi manager
 let toolRegistry = {};  // tool name -> metadata (category, parameters) for direct-exec interface injection
+let llmConnected = false;  // last known LLM reachability (drives no-LLM Send guidance)
 
 // The selected capture interface is persisted to localStorage so it survives
 // dashboard reloads — the operator picks the adapter once and never re-picks
@@ -216,6 +217,7 @@ async function setInterfaceUp(up) {
     // so recovery from a downed adapter is one click from the top strip.
     const iface = captureInterfaceValue();
     if (!iface) { addSystemMessage('⚠️ Select a WiFi interface first.'); return; }
+    if (!up && !confirm(`⬇ Take ${iface} DOWN? If this is your uplink/management interface, you may lose connectivity to the cockpit.`)) return;
     addSystemMessage(`⏳ ${up ? 'Bringing up' : 'Taking down'} interface ${iface}…`);
     const tool = up ? 'iface_up' : 'iface_down';
     try {
@@ -376,6 +378,11 @@ async function setWifiMonitor(enabled) {
     if (!iface) { addSystemMessage('⚠️ Select a WiFi interface first.'); return; }
     const info = currentInterfaceInfo();
     if (info && !info.wireless) { addSystemMessage(`⚠️ ${iface} is not a wireless interface.`); return; }
+    // airmon-ng renames the adapter (<iface>mon on enable, back on disable) and
+    // drops any association — destructive enough to warrant an explicit confirm.
+    const action = enabled ? `📡 Enable MONITOR mode on ${iface}?\n\nAny existing Wi-Fi association is dropped and the adapter is renamed (airmon-ng start).`
+                           : `🛑 Return ${iface} to MANAGED mode?\n\nThe adapter is renamed back (airmon-ng stop); a stale <iface>mon entry may remain.`;
+    if (!confirm(action)) return;
     addSystemMessage(`⏳ ${enabled ? 'Enabling' : 'Disabling'} monitor mode on ${iface}…`);
     const tool = enabled ? 'monitor_mode_enable' : 'monitor_mode_disable';
     try {
@@ -608,7 +615,8 @@ function initSocket() {
 
     socket.on('error', (data) => {
         showThinking(false);
-        addSystemMessage(`❌ Error: ${data.message}`);
+        // Emitters vary: core.py uses {message}, orchestrator/autonomous use {error}.
+        addSystemMessage(`❌ Error: ${data?.message ?? data?.error ?? 'unknown error'}`);
     });
 
     socket.on('autonomous_changed', (data) => {
@@ -739,13 +747,14 @@ function updateStatusIndicators(data) {
         llmDot.className = 'status-dot';
         llmLabel.textContent = 'LLM: Disconnected';
         clearModelChip();
-        showLLMBanner('llama-server does not appear to be running at the configured LLM address. Start it first (e.g. launch-gguf.sh / llama-server), then press Re-check.');
+        showLLMBanner('No LLM backend at the configured address. The cockpit still works LLM-free: Run Workflow, tool palette, Campaigns, Mech-Unit, Pivot. AI chat needs llama-server running — start it, then Re-check.');
     }
 
     toolsLabel.textContent = `Tools: ${data.tools_available}/${data.tools_total}`;
 }
 
 function updateLLMStatus(connected, model) {
+    llmConnected = !!connected;
     const dot = document.getElementById('llm-status');
     const label = document.getElementById('llm-label');
     dot.className = connected ? 'status-dot green' : 'status-dot';
@@ -878,6 +887,18 @@ function sendMessage() {
     const input = document.getElementById('chat-input');
     const prompt = input.value.trim();
     if (!prompt) return;
+
+    // No-LLM guidance: a free-text objective can ONLY be executed by the AI
+    // loop. When the backend is down, tell the operator what works RIGHT NOW
+    // instead of failing with a connection error after a long stall.
+    if (!llmConnected) {
+        addSystemMessage('🚫 AI cockpit is offline (no LLM backend reachable) — chat objectives need it. '
+            + 'LLM-free and fully usable right now: 🚀 Run Workflow (template-driven), the one-click tool palette, '
+            + '📡 Campaigns, 🤖 Mech-Unit, and 🧭 Pivot. '
+            + 'To enable AI: start llama-server at the configured address, then press 🔄 Re-check.');
+        input.focus();
+        return;
+    }
 
     addUserMessage(prompt);
     input.value = '';

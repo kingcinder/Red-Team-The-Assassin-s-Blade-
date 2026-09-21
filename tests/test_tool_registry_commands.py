@@ -110,7 +110,25 @@ def test_nmap_unprivileged_rewrite_only_rewrites_standalone_flag(monkeypatch):
     monkeypatch.setattr(os, 'geteuid', lambda: 1000)
     t = tool('nmap_scan', 'nmap', {})
     assert '-sT' in _build_command('/tmp/out', t, {'target': '127.0.0.1', 'scan_type': '-sS'})
-    assert '-sT --script vuln' in _build_command('/tmp/out', t, {'target': '127.0.0.1', 'scan_type': '-sS --script vuln'})
+    # scan_type carrying multiple flags must land as separate argv tokens
+    # (a single token with embedded spaces makes nmap exit 255 "Scantype
+    # not supported"); the -sS rewrite still applies per-flag.
+    argv = _build_command('/tmp/out', t, {'target': '127.0.0.1', 'scan_type': '-sS --script vuln'})
+    assert argv[1:4] == ['-sT', '--script', 'vuln']
+
+
+def test_nmap_multi_flag_scan_type_becomes_separate_argv_tokens(monkeypatch):
+    # Workflow templates pass scan_type as a multi-flag string (e.g.
+    # recon_scan.yaml: "-sS -Pn -T4"). Appending it as ONE argv token made
+    # nmap reject the whole scan ("Scantype   not supported"), failing every
+    # GUI-driven recon workflow at its first gate step.
+    monkeypatch.setattr(os, 'geteuid', lambda: 1000)
+    t = tool('nmap_scan', 'nmap', {})
+    argv = _build_command('/tmp/out', t, {
+        'target': '127.0.0.1', 'ports': '1-1000', 'scan_type': '-sS -Pn -T4'})
+    assert '-Pn' in argv and '-T4' in argv, 'each flag must be its own argv token'
+    assert argv[1] == '-sT', 'unprivileged rewrite still applies per-flag'
+    assert not any(' ' in a for a in argv), 'no argv token may contain a space'
 
 
 def test_generic_builder_keeps_parameter_order_and_omits_missing_values():
