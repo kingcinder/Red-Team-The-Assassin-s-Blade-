@@ -70,6 +70,18 @@ class MultiTargetScheduler:
         self._campaign_mgr = campaign_mgr  # optional CampaignManager instance
         self._config = config or {}  # for v5.5 knobs (parallel retries, auto-chain)
 
+    def _emit(self, event: str, data: Any):
+        """Dispatch an event to registered callbacks (orchestrator-style).
+
+        Mirrors Orchestrator._emit: a missing registry, an unknown event,
+        or a raising listener must never break the run.
+        """
+        for cb in (getattr(self, "_callbacks", None) or {}).get(event, []):
+            try:
+                cb(data)
+            except Exception as e:  # noqa: BLE001 — listener bugs are not run-killers
+                logger.error(f"Callback error for {event}: {e}")
+
     def _config_get(self, dotted_key: str, default=None):
         """Read a dotted config key (e.g. 'workflow.parallel_max_job_retries').
         Safe against instances constructed without config (e.g. via __new__ in
@@ -289,7 +301,8 @@ class MultiTargetScheduler:
 
             wf = WorkflowStateMachine(wf_template, sandbox, self.runner,
                                       variables, llm=self.llm,
-                                      retry_multiplier=retry_multiplier)
+                                      retry_multiplier=retry_multiplier,
+                                      callbacks=getattr(self, "_callbacks", None))
             try:
                 wf.load()
             except Exception as e:

@@ -1296,7 +1296,11 @@ class Orchestrator:
         sandbox = TaskSandbox(sandbox_name, base_dir=tasks_dir)
         sandbox.setup()
 
-        wf = WorkflowStateMachine(template_path, sandbox, self.runner, variables, llm=self.llm)
+        # Pass the orchestrator's own event registry through so narrative
+        # events (on_llm_thinking, etc.) ride the same channel the dashboard
+        # already listens on.
+        wf = WorkflowStateMachine(template_path, sandbox, self.runner, variables, llm=self.llm,
+                                  callbacks=self._callbacks)
         try:
             wf.load()
         except Exception as e:
