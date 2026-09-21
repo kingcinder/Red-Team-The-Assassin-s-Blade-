@@ -15,7 +15,7 @@ import time
 import logging
 import yaml
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Callable
 
 from core.task_isolation import TaskSandbox
 from core.hardening import HardenedToolRunner
@@ -49,12 +49,17 @@ class WorkflowStateMachine:
 
     def __init__(self, template_path: str, sandbox: TaskSandbox,
                  runner: HardenedToolRunner, variables: Dict[str, Any],
-                 llm=None, retry_multiplier: float = 1.0):
+                 llm=None, retry_multiplier: float = 1.0,
+                 callbacks: Optional[Dict[str, List[Callable]]] = None):
         self.template_path = template_path
         self.sandbox = sandbox
         self.runner = runner
         self.variables = variables or {}
         self.llm = llm  # optional LLM backend for smart retry suggestions
+        # Event channel for narrative/progress events, mirroring the
+        # orchestrator's registry shape. Optional — the machine must run
+        # standalone (and the orchestrator passes its own registry in).
+        self._callbacks: Dict[str, List[Callable]] = callbacks or {}
         # v5.2: per-target aggressiveness — high-value targets get a higher
         # retry budget (scaled against each step's `retries`). Clamped so a
         # hostile config can't exceed MAX_RETRIES_PER_STEP.
@@ -904,6 +909,19 @@ class WorkflowStateMachine:
         finding["timestamp"] = datetime.now().isoformat()
         findings.append(finding)
         self.sandbox.save_state(self.state)
+
+    def _emit(self, event: str, data: Any):
+        """Dispatch an event to registered callbacks (orchestrator-style).
+
+        Mirrors Orchestrator._emit: a missing registry, an unknown event,
+        or a raising listener must never break the run — failures are
+        logged and swallowed.
+        """
+        for cb in (self._callbacks or {}).get(event, []):
+            try:
+                cb(data)
+            except Exception as e:  # noqa: BLE001 — listener bugs are not run-killers
+                logger.error(f"Callback error for {event}: {e}")
 
     @staticmethod
     def _sanitize_prompt(text: str) -> str:
